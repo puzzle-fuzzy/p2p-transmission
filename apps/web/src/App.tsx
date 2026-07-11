@@ -19,7 +19,7 @@ function App() {
     <div className="h-svh bg-[#2d2d2d] flex justify-center items-center">
       <div className="flex gap-8">
         <TransferPanel onToggleLog={() => setLogVisible(v => !v)} />
-        <div className="w-px bg-amber-50/10 transition-opacity duration-250 ease-out" style={{ opacity: logVisible ? 1 : 0 }} />
+        {/* <div className="w-px bg-amber-50/10 transition-opacity duration-250 ease-out" style={{ opacity: logVisible ? 1 : 0 }} />
         <div
           className="overflow-hidden transition-[max-width,min-width] duration-250 ease-out"
           style={{
@@ -40,20 +40,25 @@ function App() {
             <span className="text-amber-50/30 text-xs whitespace-nowrap">传输日志</span>
             <div className="flex flex-col gap-2.5">
               {logs.map((log, i) => (
-                <div key={i} className="flex gap-2 text-xs items-baseline">
+                <div key={i} className="flex gap-2 text-xs items-end overflow-hidden">
                   <span className="text-amber-50/15 tabular-nums shrink-0">{log.time}</span>
                   <span className={log.type === 'error' ? 'text-red-400' : 'text-amber-50/50'}>{log.text}</span>
                   {log.type === 'error' && (
-                    <span className="material-symbols-outlined text-xs leading-none text-red-400/60">error</span>
+                    <div className='w-4 h-4 flex justify-center items-center'>
+                      <span className="material-symbols-outlined leading-none text-red-400/60" style={{ fontSize: '12px' }}>error</span>
+                    </div>
                   )}
                   {log.text.endsWith('…') && !log.type && (
-                    <span className="material-symbols-outlined text-xs leading-none text-amber-50/50 animate-spin">progress_activity</span>
+                    <div className='w-4 h-4 flex justify-center items-center'>
+                      <span className="material-symbols-outlined leading-none text-amber-50/50 animate-spin" style={{ fontSize: '12px' }}>progress_activity</span>
+                    </div>
                   )}
                 </div>
               ))}
             </div>
           </div>
-        </div>
+      </div> */}
+
       </div>
     </div>
   )

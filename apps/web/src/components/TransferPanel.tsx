@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import Avatar from './Avatar'
 
 type Tab = 'text' | 'file'
 
@@ -106,7 +107,7 @@ export default function TransferPanel({ onToggleLog }: { onToggleLog?: () => voi
     (tab === 'text' && !text.trim()) || (tab === 'file' && files.length === 0)
 
   return (
-    <div className="w-md flex flex-col gap-6">
+    <div className="w-xl flex flex-col gap-6">
       {/* Tab 切换 */}
       <div className="flex items-center gap-2">
         <div className="flex rounded-xl bg-white/5 p-1">
@@ -131,25 +132,29 @@ export default function TransferPanel({ onToggleLog }: { onToggleLog?: () => voi
             传输文件
           </button>
         </div>
-        <button
+
+        <div className="ml-auto p-2 text-amber-50/20 hover:text-amber-50/40 transition-colors cursor-pointer">
+          <Avatar />
+        </div>
+        {/* <button
           className="ml-auto p-2 text-amber-50/20 hover:text-amber-50/40 transition-colors cursor-pointer"
           onClick={onToggleLog}
           title="切换日志面板"
         >
-          <span className="material-symbols-outlined text-base leading-none">list</span>
-        </button>
+          <span className="material-symbols-outlined leading-none" style={{ fontSize: '16px' }}>list</span>
+        </button> */}
       </div>
 
       {/* 错误提示 */}
       {errorBanner && (
         <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20">
-          <span className="material-symbols-outlined text-base leading-none text-red-400">warning</span>
+          <span className="material-symbols-outlined leading-none text-red-400" style={{ fontSize: '16px' }}>warning</span>
           <span className="flex-1 text-red-400 text-xs">{errorBanner}</span>
           <button
             className="text-red-400/50 hover:text-red-400 cursor-pointer"
             onClick={() => setErrorBanner('')}
           >
-            <span className="material-symbols-outlined text-sm leading-none">close</span>
+            <span className="material-symbols-outlined leading-none" style={{ fontSize: '14px' }}>close</span>
           </button>
         </div>
       )}
@@ -209,18 +214,18 @@ export default function TransferPanel({ onToggleLog }: { onToggleLog?: () => voi
                     />
                     {/* 内容 */}
                     <div className="relative flex items-center gap-3 px-3 py-2 z-10">
-                      <span className="material-symbols-outlined text-base leading-none text-amber-50/30">description</span>
+                      <span className="material-symbols-outlined leading-none text-amber-50/30" style={{ fontSize: '16px' }}>description</span>
                       <span className="flex-1 text-amber-50/60 text-xs truncate">{file.name}</span>
                       <span className="text-amber-50/20 text-xs shrink-0">{formatSize(file.size)}</span>
                       {fileStates[i] === 'done' ? (
-                        <span className="material-symbols-outlined text-base leading-none text-accent">check_circle</span>
+                        <span className="material-symbols-outlined leading-none text-accent" style={{ fontSize: '16px' }}>check_circle</span>
                       ) : fileStates[i] === 'error' ? (
                         <button
                           className="text-red-400 hover:text-red-300 transition-colors cursor-pointer shrink-0"
                           onClick={() => retryFile(i)}
                           title="重试"
                         >
-                          <span className="material-symbols-outlined text-base leading-none">refresh</span>
+                          <span className="material-symbols-outlined leading-none" style={{ fontSize: '16px' }}>refresh</span>
                         </button>
                       ) : (
                         <button
@@ -240,7 +245,7 @@ export default function TransferPanel({ onToggleLog }: { onToggleLog?: () => voi
                 className="flex items-center justify-center gap-1.5 mt-1 text-amber-50/20 hover:text-amber-50/40 transition-colors cursor-pointer"
                 onClick={() => fileInputRef.current?.click()}
               >
-                <span className="material-symbols-outlined text-sm leading-none">add</span>
+                <span className="material-symbols-outlined leading-none" style={{ fontSize: '14px' }}>add</span>
                 <span className="text-xs">添加更多文件</span>
               </div>
             </div>
@@ -267,7 +272,7 @@ export default function TransferPanel({ onToggleLog }: { onToggleLog?: () => voi
       >
         {transferring ? (
           <>
-            <span className="material-symbols-outlined text-base leading-none animate-spin">progress_activity</span>
+            <span className="material-symbols-outlined leading-none animate-spin" style={{ fontSize: '16px' }}>progress_activity</span>
             传输中…
           </>
         ) : tab === 'file' && files.length > 0 ? (
