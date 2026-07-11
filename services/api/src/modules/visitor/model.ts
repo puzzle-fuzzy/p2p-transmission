@@ -1,3 +1,5 @@
+export type { PublicVisitor } from "@p2p/contracts";
+
 export type Visitor = {
   id: string;
   avatarSeed: string;
@@ -6,8 +8,6 @@ export type Visitor = {
   createdAt: number;
   lastSeenAt: number;
 };
-
-export type PublicVisitor = Omit<Visitor, "token">;
 
 export type VisitorServiceOptions = {
   now?: () => number;

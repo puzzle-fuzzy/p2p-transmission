@@ -2,17 +2,24 @@ import { Elysia, t } from "elysia";
 import type { AppContext } from "../../context";
 import { createRealtimeHub, type RealtimeSocket } from "./hub";
 
-const signalPayload = {
-  type: t.Union([
-    t.Literal("signal:offer"),
-    t.Literal("signal:answer"),
-    t.Literal("signal:ice"),
-  ]),
-  roomCode: t.String(),
-  to: t.String(),
-  sdp: t.Optional(t.Any()),
-  candidate: t.Optional(t.Any()),
-};
+const peerSessionIdSchema = t.String({ minLength: 1, maxLength: 96 });
+
+const offerDescriptionSchema = t.Object({
+  type: t.Literal("offer"),
+  sdp: t.String(),
+});
+
+const answerDescriptionSchema = t.Object({
+  type: t.Literal("answer"),
+  sdp: t.String(),
+});
+
+const iceCandidateSchema = t.Object({
+  candidate: t.String(),
+  sdpMid: t.Union([t.String(), t.Null()]),
+  sdpMLineIndex: t.Union([t.Number(), t.Null()]),
+  usernameFragment: t.Union([t.String(), t.Null()]),
+});
 
 const clientMessageSchema = t.Union([
   t.Object({
@@ -24,27 +31,26 @@ const clientMessageSchema = t.Union([
     type: t.Literal("room:leave"),
     roomCode: t.String(),
   }),
-  t.Object(signalPayload),
   t.Object({
-    type: t.Literal("transfer:prepare"),
+    type: t.Literal("signal:offer"),
     roomCode: t.String(),
-    items: t.Array(t.Object({
-      id: t.String(),
-      kind: t.Union([t.Literal("text"), t.Literal("file")]),
-      name: t.Optional(t.String()),
-      size: t.Optional(t.Number()),
-      mimeType: t.Optional(t.String()),
-    })),
+    to: t.String(),
+    peerSessionId: peerSessionIdSchema,
+    description: offerDescriptionSchema,
   }),
   t.Object({
-    type: t.Literal("transfer:state"),
+    type: t.Literal("signal:answer"),
     roomCode: t.String(),
-    state: t.Union([
-      t.Literal("ready"),
-      t.Literal("transferring"),
-      t.Literal("done"),
-      t.Literal("error"),
-    ]),
+    to: t.String(),
+    peerSessionId: peerSessionIdSchema,
+    description: answerDescriptionSchema,
+  }),
+  t.Object({
+    type: t.Literal("signal:ice"),
+    roomCode: t.String(),
+    to: t.String(),
+    peerSessionId: peerSessionIdSchema,
+    candidate: t.Union([iceCandidateSchema, t.Null()]),
   }),
 ]);
 

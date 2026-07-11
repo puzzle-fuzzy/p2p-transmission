@@ -1,8 +1,15 @@
-import type { PublicVisitor } from "../visitor/model";
+import type {
+  ParticipantRole,
+  ParticipantStatus,
+  PublicRoom,
+} from "@p2p/contracts";
 
-export type ParticipantRole = "sender" | "receiver";
-
-export type ParticipantStatus = "online" | "connecting" | "transferring" | "left";
+export type {
+  ParticipantRole,
+  ParticipantStatus,
+  PublicParticipant,
+  PublicRoom,
+} from "@p2p/contracts";
 
 export type Participant = {
   visitorId: string;
@@ -16,22 +23,6 @@ export type Room = {
   senderId: string | null;
   receivers: Set<string>;
   participants: Map<string, Participant>;
-  createdAt: number;
-  expiresAt: number;
-};
-
-export type PublicParticipant = {
-  visitor: PublicVisitor;
-  role: ParticipantRole;
-  joinedAt: number;
-  status: ParticipantStatus;
-};
-
-export type PublicRoom = {
-  code: string;
-  senderId: string | null;
-  receivers: string[];
-  participants: PublicParticipant[];
   createdAt: number;
   expiresAt: number;
 };

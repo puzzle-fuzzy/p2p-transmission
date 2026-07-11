@@ -4,14 +4,17 @@
   "scripts": {
     "build": "bun build src/index.ts --target=bun --outdir=dist",
     "dev": "bun run --watch src/index.ts",
+    "lint": "oxlint src",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@p2p/contracts": "workspace:*",
     "elysia": "latest"
   },
   "devDependencies": {
     "bun-types": "latest",
+    "oxlint": "^1.71.0",
     "typescript": "^7.0.2"
   },
   "module": "src/index.js"

@@ -14,6 +14,7 @@ The server listens on `PORT` or `3000`.
 ```bash
 bun test
 bun run typecheck
+bun run lint
 ```
 
 ## HTTP API
@@ -107,11 +108,34 @@ Client messages:
 type ClientRealtimeMessage =
   | { type: "room:join"; roomCode: string; role: "sender" | "receiver" }
   | { type: "room:leave"; roomCode: string }
-  | { type: "signal:offer"; roomCode: string; to: string; sdp: unknown }
-  | { type: "signal:answer"; roomCode: string; to: string; sdp: unknown }
-  | { type: "signal:ice"; roomCode: string; to: string; candidate: unknown }
-  | { type: "transfer:prepare"; roomCode: string; items: TransferItem[] }
-  | { type: "transfer:state"; roomCode: string; state: "ready" | "transferring" | "done" | "error" }
+  | {
+      type: "signal:offer"
+      roomCode: string
+      to: string
+      peerSessionId: string
+      description: { type: "offer"; sdp: string }
+    }
+  | {
+      type: "signal:answer"
+      roomCode: string
+      to: string
+      peerSessionId: string
+      description: { type: "answer"; sdp: string }
+    }
+  | {
+      type: "signal:ice"
+      roomCode: string
+      to: string
+      peerSessionId: string
+      candidate: IceCandidateDto | null
+    }
+
+type IceCandidateDto = {
+  candidate: string
+  sdpMid: string | null
+  sdpMLineIndex: number | null
+  usernameFragment: string | null
+}
 ```
 
 Server messages:
@@ -121,16 +145,46 @@ type ServerRealtimeMessage =
   | { type: "visitor:ready"; visitor: PublicVisitor }
   | { type: "room:participants"; room: PublicRoom }
   | { type: "participant:left"; roomCode: string; visitorId: string }
-  | { type: "signal:offer"; roomCode: string; from: string; sdp: unknown }
-  | { type: "signal:answer"; roomCode: string; from: string; sdp: unknown }
-  | { type: "signal:ice"; roomCode: string; from: string; candidate: unknown }
-  | { type: "transfer:prepare"; roomCode: string; from: string; items: TransferItem[] }
-  | { type: "transfer:state"; roomCode: string; from: string; state: "ready" | "transferring" | "done" | "error" }
+  | {
+      type: "signal:offer"
+      roomCode: string
+      from: string
+      peerSessionId: string
+      description: { type: "offer"; sdp: string }
+    }
+  | {
+      type: "signal:answer"
+      roomCode: string
+      from: string
+      peerSessionId: string
+      description: { type: "answer"; sdp: string }
+    }
+  | {
+      type: "signal:ice"
+      roomCode: string
+      from: string
+      peerSessionId: string
+      candidate: IceCandidateDto | null
+    }
   | { type: "error"; code: string; message: string }
 ```
+
+Every signaling frame is authorized before forwarding:
+
+- The sending socket must have joined `roomCode`, and the sender must still be a room participant.
+- `to` must be another current participant in the same room.
+- Only the room sender may send offers. Only receivers may answer the sender.
+- ICE candidates may flow only between the sender and a receiver.
+- Opening a replacement socket with the same visitor token supersedes the older socket.
+
+`peerSessionId` identifies one browser peer generation and is forwarded unchanged. Clients must ignore answers and ICE candidates for an older peer session.
+
+The WebSocket API carries signaling only. Transfer requests, decisions, text payloads, and receipts use the versioned WebRTC DataChannel protocol from `@p2p/contracts`; the API never receives transfer messages or text contents.
 
 ## Error Codes
 
 - `VISITOR_NOT_FOUND`: token is missing, invalid, or expired.
 - `ROOM_NOT_FOUND`: room does not exist or has expired.
 - `ROOM_SENDER_EXISTS`: attempted to join as sender when the room already has one.
+- `SIGNAL_NOT_ALLOWED`: the socket has not joined the room, targets itself, or violates sender/receiver signaling roles.
+- `SIGNAL_TARGET_NOT_IN_ROOM`: the target visitor is not a current participant in the referenced room.
