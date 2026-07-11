@@ -35,3 +35,16 @@ export type ApiError = {
   code: string
   message: string
 }
+
+export type ApiErrorCode =
+  | 'VISITOR_NOT_FOUND'
+  | 'ROOM_NOT_FOUND'
+  | 'ROOM_SENDER_EXISTS'
+  | 'SIGNAL_NOT_ALLOWED'
+  | 'SIGNAL_TARGET_NOT_IN_ROOM'
+  | 'ROOM_MEMBERSHIP_REQUIRED'
+  | 'TURN_NOT_CONFIGURED'
+  | 'RATE_LIMITED'
+  | 'CAPACITY_EXCEEDED'
+  | 'ROOM_EXPIRED'
+  | 'ORIGIN_NOT_ALLOWED'

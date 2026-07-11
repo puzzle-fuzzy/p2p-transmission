@@ -1,5 +1,6 @@
 export type {
   ApiError,
+  ApiErrorCode,
   ParticipantRole,
   ParticipantStatus,
   PublicParticipant,
@@ -7,6 +8,21 @@ export type {
   PublicVisitor,
   VisitorSession,
 } from './model'
+export {
+  isPublicRoom,
+  isRoomBootstrapRequest,
+  isRoomIceMode,
+  isRoomSessionBootstrap,
+  isRtcConfigurationDto,
+  isRtcIceServerDto,
+} from './ice'
+export type {
+  RoomBootstrapRequest,
+  RoomIceMode,
+  RoomSessionBootstrap,
+  RtcConfigurationDto,
+  RtcIceServerDto,
+} from './ice'
 export type {
   ClientRealtimeMessage,
   IceCandidateDto,

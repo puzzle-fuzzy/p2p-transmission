@@ -37,6 +37,8 @@ export type SignalClientMessage =
     }
 
 export type ClientRealtimeMessage =
+  | { type: 'room:attach'; roomCode: string; role: ParticipantRole }
+  /** @deprecated Temporary migration shim; removed after the Web migration. */
   | { type: 'room:join'; roomCode: string; role: ParticipantRole }
   | { type: 'room:leave'; roomCode: string }
   | SignalClientMessage
