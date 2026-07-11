@@ -1,4 +1,7 @@
+import type { ApiConfig } from "../../config";
 import type { AppContext } from "../../context";
+import type { MaintenanceEvent, MaintenanceService } from "../maintenance/model";
+import type { RoomTransition } from "../room/model";
 import type {
   ClientRealtimeMessage,
   RealtimeConnectionResult,
@@ -6,10 +9,20 @@ import type {
   SignalClientMessage,
 } from "./model";
 
+const DEFAULT_MAX_SOCKETS = 10_000;
+
 export type RealtimeSocket = {
   id: string;
+  origin: string | null;
   send(message: ServerRealtimeMessage): void;
   close(): void;
+};
+
+type RealtimeContext = {
+  config: Pick<ApiConfig, "corsAllowedOrigins">;
+  visitors: AppContext["visitors"];
+  rooms: AppContext["rooms"];
+  maintenance: Pick<MaintenanceService, "sweepForAdmission" | "subscribe">;
 };
 
 type Connection = {
@@ -20,13 +33,17 @@ type Connection = {
 };
 
 type RealtimeError = {
-  code: "SIGNAL_NOT_ALLOWED" | "SIGNAL_TARGET_NOT_IN_ROOM";
+  code: string;
   message: string;
 };
 
 type SignalAuthorization =
-  | { ok: true }
-  | { ok: false; error: { code: string; message: string } };
+  | { ok: true; target: Connection }
+  | { ok: false; error: RealtimeError };
+
+export type RealtimeHubOptions = {
+  maxSockets?: number;
+};
 
 export type RealtimeHub = {
   connect(socket: RealtimeSocket, token: string): RealtimeConnectionResult;
@@ -35,56 +52,150 @@ export type RealtimeHub = {
 };
 
 const visitorNotFound = {
-  code: "VISITOR_NOT_FOUND",
+  code: "VISITOR_NOT_FOUND" as const,
   message: "访客不存在或已过期",
 };
 
-const signalNotAllowed: RealtimeError = {
+const capacityExceeded = {
+  code: "CAPACITY_EXCEEDED" as const,
+  message: "实时连接容量已满",
+};
+
+const originNotAllowed = {
+  code: "ORIGIN_NOT_ALLOWED" as const,
+  message: "实时连接来源不受信任",
+};
+
+const signalNotAllowed = {
   code: "SIGNAL_NOT_ALLOWED",
   message: "当前连接无权发送该信令",
 };
 
-const signalTargetNotInRoom: RealtimeError = {
+const signalTargetNotInRoom = {
   code: "SIGNAL_TARGET_NOT_IN_ROOM",
   message: "信令目标不在当前房间",
 };
 
-const sendError = (socket: RealtimeSocket, error: { code: string; message: string }) => {
-  socket.send({
+const safeSend = (socket: RealtimeSocket, message: ServerRealtimeMessage) => {
+  try {
+    socket.send(message);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const safeClose = (socket: RealtimeSocket) => {
+  try {
+    socket.close();
+  } catch {
+    // A broken socket must not interrupt cleanup for the remaining peers.
+  }
+};
+
+const sendError = (socket: RealtimeSocket, error: RealtimeError) => {
+  safeSend(socket, {
     type: "error",
     code: error.code,
     message: error.message,
   });
 };
 
-export const createRealtimeHub = (context: AppContext): RealtimeHub => {
+const assertPositiveSafeInteger = (value: number, label: string) => {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new RangeError(`${label} must be a positive safe integer`);
+  }
+};
+
+export const createRealtimeHub = (
+  context: RealtimeContext,
+  options: RealtimeHubOptions = {},
+): RealtimeHub => {
+  const maxSockets = options.maxSockets ?? DEFAULT_MAX_SOCKETS;
+  assertPositiveSafeInteger(maxSockets, "Realtime socket capacity");
+  const allowedOrigins = new Set(context.config.corsAllowedOrigins);
   const connectionsBySocket = new Map<string, Connection>();
   const socketIdsByVisitor = new Map<string, string>();
 
-  const sendToVisitor = (visitorId: string, message: ServerRealtimeMessage) => {
+  const currentConnection = (visitorId: string) => {
     const socketId = socketIdsByVisitor.get(visitorId);
-    if (!socketId) return;
-
-    connectionsBySocket.get(socketId)?.socket.send(message);
+    return socketId ? connectionsBySocket.get(socketId) : undefined;
   };
 
-  const broadcastRoom = (roomCode: string, message: ServerRealtimeMessage) => {
-    const result = context.rooms.getRoom(roomCode);
-    if (!result.ok) return;
+  const sendToAttachedVisitor = (
+    visitorId: string,
+    roomCode: string,
+    message: ServerRealtimeMessage,
+  ) => {
+    const connection = currentConnection(visitorId);
+    if (!connection?.rooms.has(roomCode)) return false;
+    return safeSend(connection.socket, message);
+  };
 
-    for (const participant of result.room.participants) {
-      sendToVisitor(participant.visitor.id, message);
+  const transitionRoomCode = (transition: RoomTransition) =>
+    transition.type === "room:participants"
+      ? transition.room.code
+      : transition.roomCode;
+
+  const publishTransitions = (transitions: readonly RoomTransition[]) => {
+    if (transitions.length === 0) return;
+
+    // Snapshot every room before applying participant:left cleanup. A closed room no
+    // longer exists in RoomService, and a multi-left batch must reach all old peers.
+    const recipientsByRoom = new Map<string, Connection[]>();
+    for (const transition of transitions) {
+      const roomCode = transitionRoomCode(transition);
+      if (recipientsByRoom.has(roomCode)) continue;
+      recipientsByRoom.set(roomCode, Array.from(connectionsBySocket.values())
+        .filter(connection => connection.rooms.has(roomCode)));
+    }
+
+    for (const transition of transitions) {
+      const roomCode = transitionRoomCode(transition);
+      const recipients = recipientsByRoom.get(roomCode) ?? [];
+      if (transition.type === "room:participants") {
+        const participantIds = new Set(
+          transition.room.participants.map(participant => participant.visitor.id),
+        );
+        for (const connection of recipients) {
+          if (!participantIds.has(connection.visitorId)) continue;
+          safeSend(connection.socket, transition);
+        }
+        continue;
+      }
+
+      for (const connection of recipients) {
+        if (connection.visitorId === transition.visitorId) continue;
+        safeSend(connection.socket, transition);
+      }
+    }
+
+    for (const transition of transitions) {
+      if (transition.type !== "participant:left") continue;
+      currentConnection(transition.visitorId)?.rooms.delete(transition.roomCode);
     }
   };
 
-  const broadcastParticipants = (roomCode: string) => {
-    const result = context.rooms.getRoom(roomCode);
-    if (!result.ok) return;
+  const closeExpiredVisitor = (visitorId: string) => {
+    const socketId = socketIdsByVisitor.get(visitorId);
+    if (!socketId) return;
+    const connection = connectionsBySocket.get(socketId);
+    socketIdsByVisitor.delete(visitorId);
+    connectionsBySocket.delete(socketId);
+    if (connection) safeClose(connection.socket);
+  };
 
-    broadcastRoom(roomCode, {
-      type: "room:participants",
-      room: result.room,
-    });
+  const consumeMaintenanceEvents = (events: readonly MaintenanceEvent[]) => {
+    publishTransitions(events.filter(
+      (event): event is RoomTransition => event.type !== "visitor:expired",
+    ));
+    for (const event of events) {
+      if (event.type === "visitor:expired") closeExpiredVisitor(event.visitorId);
+    }
+  };
+
+  const touch = (connection: Connection) => {
+    context.visitors.touch(connection.visitorToken);
   };
 
   const authorizeSignal = (
@@ -100,14 +211,22 @@ export const createRealtimeHub = (context: AppContext): RealtimeHub => {
     const source = roomResult.room.participants.find(
       participant => participant.visitor.id === connection.visitorId,
     );
-    if (!source) return { ok: false, error: signalNotAllowed };
+    if (!source || source.status !== "online") {
+      return { ok: false, error: signalNotAllowed };
+    }
 
     const target = roomResult.room.participants.find(
       participant => participant.visitor.id === message.to,
     );
-    if (!target) return { ok: false, error: signalTargetNotInRoom };
+    if (!target || target.status !== "online") {
+      return { ok: false, error: signalTargetNotInRoom };
+    }
     if (target.visitor.id === source.visitor.id) {
       return { ok: false, error: signalNotAllowed };
+    }
+    const targetConnection = currentConnection(target.visitor.id);
+    if (!targetConnection?.rooms.has(message.roomCode)) {
+      return { ok: false, error: signalTargetNotInRoom };
     }
 
     const sourceIsSender = source.role === "sender"
@@ -124,7 +243,7 @@ export const createRealtimeHub = (context: AppContext): RealtimeHub => {
           || (sourceIsReceiver && targetIsSender);
 
     return isAllowed
-      ? { ok: true }
+      ? { ok: true, target: targetConnection }
       : { ok: false, error: signalNotAllowed };
   };
 
@@ -135,8 +254,9 @@ export const createRealtimeHub = (context: AppContext): RealtimeHub => {
       return;
     }
 
+    touch(connection);
     if (message.type === "signal:offer") {
-      sendToVisitor(message.to, {
+      safeSend(authorization.target.socket, {
         type: "signal:offer",
         roomCode: message.roomCode,
         from: connection.visitorId,
@@ -145,9 +265,8 @@ export const createRealtimeHub = (context: AppContext): RealtimeHub => {
       });
       return;
     }
-
     if (message.type === "signal:answer") {
-      sendToVisitor(message.to, {
+      safeSend(authorization.target.socket, {
         type: "signal:answer",
         roomCode: message.roomCode,
         from: connection.visitorId,
@@ -156,8 +275,7 @@ export const createRealtimeHub = (context: AppContext): RealtimeHub => {
       });
       return;
     }
-
-    sendToVisitor(message.to, {
+    safeSend(authorization.target.socket, {
       type: "signal:ice",
       roomCode: message.roomCode,
       from: connection.visitorId,
@@ -166,14 +284,45 @@ export const createRealtimeHub = (context: AppContext): RealtimeHub => {
     });
   };
 
+  const attach = (
+    connection: Connection,
+    message: Extract<ClientRealtimeMessage, { type: "room:attach" | "room:join" }>,
+  ) => {
+    const result = context.rooms.attach(
+      message.roomCode,
+      connection.visitorId,
+      message.role,
+    );
+    if (!result.ok) {
+      connection.rooms.delete(message.roomCode);
+      publishTransitions(result.transitions);
+      sendError(connection.socket, result.error);
+      return;
+    }
+
+    connection.rooms.add(message.roomCode);
+    touch(connection);
+    if (result.transitions.length > 0) {
+      publishTransitions(result.transitions);
+    } else {
+      sendToAttachedVisitor(connection.visitorId, message.roomCode, {
+        type: "room:participants",
+        room: result.room,
+      });
+    }
+  };
+
+  context.maintenance.subscribe(events => consumeMaintenanceEvents(events));
+
   return {
     connect(socket, token) {
+      // Admission cleanup owns stale room, visitor, and socket reclamation and
+      // therefore runs before authentication, capacity, origin, or touch effects.
+      context.maintenance.sweepForAdmission();
       const visitor = context.visitors.getByToken(token);
-
       if (!visitor) {
         sendError(socket, visitorNotFound);
-        socket.close();
-
+        safeClose(socket);
         return { ok: false, error: visitorNotFound };
       }
 
@@ -181,71 +330,71 @@ export const createRealtimeHub = (context: AppContext): RealtimeHub => {
       const previousConnection = previousSocketId
         ? connectionsBySocket.get(previousSocketId)
         : undefined;
+      const occupiedByAnother = connectionsBySocket.get(socket.id);
+      const replacesLiveSocket = previousConnection !== undefined;
+      const projectedSize = connectionsBySocket.size + 1 - (replacesLiveSocket ? 1 : 0);
+      if (
+        projectedSize > maxSockets
+        || (occupiedByAnother !== undefined && occupiedByAnother !== previousConnection)
+      ) {
+        sendError(socket, capacityExceeded);
+        safeClose(socket);
+        return { ok: false, error: capacityExceeded };
+      }
+
+      if (!socket.origin || !allowedOrigins.has(socket.origin)) {
+        sendError(socket, originNotAllowed);
+        safeClose(socket);
+        return { ok: false, error: originNotAllowed };
+      }
+
+      const touchedVisitor = context.visitors.touch(token);
+      if (!touchedVisitor) {
+        sendError(socket, visitorNotFound);
+        safeClose(socket);
+        return { ok: false, error: visitorNotFound };
+      }
+
+      if (previousConnection) {
+        const previousRooms = Array.from(previousConnection.rooms);
+        publishTransitions(context.rooms.markConnecting(visitor.id, previousRooms));
+      }
+
       const connection: Connection = {
         socket,
         visitorId: visitor.id,
         visitorToken: token,
-        rooms: new Set(previousConnection?.rooms),
+        rooms: new Set(),
       };
-
+      if (previousSocketId) connectionsBySocket.delete(previousSocketId);
       connectionsBySocket.set(socket.id, connection);
       socketIdsByVisitor.set(visitor.id, socket.id);
-
-      if (previousSocketId && previousConnection && previousSocketId !== socket.id) {
-        connectionsBySocket.delete(previousSocketId);
-        previousConnection.socket.close();
+      if (previousConnection && previousConnection.socket !== socket) {
+        safeClose(previousConnection.socket);
       }
 
-      const publicVisitor = context.visitors.toPublic(visitor);
-      socket.send({
-        type: "visitor:ready",
-        visitor: publicVisitor,
-      });
-
+      const publicVisitor = context.visitors.toPublic(touchedVisitor);
+      safeSend(socket, { type: "visitor:ready", visitor: publicVisitor });
       return { ok: true, visitor: publicVisitor };
     },
     handleMessage(socketId, message) {
       const connection = connectionsBySocket.get(socketId);
+      if (!connection || socketIdsByVisitor.get(connection.visitorId) !== socketId) return;
 
-      if (!connection) return;
-
-      if (message.type === "room:join") {
-        const result = context.rooms.joinRoom(
-          message.roomCode,
-          connection.visitorToken,
-          message.role,
-        );
-        if (!result.ok) {
-          sendError(connection.socket, result.error);
-          return;
-        }
-
-        connection.rooms.add(message.roomCode);
-        broadcastParticipants(message.roomCode);
-        return;
-      }
-
-      if (message.type === "room:attach") {
-        sendError(connection.socket, {
-          code: "ROOM_MEMBERSHIP_REQUIRED",
-          message: "请先通过房间接口创建或加入房间",
-        });
+      if (message.type === "room:attach" || message.type === "room:join") {
+        attach(connection, message);
         return;
       }
 
       if (message.type === "room:leave") {
-        const result = context.rooms.leaveRoom(message.roomCode, connection.visitorId);
+        const result = context.rooms.leave(message.roomCode, connection.visitorId);
         connection.rooms.delete(message.roomCode);
+        publishTransitions(result.transitions);
         if (!result.ok) {
           sendError(connection.socket, result.error);
           return;
         }
-
-        broadcastRoom(message.roomCode, {
-          type: "participant:left",
-          roomCode: message.roomCode,
-          visitorId: connection.visitorId,
-        });
+        touch(connection);
         return;
       }
 
@@ -253,22 +402,15 @@ export const createRealtimeHub = (context: AppContext): RealtimeHub => {
     },
     disconnect(socketId) {
       const connection = connectionsBySocket.get(socketId);
-
       if (!connection) return;
-
       connectionsBySocket.delete(socketId);
       if (socketIdsByVisitor.get(connection.visitorId) !== socketId) return;
 
       socketIdsByVisitor.delete(connection.visitorId);
-
-      for (const roomCode of connection.rooms) {
-        context.rooms.leaveRoom(roomCode, connection.visitorId);
-        broadcastRoom(roomCode, {
-          type: "participant:left",
-          roomCode,
-          visitorId: connection.visitorId,
-        });
-      }
+      publishTransitions(context.rooms.markConnecting(
+        connection.visitorId,
+        Array.from(connection.rooms),
+      ));
     },
   };
 };

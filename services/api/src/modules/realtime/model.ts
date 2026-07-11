@@ -15,7 +15,7 @@ export type RealtimeConnectionResult =
   | {
       ok: false
       error: {
-        code: string
+        code: "VISITOR_NOT_FOUND" | "CAPACITY_EXCEEDED" | "ORIGIN_NOT_ALLOWED"
         message: string
       }
     }

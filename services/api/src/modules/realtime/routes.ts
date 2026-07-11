@@ -23,6 +23,11 @@ const iceCandidateSchema = t.Object({
 
 const clientMessageSchema = t.Union([
   t.Object({
+    type: t.Literal("room:attach"),
+    roomCode: t.String(),
+    role: t.Union([t.Literal("sender"), t.Literal("receiver")]),
+  }),
+  t.Object({
     type: t.Literal("room:join"),
     roomCode: t.String(),
     role: t.Union([t.Literal("sender"), t.Literal("receiver")]),
@@ -59,6 +64,9 @@ export const realtimeRoutes = (context: AppContext) => {
 
   return new Elysia()
     .ws("/v1/realtime", {
+      headers: t.Object({
+        origin: t.Optional(t.String()),
+      }),
       query: t.Object({
         token: t.String(),
       }),
@@ -66,6 +74,7 @@ export const realtimeRoutes = (context: AppContext) => {
       open(ws) {
         const socket: RealtimeSocket = {
           id: ws.id,
+          origin: ws.data.headers.origin ?? null,
           send: message => ws.send(message),
           close: () => ws.close(),
         };
