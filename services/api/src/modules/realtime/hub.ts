@@ -225,6 +225,14 @@ export const createRealtimeHub = (context: AppContext): RealtimeHub => {
         return;
       }
 
+      if (message.type === "room:attach") {
+        sendError(connection.socket, {
+          code: "ROOM_MEMBERSHIP_REQUIRED",
+          message: "请先通过房间接口创建或加入房间",
+        });
+        return;
+      }
+
       if (message.type === "room:leave") {
         const result = context.rooms.leaveRoom(message.roomCode, connection.visitorId);
         connection.rooms.delete(message.roomCode);

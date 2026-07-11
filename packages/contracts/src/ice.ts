@@ -35,7 +35,7 @@ const hasExactKeys = (
   value: Record<string, unknown>,
   expected: readonly string[],
 ) => Object.keys(value).length === expected.length
-  && expected.every(key => Object.hasOwn(value, key))
+  && expected.every(key => Object.prototype.hasOwnProperty.call(value, key))
 
 const isEpochMilliseconds = (value: unknown): value is number =>
   typeof value === 'number'
@@ -61,9 +61,9 @@ export const isRtcIceServerDto = (value: unknown): value is RtcIceServerDto => {
   }
   if (!value.urls.every(isIceUrl)) return false
 
-  const hasUsername = Object.hasOwn(value, 'username')
-  const hasCredential = Object.hasOwn(value, 'credential')
-  const hasCredentialType = Object.hasOwn(value, 'credentialType')
+  const hasUsername = Object.prototype.hasOwnProperty.call(value, 'username')
+  const hasCredential = Object.prototype.hasOwnProperty.call(value, 'credential')
+  const hasCredentialType = Object.prototype.hasOwnProperty.call(value, 'credentialType')
   if (hasUsername !== hasCredential) return false
   if (
     hasUsername
@@ -177,10 +177,12 @@ export const isRoomSessionBootstrap = (
   ])) {
     return false
   }
-  if (!Object.hasOwn(value, 'room') || !isPublicRoom(value.room)) return false
+  if (!Object.prototype.hasOwnProperty.call(value, 'room') || !isPublicRoom(value.room)) {
+    return false
+  }
 
-  const hasConfiguration = Object.hasOwn(value, 'rtcConfiguration')
-  const hasExpiry = Object.hasOwn(value, 'credentialExpiresAt')
+  const hasConfiguration = Object.prototype.hasOwnProperty.call(value, 'rtcConfiguration')
+  const hasExpiry = Object.prototype.hasOwnProperty.call(value, 'credentialExpiresAt')
   if (hasConfiguration !== hasExpiry) return false
   if (!hasConfiguration) return true
 
