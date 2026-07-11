@@ -5,13 +5,19 @@ import {
   useRef,
   useState,
 } from 'react'
-import IncomingTextRequestDialog, {
-  type IncomingTextRequest,
-} from './components/IncomingTextRequestDialog'
+import IncomingFileRequestDialog, {
+  type DownloadableReceivedFile,
+  type IncomingFileRequestDialogState,
+  type IncomingFileRequestItem,
+} from './components/IncomingFileRequestDialog'
 import Loading from './components/Loading'
-import ReceivedTextView, {
-  type ReceivedTextViewState,
-} from './components/ReceivedTextView'
+import ReceivedTextDialog, {
+  type ReceivedTextCopyStatus,
+} from './components/ReceivedTextDialog'
+import ReceiverPanel, {
+  type ReceiverPanelState,
+} from './components/ReceiverPanel'
+import RoomCodeCopyButton from './components/RoomCodeCopyButton'
 import RoomJoin from './components/RoomJoin'
 import TransferPanel from './components/TransferPanel'
 import ToastViewport from './components/ui/Toast'
@@ -21,10 +27,29 @@ import {
   roomFlowReducer,
 } from './features/room/state'
 import {
+  addFileSelections,
+  removeFileSelection,
+  type FileSelection,
+} from './features/transfer/file-selection'
+import {
   createPeerSession,
   type PeerSession,
   type PeerSessionEvent,
 } from './features/transfer/peer-session'
+import {
+  createProgressFrameScheduler,
+  type ProgressFrameScheduler,
+} from './features/transfer/progress-frame'
+import {
+  createActivity,
+  initialTransferUiState,
+  planIncomingText,
+  transferUiReducer,
+  type IncomingTextEvent,
+  type OutgoingActivity,
+  type TransferUiAction,
+  type TransferUiState,
+} from './features/transfer/ui-state'
 import {
   ApiClientError,
   createRoom,
@@ -48,15 +73,32 @@ import type {
   VisitorSession,
 } from './shared/contracts'
 
-type QueuedTextRequest = IncomingTextRequest & {
-  peerId: string
+type IncomingText = IncomingTextEvent & {
+  sender: PublicVisitor
 }
 
-const requestKey = (peerId: string, transferId: string) =>
-  peerId + '\u0000' + transferId
+type IncomingFileTransfer = {
+  peerId: string
+  transferId: string
+  sender: PublicVisitor
+  files: IncomingFileRequestItem[]
+  state: IncomingFileRequestDialogState
+}
+
+type FileProgressEvent = Extract<
+  PeerSessionEvent,
+  { type: 'transfer:file-progress' }
+>
 
 const senderFromRoom = (room?: PublicRoom) =>
   room?.participants.find(participant => participant.role === 'sender')?.visitor
+
+const visitorFromRoom = (room: PublicRoom | undefined, visitorId: string) =>
+  room?.participants.find(participant => participant.visitor.id === visitorId)?.visitor
+
+const receiversFromRoom = (room?: PublicRoom) =>
+  room?.participants.flatMap(participant =>
+    participant.role === 'receiver' ? [participant.visitor] : []) ?? []
 
 const removeParticipant = (room: PublicRoom, visitorId: string): PublicRoom => ({
   ...room,
@@ -65,11 +107,22 @@ const removeParticipant = (room: PublicRoom, visitorId: string): PublicRoom => (
     participant.visitor.id !== visitorId),
 })
 
+const isTerminalActivity = (activity?: OutgoingActivity) =>
+  activity?.phase === 'complete' || activity?.phase === 'error'
+
+const createFileId = () => `file_${crypto.randomUUID()}`
+
 function App() {
   const [state, dispatch] = useReducer(roomFlowReducer, initialRoomFlowState)
-  const [incomingRequests, setIncomingRequests] = useState<QueuedTextRequest[]>([])
-  const [receivingRequestKey, setReceivingRequestKey] = useState<string>()
-  const [receiverView, setReceiverView] = useState<ReceivedTextViewState>({
+  const [transferUiState, setTransferUiState] = useState<TransferUiState>(
+    initialTransferUiState,
+  )
+  const [fileSelections, setFileSelections] = useState<FileSelection[]>([])
+  const [selectionError, setSelectionError] = useState('')
+  const [incomingTexts, setIncomingTexts] = useState<IncomingText[]>([])
+  const [textCopyStatus, setTextCopyStatus] = useState<ReceivedTextCopyStatus>('idle')
+  const [incomingFile, setIncomingFile] = useState<IncomingFileTransfer>()
+  const [receiverPanelState, setReceiverPanelState] = useState<ReceiverPanelState>({
     status: 'waiting',
   })
   const {
@@ -77,30 +130,177 @@ function App() {
     show: showToast,
     dismiss: dismissToast,
   } = useToast()
+
   const realtimeRef = useRef<RealtimeClient | undefined>(undefined)
   const peerSessionRef = useRef<PeerSession | undefined>(undefined)
   const roomRef = useRef<PublicRoom | undefined>(undefined)
-  const incomingRequestsRef = useRef<QueuedTextRequest[]>([])
-  const receivingRequestKeyRef = useRef<string | undefined>(undefined)
+  const transferUiStateRef = useRef<TransferUiState>(initialTransferUiState)
+  const fileSelectionsRef = useRef<FileSelection[]>([])
+  const incomingTextsRef = useRef<IncomingText[]>([])
+  const incomingFileRef = useRef<IncomingFileTransfer | undefined>(undefined)
+  const progressSchedulerRef = useRef<ProgressFrameScheduler<FileProgressEvent> | undefined>(undefined)
+  const terminalHoldTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const terminalHoldIdentityRef = useRef<string | undefined>(undefined)
+  const objectUrlsRef = useRef(new Set<string>())
+  const textCopyOperationRef = useRef(0)
   const operationGenerationRef = useRef(0)
+  const transferGenerationRef = useRef(0)
+  const outgoingOfferInFlightRef = useRef(false)
+  const pendingOutgoingEventsRef = useRef<PeerSessionEvent[]>([])
   const peerRetryCountsRef = useRef(new Map<string, number>())
   const peerRetryTimersRef = useRef(new Set<ReturnType<typeof setTimeout>>())
   const bootedRef = useRef(false)
 
-  const replaceIncomingRequests = useCallback((requests: QueuedTextRequest[]) => {
-    incomingRequestsRef.current = requests
-    setIncomingRequests(requests)
+  const replaceFileSelections = useCallback((selections: FileSelection[]) => {
+    fileSelectionsRef.current = selections
+    setFileSelections(selections)
   }, [])
 
-  const setReceivingRequest = useCallback((key?: string) => {
-    receivingRequestKeyRef.current = key
-    setReceivingRequestKey(key)
+  const replaceIncomingTexts = useCallback((texts: IncomingText[]) => {
+    incomingTextsRef.current = texts
+    setIncomingTexts(texts)
   }, [])
 
-  const removeIncomingRequest = useCallback((peerId: string, transferId: string) => {
-    replaceIncomingRequests(incomingRequestsRef.current.filter(request =>
-      request.peerId !== peerId || request.transferId !== transferId))
-  }, [replaceIncomingRequests])
+  const replaceIncomingFile = useCallback((file?: IncomingFileTransfer) => {
+    incomingFileRef.current = file
+    setIncomingFile(file)
+  }, [])
+
+  const applyTransferAction = useCallback((action: TransferUiAction) => {
+    const next = transferUiReducer(transferUiStateRef.current, action)
+    transferUiStateRef.current = next
+    setTransferUiState(next)
+    return next
+  }, [])
+
+  const clearTerminalHold = useCallback(() => {
+    if (terminalHoldTimerRef.current !== undefined) {
+      clearTimeout(terminalHoldTimerRef.current)
+      terminalHoldTimerRef.current = undefined
+    }
+    terminalHoldIdentityRef.current = undefined
+  }, [])
+
+  const revokeObjectUrl = useCallback((url: string) => {
+    if (!objectUrlsRef.current.delete(url)) return
+    URL.revokeObjectURL(url)
+  }, [])
+
+  const revokeAllObjectUrls = useCallback(() => {
+    const urls = Array.from(objectUrlsRef.current)
+    objectUrlsRef.current.clear()
+    for (const url of urls) URL.revokeObjectURL(url)
+  }, [])
+
+  const flushProgressEvents = useCallback((events: readonly FileProgressEvent[]) => {
+    let nextTransferState = transferUiStateRef.current
+    for (const event of events) {
+      nextTransferState = transferUiReducer(nextTransferState, {
+        type: 'peer-session:event',
+        event,
+      })
+    }
+    if (nextTransferState !== transferUiStateRef.current) {
+      transferUiStateRef.current = nextTransferState
+      setTransferUiState(nextTransferState)
+    }
+
+    const current = incomingFileRef.current
+    if (!current || current.state.status !== 'receiving') return
+
+    const progress = events.reduce((maximum, event) => {
+      if (
+        event.direction !== 'receiving'
+        || event.peerId !== current.peerId
+        || event.transferId !== current.transferId
+      ) {
+        return maximum
+      }
+      if (event.batchTotalBytes <= 0) return maximum
+      return Math.max(maximum, event.batchBytes / event.batchTotalBytes * 100)
+    }, current.state.progress)
+
+    if (progress === current.state.progress) return
+    replaceIncomingFile({
+      ...current,
+      state: { status: 'receiving', progress: Math.min(100, progress) },
+    })
+  }, [replaceIncomingFile])
+
+  const getProgressScheduler = useCallback(() => {
+    if (!progressSchedulerRef.current) {
+      progressSchedulerRef.current = createProgressFrameScheduler<FileProgressEvent>({
+        requestFrame: callback => window.requestAnimationFrame(callback),
+        cancelFrame: frame => window.cancelAnimationFrame(frame),
+        onFlush: flushProgressEvents,
+      })
+    }
+    return progressSchedulerRef.current
+  }, [flushProgressEvents])
+
+  const armTerminalHold = useCallback((activity?: OutgoingActivity) => {
+    if (!isTerminalActivity(activity) || !activity) return
+
+    progressSchedulerRef.current?.clear()
+    const identity = `${String(activity.generation)}\u0000${activity.transferId}`
+    if (
+      terminalHoldIdentityRef.current === identity
+      && terminalHoldTimerRef.current !== undefined
+    ) {
+      return
+    }
+
+    clearTerminalHold()
+    terminalHoldIdentityRef.current = identity
+    terminalHoldTimerRef.current = setTimeout(() => {
+      terminalHoldTimerRef.current = undefined
+      terminalHoldIdentityRef.current = undefined
+      const current = transferUiStateRef.current.activity
+      if (
+        current?.generation !== activity.generation
+        || current.transferId !== activity.transferId
+      ) {
+        return
+      }
+      applyTransferAction({
+        type: 'terminal:clear',
+        generation: activity.generation,
+        transferId: activity.transferId,
+      })
+    }, 400)
+  }, [applyTransferAction, clearTerminalHold])
+
+  const resetTransferPresentation = useCallback((
+    action: Extract<TransferUiAction, { type: 'room:reset' | 'realtime:disconnected' }>,
+  ) => {
+    clearTerminalHold()
+    progressSchedulerRef.current?.clear()
+    revokeAllObjectUrls()
+    textCopyOperationRef.current += 1
+    outgoingOfferInFlightRef.current = false
+    pendingOutgoingEventsRef.current = []
+    replaceIncomingTexts([])
+    replaceIncomingFile()
+    replaceFileSelections([])
+    setSelectionError('')
+    setTextCopyStatus('idle')
+    setReceiverPanelState({ status: 'waiting' })
+    applyTransferAction(action)
+  }, [
+    applyTransferAction,
+    clearTerminalHold,
+    replaceFileSelections,
+    replaceIncomingFile,
+    replaceIncomingTexts,
+    revokeAllObjectUrls,
+  ])
+
+  const disposeBrowserTransferResources = useCallback(() => {
+    clearTerminalHold()
+    progressSchedulerRef.current?.clear()
+    revokeAllObjectUrls()
+    textCopyOperationRef.current += 1
+  }, [clearTerminalHold, revokeAllObjectUrls])
 
   const disposePeerSession = useCallback(() => {
     for (const timer of peerRetryTimersRef.current) clearTimeout(timer)
@@ -117,9 +317,8 @@ function App() {
     realtime?.close()
     disposePeerSession()
     roomRef.current = undefined
-    replaceIncomingRequests([])
-    setReceivingRequest()
-  }, [disposePeerSession, replaceIncomingRequests, setReceivingRequest])
+    resetTransferPresentation({ type: 'room:reset' })
+  }, [disposePeerSession, resetTransferPresentation])
 
   useEffect(() => {
     if (!bootedRef.current) {
@@ -149,11 +348,10 @@ function App() {
       const realtime = realtimeRef.current
       realtimeRef.current = undefined
       realtime?.close()
-      const peerSession = peerSessionRef.current
-      peerSessionRef.current = undefined
-      peerSession?.close()
+      disposePeerSession()
+      disposeBrowserTransferResources()
     }
-  }, [showToast])
+  }, [disposeBrowserTransferResources, disposePeerSession, showToast])
 
   const connectRealtime = useCallback((
     session: VisitorSession,
@@ -162,10 +360,7 @@ function App() {
   ) => {
     disposeRoomResources()
     roomRef.current = initialRoom
-    setReceiverView({
-      status: 'waiting',
-      sender: senderFromRoom(initialRoom),
-    })
+    setReceiverPanelState({ status: 'waiting' })
 
     const client = createRealtimeClient({ token: session.token })
     realtimeRef.current = client
@@ -182,6 +377,36 @@ function App() {
       })
       peerSessionRef.current = peerSession
 
+      const applyOutgoingEvent = (event: PeerSessionEvent) => {
+        if (
+          outgoingOfferInFlightRef.current
+          && !transferUiStateRef.current.activity
+        ) {
+          pendingOutgoingEventsRef.current.push(event)
+          return
+        }
+        const next = applyTransferAction({ type: 'peer-session:event', event })
+        armTerminalHold(next.activity)
+      }
+
+      const failIncomingFile = (peerId: string, transferId: string, message?: string) => {
+        const current = incomingFileRef.current
+        if (
+          !current
+          || current.peerId !== peerId
+          || current.transferId !== transferId
+          || current.state.status === 'received'
+        ) {
+          return
+        }
+        progressSchedulerRef.current?.clear()
+        replaceIncomingFile({
+          ...current,
+          state: { status: 'error', message },
+        })
+        setReceiverPanelState({ status: 'error', message })
+      }
+
       const onPeerEvent = (event: PeerSessionEvent) => {
         if (peerSessionRef.current !== peerSession) return
 
@@ -192,6 +417,18 @@ function App() {
           })
           if (event.state === 'ready') {
             peerRetryCountsRef.current.delete(event.peerId)
+          }
+          if (event.state === 'closed') {
+            progressSchedulerRef.current?.clear()
+            applyOutgoingEvent(event)
+            const currentFile = incomingFileRef.current
+            if (currentFile?.peerId === event.peerId) {
+              failIncomingFile(
+                currentFile.peerId,
+                currentFile.transferId,
+                '发送者已离开，文件传输已取消。',
+              )
+            }
           }
           if (event.state === 'closed' && role === 'sender') {
             const activeRoom = roomRef.current
@@ -218,103 +455,113 @@ function App() {
           return
         }
 
-        if (event.type === 'transfer:request') {
-          const sender = roomRef.current?.participants
-            .find(participant => participant.visitor.id === event.peerId)
-            ?.visitor
+        if (event.type === 'transfer:text-received') {
+          const sender = visitorFromRoom(roomRef.current, event.peerId)
           if (!sender) {
-            peerSession.rejectText(event.peerId, event.request.transferId)
+            peerSession.discardText(event.peerId, event.transferId)
             return
           }
 
-          const duplicate = incomingRequestsRef.current.some(request =>
-            request.peerId === event.peerId
-            && request.transferId === event.request.transferId)
-          if (duplicate) return
-          if (incomingRequestsRef.current.length >= 5) {
-            peerSession.rejectText(event.peerId, event.request.transferId)
-            showToast('接收队列已满，已拒绝新的传输请求', 'info')
-            return
-          }
-
-          replaceIncomingRequests([
-            ...incomingRequestsRef.current,
-            {
-              ...event.request,
-              peerId: event.peerId,
-              sender,
-            },
-          ])
-          return
-        }
-
-        if (event.type === 'transfer:received') {
-          const sender = roomRef.current?.participants
-            .find(participant => participant.visitor.id === event.peerId)
-            ?.visitor
-          removeIncomingRequest(event.peerId, event.transferId)
-          if (receivingRequestKeyRef.current === requestKey(event.peerId, event.transferId)) {
-            setReceivingRequest()
-          }
-          setReceiverView({
-            status: 'received',
+          const planned = planIncomingText(incomingTextsRef.current, {
+            ...event,
             sender,
-            text: event.text,
+          }, 5)
+          replaceIncomingTexts(planned.queue)
+          if (planned.disposition === 'acknowledge') {
+            peerSession.acknowledgeText(event.peerId, event.transferId)
+          } else {
+            peerSession.discardText(event.peerId, event.transferId)
+            showToast('接收队列已满，新的文本未显示', 'info')
+          }
+          return
+        }
+
+        if (event.type === 'transfer:file-requested') {
+          const sender = visitorFromRoom(roomRef.current, event.peerId)
+          if (!sender || incomingFileRef.current) {
+            peerSession.rejectFiles(event.peerId, event.transferId)
+            if (incomingFileRef.current) {
+              showToast('已有文件请求正在处理，新的请求已拒绝', 'info')
+            }
+            return
+          }
+
+          replaceIncomingFile({
+            peerId: event.peerId,
+            transferId: event.transferId,
+            sender,
+            files: event.files.map(file => ({
+              fileId: file.fileId,
+              name: file.name,
+              byteLength: file.byteLength,
+            })),
+            state: { status: 'pending' },
           })
-          showToast('文本接收完成', 'success')
           return
         }
 
-        if (event.type === 'transfer:decision') {
-          showToast(
-            event.decision === 'accept'
-              ? '接收者已确认，正在发送文本'
-              : '一位接收者拒绝了本次传输',
-            event.decision === 'accept' ? 'info' : 'error',
-          )
+        if (event.type === 'transfer:file-progress') {
+          getProgressScheduler().push(event)
           return
         }
 
-        if (event.type === 'transfer:receipt') {
-          showToast('文本已送达一位接收者', 'success')
+        if (
+          event.type === 'transfer:file-decision'
+          || event.type === 'transfer:file-receipt'
+        ) {
+          applyOutgoingEvent(event)
           return
         }
 
-        if (event.type === 'transfer:cancelled') {
-          const key = requestKey(event.peerId, event.transferId)
-          const wasReceiving = receivingRequestKeyRef.current === key
-          removeIncomingRequest(event.peerId, event.transferId)
-          if (wasReceiving) {
-            setReceivingRequest()
-            setReceiverView({
-              status: 'error',
-              sender: senderFromRoom(roomRef.current),
-              message: event.reason === 'peer-closed'
-                ? '发送者已离开，传输已取消。'
-                : '传输请求已失效，请让对方重新发送。',
+        if (event.type === 'transfer:files-received') {
+          const current = incomingFileRef.current
+          if (
+            !current
+            || current.peerId !== event.peerId
+            || current.transferId !== event.transferId
+            || current.state.status === 'received'
+          ) {
+            return
+          }
+
+          const createdUrls: string[] = []
+          try {
+            const files: DownloadableReceivedFile[] = event.files.map(file => {
+              const url = URL.createObjectURL(file.blob)
+              createdUrls.push(url)
+              objectUrlsRef.current.add(url)
+              return {
+                fileId: file.fileId,
+                name: file.name,
+                byteLength: file.byteLength,
+                url,
+              }
             })
-          } else if (role === 'sender') {
-            showToast(
-              event.reason === 'timeout'
-                ? '接收者未响应，传输请求已失效'
-                : '一位接收者已断开',
-              'error',
-            )
+            progressSchedulerRef.current?.clear()
+            replaceIncomingFile({
+              ...current,
+              state: { status: 'received', files },
+            })
+            setReceiverPanelState({ status: 'waiting' })
+            showToast('文件接收完成', 'success')
+          } catch {
+            for (const url of createdUrls) revokeObjectUrl(url)
+            failIncomingFile(event.peerId, event.transferId, '无法准备文件下载，请重新接收。')
+          }
+          return
+        }
+
+        if (event.type === 'transfer:terminal') {
+          progressSchedulerRef.current?.clear()
+          applyOutgoingEvent(event)
+          if (event.outcome !== 'completed') {
+            failIncomingFile(event.peerId, event.transferId)
           }
           return
         }
 
         if (event.peerId && event.transferId) {
-          const key = requestKey(event.peerId, event.transferId)
-          if (receivingRequestKeyRef.current === key) {
-            removeIncomingRequest(event.peerId, event.transferId)
-            setReceivingRequest()
-            setReceiverView({
-              status: 'error',
-              sender: senderFromRoom(roomRef.current),
-              message: event.message,
-            })
-          }
+          failIncomingFile(event.peerId, event.transferId, event.message)
         }
         showToast(event.message)
       }
@@ -341,13 +588,6 @@ function App() {
         roomRef.current = message.room
         dispatch({ type: 'server:message', message })
         peerSessionRef.current?.syncRoom(message.room)
-        if (role === 'receiver') {
-          const sender = senderFromRoom(message.room)
-          setReceiverView(current => ({
-            ...current,
-            sender: sender ?? current.sender,
-          }))
-        }
         return
       }
 
@@ -405,18 +645,8 @@ function App() {
 
       if (status === 'reconnecting') {
         disposePeerSession()
-        replaceIncomingRequests([])
-        setReceivingRequest()
+        resetTransferPresentation({ type: 'realtime:disconnected' })
         dispatch({ type: 'realtime:disconnected' })
-        if (role === 'receiver') {
-          setReceiverView(current =>
-            current.status === 'received'
-              ? current
-              : {
-                  status: 'waiting',
-                  sender: senderFromRoom(roomRef.current),
-                })
-        }
         showToast('连接中断，正在重新连接…', 'info')
         return
       }
@@ -435,11 +665,15 @@ function App() {
 
     client.connect()
   }, [
+    applyTransferAction,
+    armTerminalHold,
     disposePeerSession,
     disposeRoomResources,
-    removeIncomingRequest,
-    replaceIncomingRequests,
-    setReceivingRequest,
+    getProgressScheduler,
+    replaceIncomingFile,
+    replaceIncomingTexts,
+    resetTransferPresentation,
+    revokeObjectUrl,
     showToast,
   ])
 
@@ -518,63 +752,209 @@ function App() {
     }
   }, [connectRealtime, runWithFreshSession, showToast, state.session])
 
+  const startActivity = useCallback((activity: OutgoingActivity) => {
+    clearTerminalHold()
+    let next = applyTransferAction({ type: 'activity:start', activity })
+    const pendingEvents = pendingOutgoingEventsRef.current
+    pendingOutgoingEventsRef.current = []
+    for (const event of pendingEvents) {
+      if (!('transferId' in event) || event.transferId !== activity.transferId) {
+        continue
+      }
+      next = applyTransferAction({ type: 'peer-session:event', event })
+    }
+    armTerminalHold(next.activity)
+  }, [applyTransferAction, armTerminalHold, clearTerminalHold])
+
   const handleSendText = useCallback(async (text: string) => {
-    const result = peerSessionRef.current?.offerText(text)
-    if (!result) throw new Error('点对点连接尚未就绪')
+    const peerSession = peerSessionRef.current
+    if (!peerSession) throw new Error('点对点连接尚未就绪')
+    outgoingOfferInFlightRef.current = true
+    pendingOutgoingEventsRef.current = []
+    let result: ReturnType<PeerSession['offerText']>
+    try {
+      result = peerSession.offerText(text)
+    } catch (error) {
+      pendingOutgoingEventsRef.current = []
+      throw error
+    } finally {
+      outgoingOfferInFlightRef.current = false
+    }
+    startActivity(createActivity({
+      generation: ++transferGenerationRef.current,
+      transferId: result.transferId,
+      kind: 'text',
+      peerIds: result.peerIds,
+      unsupportedPeerIds: result.unsupportedPeerIds,
+    }))
     showToast(
       result.peerCount === 1
-        ? '已向 1 位接收者发出请求'
-        : '已向 ' + String(result.peerCount) + ' 位接收者发出请求',
+        ? '已向 1 位接收者发送文本'
+        : `已向 ${String(result.peerCount)} 位接收者发送文本`,
       'info',
     )
+  }, [showToast, startActivity])
+
+  const handleFilesAdded = useCallback((files: readonly File[]) => {
+    if (transferUiStateRef.current.activity) return
+    const result = addFileSelections(
+      fileSelectionsRef.current,
+      files,
+      createFileId,
+    )
+    if (!result.ok) {
+      setSelectionError(result.message)
+      return
+    }
+    replaceFileSelections(result.selections)
+    setSelectionError('')
+  }, [replaceFileSelections])
+
+  const handleFileRemoved = useCallback((fileId: string) => {
+    if (transferUiStateRef.current.activity) return
+    replaceFileSelections(removeFileSelection(fileSelectionsRef.current, fileId))
+    setSelectionError('')
+  }, [replaceFileSelections])
+
+  const handleSendFiles = useCallback(async () => {
+    const peerSession = peerSessionRef.current
+    if (!peerSession) throw new Error('点对点连接尚未就绪')
+    const selections = fileSelectionsRef.current
+    if (selections.length === 0) throw new Error('请先选择文件')
+    outgoingOfferInFlightRef.current = true
+    pendingOutgoingEventsRef.current = []
+    let result: ReturnType<PeerSession['offerFiles']>
+    try {
+      result = peerSession.offerFiles(selections)
+    } catch (error) {
+      pendingOutgoingEventsRef.current = []
+      throw error
+    } finally {
+      outgoingOfferInFlightRef.current = false
+    }
+    startActivity(createActivity({
+      generation: ++transferGenerationRef.current,
+      transferId: result.transferId,
+      kind: 'file',
+      peerIds: result.peerIds,
+      unsupportedPeerIds: result.unsupportedPeerIds,
+      fileIds: selections.map(selection => selection.fileId),
+    }))
+    showToast(
+      result.peerCount === 1
+        ? '已向 1 位接收者发送文件请求'
+        : `已向 ${String(result.peerCount)} 位接收者发送文件请求`,
+      'info',
+    )
+  }, [showToast, startActivity])
+
+  const handleCancelTransfer = useCallback(() => {
+    const activity = transferUiStateRef.current.activity
+    if (!activity) return
+    if (!peerSessionRef.current?.cancelTransfer(activity.transferId)) {
+      showToast('无法取消当前传输')
+    }
   }, [showToast])
 
-  const activeRequest = incomingRequests[0]
-  const activeRequestKey = activeRequest
-    ? requestKey(activeRequest.peerId, activeRequest.transferId)
-    : undefined
+  const handleCloseText = useCallback(() => {
+    if (incomingTextsRef.current.length === 0) return
+    textCopyOperationRef.current += 1
+    replaceIncomingTexts(incomingTextsRef.current.slice(1))
+    setTextCopyStatus('idle')
+  }, [replaceIncomingTexts])
 
-  const handleAcceptRequest = useCallback(() => {
-    const request = incomingRequestsRef.current[0]
-    if (!request) return
-    const key = requestKey(request.peerId, request.transferId)
-    const accepted = peerSessionRef.current?.acceptText(
-      request.peerId,
-      request.transferId,
+  const handleCopyText = useCallback(async () => {
+    const current = incomingTextsRef.current[0]
+    if (!current) return
+    const operation = ++textCopyOperationRef.current
+    setTextCopyStatus('copying')
+
+    try {
+      if (!navigator.clipboard) throw new Error('clipboard unavailable')
+      await navigator.clipboard.writeText(current.text)
+      if (
+        textCopyOperationRef.current === operation
+        && incomingTextsRef.current[0] === current
+      ) {
+        setTextCopyStatus('copied')
+      }
+    } catch {
+      if (
+        textCopyOperationRef.current === operation
+        && incomingTextsRef.current[0] === current
+      ) {
+        setTextCopyStatus('error')
+        showToast('无法复制文本，请手动复制')
+      }
+    }
+  }, [showToast])
+
+  const handleAcceptFiles = useCallback(() => {
+    const current = incomingFileRef.current
+    if (!current || current.state.status !== 'pending') return
+    const accepted = peerSessionRef.current?.acceptFiles(
+      current.peerId,
+      current.transferId,
     )
     if (!accepted) {
-      removeIncomingRequest(request.peerId, request.transferId)
-      setReceiverView({
+      replaceIncomingFile({
+        ...current,
+        state: { status: 'error', message: '连接已中断，无法接收这些文件。' },
+      })
+      setReceiverPanelState({
         status: 'error',
-        sender: request.sender,
-        message: '连接已中断，无法接收这段文本。',
+        message: '连接已中断，无法接收这些文件。',
       })
       return
     }
-    setReceivingRequest(key)
-    setReceiverView({
-      status: 'receiving',
-      sender: request.sender,
+    replaceIncomingFile({
+      ...current,
+      state: { status: 'receiving', progress: 0 },
     })
-  }, [removeIncomingRequest, setReceivingRequest])
+    setReceiverPanelState({ status: 'receiving' })
+  }, [replaceIncomingFile])
 
-  const handleRejectRequest = useCallback(() => {
-    const request = incomingRequestsRef.current[0]
-    if (!request) return
-    peerSessionRef.current?.rejectText(request.peerId, request.transferId)
-    removeIncomingRequest(request.peerId, request.transferId)
-  }, [removeIncomingRequest])
+  const handleRejectFiles = useCallback(() => {
+    const current = incomingFileRef.current
+    if (!current || current.state.status !== 'pending') return
+    peerSessionRef.current?.rejectFiles(current.peerId, current.transferId)
+    replaceIncomingFile()
+    setReceiverPanelState({ status: 'waiting' })
+  }, [replaceIncomingFile])
 
-  const handleCopyText = useCallback(async (text: string) => {
-    if (!navigator.clipboard) throw new Error('当前浏览器不支持剪贴板')
-    await navigator.clipboard.writeText(text)
-  }, [])
+  const handleCloseFiles = useCallback(() => {
+    const current = incomingFileRef.current
+    if (!current) return
+    if (current.state.status === 'received') {
+      for (const file of current.state.files) revokeObjectUrl(file.url)
+    }
+    replaceIncomingFile()
+    setReceiverPanelState({ status: 'waiting' })
+  }, [replaceIncomingFile, revokeObjectUrl])
+
+  const handleCopyRoomCode = useCallback(async (code: string) => {
+    try {
+      if (!navigator.clipboard) throw new Error('clipboard unavailable')
+      await navigator.clipboard.writeText(code)
+      showToast('房间码已复制', 'success')
+    } catch {
+      showToast('无法复制房间码，请手动复制')
+      throw new Error('room code copy failed')
+    }
+  }, [showToast])
 
   const roomView = state.session && state.room && state.phase !== 'lobby'
     ? { session: state.session, room: state.room }
     : undefined
-  const receiverSender: PublicVisitor | undefined =
-    receiverView.sender ?? senderFromRoom(roomView?.room)
+  const activeText = incomingTexts[0]
+  const receiverSender = senderFromRoom(roomView?.room)
+  const roomReceivers = receiversFromRoom(roomView?.room)
+  const transferReceivers = transferUiState.activity
+    ? transferUiState.activity.peerIds.flatMap(peerId => {
+        const receiver = visitorFromRoom(roomView?.room, peerId)
+        return receiver ? [receiver] : []
+      })
+    : roomReceivers
 
   return (
     <div className="min-h-svh bg-[#2d2d2d] px-4 py-6 text-amber-50 sm:flex sm:items-center sm:justify-center">
@@ -594,8 +974,14 @@ function App() {
             <div className="flex items-center justify-between gap-4">
               <div>
                 <div className="text-xs text-amber-50/50">房间码</div>
-                <div className="text-xl font-mono tracking-[0.2em] text-amber-50/80 tabular-nums">
-                  {roomView.room.code}
+                <div className="mt-1 flex items-center gap-2">
+                  <div className="text-xl font-mono tracking-[0.2em] text-amber-50/80 tabular-nums">
+                    {roomView.room.code}
+                  </div>
+                  <RoomCodeCopyButton
+                    code={roomView.room.code}
+                    onCopy={handleCopyRoomCode}
+                  />
                 </div>
               </div>
               <div className="text-right text-xs">
@@ -612,28 +998,45 @@ function App() {
               <TransferPanel
                 visitor={roomView.session.visitor}
                 room={roomView.room}
+                receivers={transferReceivers}
                 readyPeerCount={state.readyPeerCount}
+                activity={transferUiState.activity}
+                files={fileSelections}
+                selectionError={selectionError}
+                onFilesAdded={handleFilesAdded}
+                onFileRemoved={handleFileRemoved}
                 onSendText={handleSendText}
+                onSendFiles={handleSendFiles}
+                onCancel={handleCancelTransfer}
               />
             ) : (
-              <ReceivedTextView
-                state={{
-                  ...receiverView,
-                  sender: receiverSender,
-                }}
-                onCopy={handleCopyText}
+              <ReceiverPanel
+                sender={receiverSender}
+                state={receiverPanelState}
               />
             )}
           </div>
         )}
       </main>
 
-      {activeRequest && (
-        <IncomingTextRequestDialog
-          request={activeRequest}
-          status={receivingRequestKey === activeRequestKey ? 'receiving' : 'pending'}
-          onAccept={handleAcceptRequest}
-          onReject={handleRejectRequest}
+      {activeText && (
+        <ReceivedTextDialog
+          sender={activeText.sender}
+          text={activeText.text}
+          copyStatus={textCopyStatus}
+          onCopy={() => { void handleCopyText() }}
+          onClose={handleCloseText}
+        />
+      )}
+
+      {incomingFile && (
+        <IncomingFileRequestDialog
+          sender={incomingFile.sender}
+          files={incomingFile.files}
+          state={incomingFile.state}
+          onAccept={handleAcceptFiles}
+          onReject={handleRejectFiles}
+          onClose={handleCloseFiles}
         />
       )}
 

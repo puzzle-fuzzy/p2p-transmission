@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 
-import { readFileSync } from 'node:fs'
 import type { ComponentProps } from 'react'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -9,6 +8,7 @@ import '../test/dom'
 import type { PublicRoom, PublicVisitor } from '../shared/contracts'
 import type { FileSelection } from '../features/transfer/file-selection'
 import type { OutgoingActivity } from '../features/transfer/ui-state'
+import transferPanelSource from './TransferPanel.tsx?raw'
 import TransferPanel from './TransferPanel'
 
 const createVisitor = (id: string, displayName: string): PublicVisitor => ({
@@ -288,11 +288,7 @@ describe('TransferPanel', () => {
     expect(dropZone.className.includes('focus-visible:border-accent')).toBe(true)
     expect(dropZone.className).not.toMatch(/(?:ring|shadow)/)
 
-    const source = readFileSync(
-      `${process.cwd()}/src/components/TransferPanel.tsx`,
-      'utf8',
-    )
-    expect(source).not.toMatch(/Math\.random|setInterval|mockTransfer|fakeProgress/i)
-    expect(source).not.toMatch(/(?:^|\s)(?:[\w-]*shadow|[\w-]*ring)(?:-|\[)/m)
+    expect(transferPanelSource).not.toMatch(/Math\.random|setInterval|mockTransfer|fakeProgress/i)
+    expect(transferPanelSource).not.toMatch(/(?:^|\s)(?:[\w-]*shadow|[\w-]*ring)(?:-|\[)/m)
   })
 })
