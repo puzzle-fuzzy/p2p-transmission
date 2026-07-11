@@ -10,8 +10,16 @@ function App() {
           <img src={viteSvg} alt="" />
         </div>
 
-        <div>
-          
+        <div className="flex items-center gap-1.5 px-5">
+          {[0, 1, 2, 3, 4, 5].map(i => (
+            <div
+              key={i}
+              className="w-2 h-2 bg-amber-50/60 rounded-full"
+              style={{
+                animation: `dot-wave 1.4s ease-in-out ${i * 0.2}s infinite`,
+              }}
+            />
+          ))}
         </div>
 
         <div className="flex items-center">
