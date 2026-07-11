@@ -7,7 +7,12 @@ import './test/dom'
 import type { FileSelection } from './features/transfer/file-selection'
 import type { PeerSessionEvent } from './features/transfer/peer-session'
 import type { OutgoingActivity } from './features/transfer/ui-state'
-import type { PublicRoom, PublicVisitor, VisitorSession } from './shared/contracts'
+import type {
+  PublicRoom,
+  PublicVisitor,
+  ServerRealtimeMessage,
+  VisitorSession,
+} from './shared/contracts'
 import App from './App'
 
 const boundary = vi.hoisted(() => ({
@@ -51,7 +56,9 @@ vi.mock('./lib/visitor-session', () => ({
 }))
 
 vi.mock('./lib/config', () => ({
-  getRtcConfiguration: () => ({}),
+  getClientIceMode: () => ({ mode: 'off', configuration: {} }),
+  resolveBootstrapRtcConfiguration: () => ({}),
+  roomIceMode: () => 'off',
 }))
 
 vi.mock('./components/ui/useToast', () => ({
@@ -190,7 +197,7 @@ vi.mock('./components/RoomCodeCopyButton', () => ({
   ),
 }))
 
-type RealtimeMessageListener = (message: never) => void
+type RealtimeMessageListener = (message: ServerRealtimeMessage) => void
 type RealtimeStatusListener = (
   status: 'idle' | 'connecting' | 'open' | 'reconnecting' | 'closed'
 ) => void
@@ -214,6 +221,10 @@ class FakeRealtimeClient {
 
   emitStatus(status: Parameters<RealtimeStatusListener>[0]) {
     for (const listener of this.statusListeners) listener(status)
+  }
+
+  emitMessage(message: ServerRealtimeMessage) {
+    for (const listener of this.messageListeners) listener(message)
   }
 }
 
@@ -274,7 +285,7 @@ const room: PublicRoom = {
     { visitor: receiver, role: 'receiver', joinedAt: 1, status: 'online' },
   ],
   createdAt: 1,
-  expiresAt: 2,
+  expiresAt: Date.now() + 30 * 60 * 1_000,
 }
 
 const sessionFor = (activeVisitor: PublicVisitor): VisitorSession => ({
@@ -327,8 +338,8 @@ beforeEach(() => {
   peerSession = new FakePeerSession()
   boundary.createRealtimeClient.mockReturnValue(realtime)
   boundary.createPeerSession.mockReturnValue(peerSession)
-  boundary.createRoom.mockResolvedValue(room)
-  boundary.joinRoom.mockResolvedValue(room)
+  boundary.createRoom.mockResolvedValue({ room })
+  boundary.joinRoom.mockResolvedValue({ room })
   boundary.createVisitor.mockResolvedValue(sessionFor(sender))
   boundary.loadVisitorSession.mockReturnValue(sessionFor(sender))
 
@@ -371,6 +382,59 @@ beforeEach(() => {
 })
 
 describe('App transfer integration', () => {
+  test('bootstraps ICE before realtime and attaches membership before creating peers', async () => {
+    boundary.loadVisitorSession.mockReturnValue(sessionFor(sender))
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: '创建测试房间' }))
+    await waitFor(() => expect(boundary.createRealtimeClient).toHaveBeenCalledTimes(1))
+
+    expect(boundary.createRoom).toHaveBeenCalledWith('token-sender', 'off')
+    expect(realtime.connect).toHaveBeenCalledTimes(1)
+    expect(boundary.createPeerSession).not.toHaveBeenCalled()
+
+    act(() => realtime.emitStatus('open'))
+
+    expect(realtime.send).toHaveBeenNthCalledWith(1, {
+      type: 'room:attach',
+      roomCode: room.code,
+      role: 'sender',
+    })
+    expect(boundary.createPeerSession).toHaveBeenCalledWith(expect.objectContaining({
+      selfId: sender.id,
+      roomCode: room.code,
+      role: 'sender',
+      rtcConfiguration: {},
+    }))
+  })
+
+  test('returns to a clean lobby when attached membership is no longer valid', async () => {
+    await enterRoom('receiver')
+    emit({
+      type: 'transfer:text-received',
+      peerId: sender.id,
+      transferId: 'text-before-expiry',
+      text: '只应显示到房间失效为止',
+    })
+    expect(screen.getByRole('dialog', { name: '收到文本' })).toBeTruthy()
+
+    act(() => realtime.emitMessage({
+      type: 'error',
+      code: 'ROOM_MEMBERSHIP_REQUIRED',
+      message: 'membership required',
+    }))
+
+    expect(realtime.close).toHaveBeenCalledTimes(1)
+    expect(peerSession.close).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog', { name: '收到文本' })).toBeNull()
+    expect(screen.getByRole('button', { name: '创建测试房间' })).toBeTruthy()
+    expect(boundary.showToast).toHaveBeenCalledWith(
+      '房间连接已失效，请重新加入',
+      'info',
+    )
+  })
+
   test('commits five exact text bodies before one ACK each and discards overflow once', async () => {
     const user = await enterRoom('receiver')
 

@@ -27,6 +27,10 @@ import {
   roomFlowReducer,
 } from './features/room/state'
 import {
+  createRoomSessionLifecycle,
+  type RoomSessionLifecycle,
+} from './features/room/session-lifecycle'
+import {
   addFileSelections,
   removeFileSelection,
   type FileSelection,
@@ -56,7 +60,11 @@ import {
   createVisitor,
   joinRoom,
 } from './lib/api-client'
-import { getRtcConfiguration } from './lib/config'
+import {
+  getClientIceMode,
+  resolveBootstrapRtcConfiguration,
+  roomIceMode,
+} from './lib/config'
 import {
   createRealtimeClient,
   type RealtimeClient,
@@ -70,6 +78,7 @@ import type {
   ParticipantRole,
   PublicRoom,
   PublicVisitor,
+  RoomSessionBootstrap,
   VisitorSession,
 } from './shared/contracts'
 
@@ -133,6 +142,8 @@ function App() {
 
   const realtimeRef = useRef<RealtimeClient | undefined>(undefined)
   const peerSessionRef = useRef<PeerSession | undefined>(undefined)
+  const roomLifecycleRef = useRef<RoomSessionLifecycle | undefined>(undefined)
+  const roomVisibilityCleanupRef = useRef<(() => void) | undefined>(undefined)
   const roomRef = useRef<PublicRoom | undefined>(undefined)
   const transferUiStateRef = useRef<TransferUiState>(initialTransferUiState)
   const fileSelectionsRef = useRef<FileSelection[]>([])
@@ -311,14 +322,22 @@ function App() {
     peerSession?.close()
   }, [])
 
+  const disposeRoomLifecycle = useCallback(() => {
+    roomVisibilityCleanupRef.current?.()
+    roomVisibilityCleanupRef.current = undefined
+    roomLifecycleRef.current?.stop()
+    roomLifecycleRef.current = undefined
+  }, [])
+
   const disposeRoomResources = useCallback(() => {
+    disposeRoomLifecycle()
     const realtime = realtimeRef.current
     realtimeRef.current = undefined
     realtime?.close()
     disposePeerSession()
     roomRef.current = undefined
     resetTransferPresentation({ type: 'room:reset' })
-  }, [disposePeerSession, resetTransferPresentation])
+  }, [disposePeerSession, disposeRoomLifecycle, resetTransferPresentation])
 
   useEffect(() => {
     if (!bootedRef.current) {
@@ -348,16 +367,25 @@ function App() {
       const realtime = realtimeRef.current
       realtimeRef.current = undefined
       realtime?.close()
+      disposeRoomLifecycle()
       disposePeerSession()
       disposeBrowserTransferResources()
     }
-  }, [disposeBrowserTransferResources, disposePeerSession, showToast])
+  }, [
+    disposeBrowserTransferResources,
+    disposePeerSession,
+    disposeRoomLifecycle,
+    showToast,
+  ])
 
   const connectRealtime = useCallback((
     session: VisitorSession,
-    initialRoom: PublicRoom,
+    bootstrap: RoomSessionBootstrap,
     role: ParticipantRole,
+    rtcConfiguration: RTCConfiguration,
+    roomGeneration: number,
   ) => {
+    const initialRoom = bootstrap.room
     disposeRoomResources()
     roomRef.current = initialRoom
     setReceiverPanelState({ status: 'waiting' })
@@ -366,13 +394,38 @@ function App() {
     realtimeRef.current = client
     let hasOpened = false
 
+    const lifecycle = createRoomSessionLifecycle({
+      expiresAt: initialRoom.expiresAt,
+      isCurrent: () => (
+        operationGenerationRef.current === roomGeneration
+        && realtimeRef.current === client
+        && roomLifecycleRef.current === lifecycle
+      ),
+      onExpire: () => {
+        if (operationGenerationRef.current !== roomGeneration) return
+        ++operationGenerationRef.current
+        disposeRoomResources()
+        dispatch({ type: 'visitor:ready', session })
+        showToast('房间已到期，请重新创建或加入', 'info')
+      },
+    })
+    roomLifecycleRef.current = lifecycle
+    const handleVisibilityChange = () => {
+      lifecycle.onVisibilityChange()
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    roomVisibilityCleanupRef.current = () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+
     const createActivePeerSession = () => {
+      if (!lifecycle.isActive()) return
       disposePeerSession()
       const peerSession = createPeerSession({
         selfId: session.visitor.id,
         roomCode: initialRoom.code,
         role,
-        rtcConfiguration: getRtcConfiguration(),
+        rtcConfiguration,
         sendSignal: message => client.send(message),
       })
       peerSessionRef.current = peerSession
@@ -441,6 +494,8 @@ function App() {
               const timer = setTimeout(() => {
                 peerRetryTimersRef.current.delete(timer)
                 if (
+                  lifecycle.beforePeerRetry()
+                  &&
                   peerSessionRef.current === peerSession
                   && roomRef.current?.participants.some(participant =>
                     participant.visitor.id === event.peerId
@@ -602,15 +657,26 @@ function App() {
         return
       }
 
-      showToast(message.message)
-      if (message.code === 'ROOM_NOT_FOUND' || message.code === 'VISITOR_NOT_FOUND') {
+      if (
+        message.code === 'ROOM_NOT_FOUND'
+        || message.code === 'ROOM_EXPIRED'
+        || message.code === 'ROOM_MEMBERSHIP_REQUIRED'
+      ) {
+        ++operationGenerationRef.current
+        disposeRoomResources()
+        dispatch({ type: 'visitor:ready', session })
+        showToast(
+          message.code === 'ROOM_MEMBERSHIP_REQUIRED'
+            ? '房间连接已失效，请重新加入'
+            : '房间已过期，请重新创建或加入',
+          'info',
+        )
+        return
+      }
+
+      if (message.code === 'VISITOR_NOT_FOUND') {
         const recoveryGeneration = ++operationGenerationRef.current
         disposeRoomResources()
-        if (message.code === 'ROOM_NOT_FOUND') {
-          dispatch({ type: 'visitor:ready', session })
-          return
-        }
-
         clearVisitorSession()
         void createVisitor()
           .then(freshSession => {
@@ -624,15 +690,19 @@ function App() {
             dispatch({ type: 'visitor:ready', session })
             showToast('无法恢复访客会话，请稍后重试')
           })
+        return
       }
+
+      showToast(message.message)
     })
 
     client.subscribeStatus(status => {
       if (realtimeRef.current !== client) return
 
       if (status === 'open') {
+        if (!lifecycle.onReconnect()) return
         client.send({
-          type: 'room:join',
+          type: 'room:attach',
           roomCode: initialRoom.code,
           role,
         })
@@ -663,6 +733,8 @@ function App() {
       }
     })
 
+    lifecycle.start()
+    if (!lifecycle.isActive()) return
     client.connect()
   }, [
     applyTransferAction,
@@ -708,17 +780,25 @@ function App() {
     dispatch({ type: 'room:joining' })
 
     try {
+      const iceMode = getClientIceMode()
       const result = await runWithFreshSession(
         state.session,
-        activeSession => createRoom(activeSession.token),
+        activeSession => createRoom(activeSession.token, roomIceMode(iceMode)),
       )
       if (operationGenerationRef.current !== operationGeneration) return
       if (result.session.token !== state.session.token) {
         dispatch({ type: 'visitor:ready', session: result.session })
       }
-      roomRef.current = result.value
-      dispatch({ type: 'room:created', room: result.value })
-      connectRealtime(result.session, result.value, 'sender')
+      const rtcConfiguration = resolveBootstrapRtcConfiguration(iceMode, result.value)
+      roomRef.current = result.value.room
+      dispatch({ type: 'room:created', room: result.value.room })
+      connectRealtime(
+        result.session,
+        result.value,
+        'sender',
+        rtcConfiguration,
+        operationGeneration,
+      )
     } catch (error) {
       if (operationGenerationRef.current !== operationGeneration) return
       const message = error instanceof Error ? error.message : '创建房间失败'
@@ -733,17 +813,30 @@ function App() {
     dispatch({ type: 'room:joining' })
 
     try {
+      const iceMode = getClientIceMode()
       const result = await runWithFreshSession(
         state.session,
-        activeSession => joinRoom(code, activeSession.token, 'receiver'),
+        activeSession => joinRoom(
+          code,
+          activeSession.token,
+          'receiver',
+          roomIceMode(iceMode),
+        ),
       )
       if (operationGenerationRef.current !== operationGeneration) return
       if (result.session.token !== state.session.token) {
         dispatch({ type: 'visitor:ready', session: result.session })
       }
-      roomRef.current = result.value
-      dispatch({ type: 'room:joined', room: result.value })
-      connectRealtime(result.session, result.value, 'receiver')
+      const rtcConfiguration = resolveBootstrapRtcConfiguration(iceMode, result.value)
+      roomRef.current = result.value.room
+      dispatch({ type: 'room:joined', room: result.value.room })
+      connectRealtime(
+        result.session,
+        result.value,
+        'receiver',
+        rtcConfiguration,
+        operationGeneration,
+      )
     } catch (error) {
       if (operationGenerationRef.current !== operationGeneration) return
       const message = error instanceof Error ? error.message : '加入房间失败'

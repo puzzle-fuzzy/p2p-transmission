@@ -78,10 +78,10 @@ describe('realtime-client', () => {
 
     client.connect()
     FakeWebSocket.instances[0]?.open()
-    client.send({ type: 'room:join', roomCode: '123456', role: 'sender' })
+    client.send({ type: 'room:attach', roomCode: '123456', role: 'sender' })
 
     expect(FakeWebSocket.instances[0]?.sent).toEqual([
-      JSON.stringify({ type: 'room:join', roomCode: '123456', role: 'sender' }),
+      JSON.stringify({ type: 'room:attach', roomCode: '123456', role: 'sender' }),
     ])
   })
 
@@ -94,13 +94,13 @@ describe('realtime-client', () => {
     })
 
     client.connect()
-    client.send({ type: 'room:join', roomCode: '123456', role: 'sender' })
+    client.send({ type: 'room:attach', roomCode: '123456', role: 'sender' })
     expect(FakeWebSocket.instances[0]?.sent).toEqual([])
 
     FakeWebSocket.instances[0]?.open()
 
     expect(FakeWebSocket.instances[0]?.sent).toEqual([
-      JSON.stringify({ type: 'room:join', roomCode: '123456', role: 'sender' }),
+      JSON.stringify({ type: 'room:attach', roomCode: '123456', role: 'sender' }),
     ])
   })
 
@@ -304,7 +304,7 @@ describe('realtime-client', () => {
 
       openCount += 1
       if (openCount === 2) {
-        client.send({ type: 'room:join', roomCode: '123456', role: 'sender' })
+        client.send({ type: 'room:attach', roomCode: '123456', role: 'sender' })
       }
     })
     client.connect()
@@ -325,7 +325,7 @@ describe('realtime-client', () => {
     reconnectedSocket?.open()
 
     expect(reconnectedSocket?.sent).toEqual([
-      JSON.stringify({ type: 'room:join', roomCode: '123456', role: 'sender' }),
+      JSON.stringify({ type: 'room:attach', roomCode: '123456', role: 'sender' }),
       JSON.stringify(queuedSignal),
     ])
   })

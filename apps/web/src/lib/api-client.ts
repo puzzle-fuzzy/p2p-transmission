@@ -1,5 +1,13 @@
 import { getApiBaseUrl } from './config'
-import type { ApiError, ParticipantRole, PublicRoom, VisitorSession } from '../shared/contracts'
+import { isRoomSessionBootstrap } from '@p2p/contracts'
+import type {
+  ApiError,
+  ParticipantRole,
+  PublicRoom,
+  RoomIceMode,
+  RoomSessionBootstrap,
+  VisitorSession,
+} from '../shared/contracts'
 
 export type ApiClientOptions = {
   fetch?: typeof fetch
@@ -8,9 +16,7 @@ export type ApiClientOptions = {
 
 type VisitorResponse = VisitorSession
 
-type RoomResponse = {
-  room: PublicRoom
-}
+type RoomResponse = { room: PublicRoom }
 
 type ErrorResponse = {
   error?: ApiError
@@ -68,31 +74,45 @@ const request = async <T>(
 export const createVisitor = (options?: ApiClientOptions) =>
   request<VisitorResponse>('/v1/visitors', { method: 'POST' }, options)
 
-export const createRoom = async (token: string, options?: ApiClientOptions) => {
-  const response = await request<RoomResponse>('/v1/rooms', {
-    method: 'POST',
-    headers: { authorization: `Bearer ${token}` },
-  }, options)
-
-  return response.room
+const assertRoomBootstrap = (value: unknown): RoomSessionBootstrap => {
+  if (isRoomSessionBootstrap(value)) return value
+  throw new ApiClientError('服务端返回了无效的房间配置', 'INVALID_API_RESPONSE', 200)
 }
 
-export const joinRoom = async (
-  code: string,
+export const createRoom = async (
   token: string,
-  role: ParticipantRole = 'receiver',
+  iceMode: RoomIceMode,
   options?: ApiClientOptions,
 ) => {
-  const response = await request<RoomResponse>(`/v1/rooms/${code}/join`, {
+  const response = await request<unknown>('/v1/rooms', {
     method: 'POST',
     headers: {
       authorization: `Bearer ${token}`,
       'content-type': 'application/json',
     },
-    body: JSON.stringify({ role }),
+    body: JSON.stringify({ iceMode }),
   }, options)
 
-  return response.room
+  return assertRoomBootstrap(response)
+}
+
+export const joinRoom = async (
+  code: string,
+  token: string,
+  role: ParticipantRole,
+  iceMode: RoomIceMode,
+  options?: ApiClientOptions,
+) => {
+  const response = await request<unknown>(`/v1/rooms/${code}/join`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ role, iceMode }),
+  }, options)
+
+  return assertRoomBootstrap(response)
 }
 
 export const getRoom = async (code: string, options?: ApiClientOptions) => {

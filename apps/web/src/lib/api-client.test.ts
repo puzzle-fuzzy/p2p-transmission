@@ -42,8 +42,8 @@ describe('api-client', () => {
     }
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ room })))
 
-    await createRoom('tok_1', { fetch: fetchMock, apiBaseUrl: 'http://api.test' })
-    await joinRoom('123456', 'tok_2', 'receiver', {
+    await createRoom('tok_1', 'api', { fetch: fetchMock, apiBaseUrl: 'http://api.test' })
+    await joinRoom('123456', 'tok_2', 'receiver', 'off', {
       fetch: fetchMock,
       apiBaseUrl: 'http://api.test',
     })
@@ -51,7 +51,11 @@ describe('api-client', () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(1, 'http://api.test/v1/rooms', {
       method: 'POST',
-      headers: { authorization: 'Bearer tok_1' },
+      headers: {
+        authorization: 'Bearer tok_1',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ iceMode: 'api' }),
     })
     expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://api.test/v1/rooms/123456/join', {
       method: 'POST',
@@ -59,7 +63,7 @@ describe('api-client', () => {
         authorization: 'Bearer tok_2',
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ role: 'receiver' }),
+      body: JSON.stringify({ role: 'receiver', iceMode: 'off' }),
     })
     expect(fetchMock).toHaveBeenNthCalledWith(3, 'http://api.test/v1/rooms/123456', {
       method: 'GET',
@@ -88,7 +92,7 @@ describe('api-client', () => {
       },
     }), { status: 401 }))
 
-    const request = createRoom('stale-token', {
+    const request = createRoom('stale-token', 'api', {
       fetch: fetchMock,
       apiBaseUrl: 'http://api.test',
     })
@@ -99,6 +103,47 @@ describe('api-client', () => {
       message: '访客身份已失效',
       code: 'VISITOR_NOT_FOUND',
       status: 401,
+    })
+  })
+
+  test('returns an atomic room bootstrap and rejects unpaired TURN fields', async () => {
+    const room = {
+      code: '123456',
+      senderId: 'vis_1',
+      receivers: [],
+      participants: [],
+      createdAt: 1,
+      expiresAt: 2,
+    }
+    const bootstrap = {
+      room,
+      rtcConfiguration: {
+        iceServers: [{
+          urls: ['turn:turn.example.com:3478'],
+          username: '3:vis_1',
+          credential: 'signed',
+          credentialType: 'password',
+        }],
+      },
+      credentialExpiresAt: 3,
+    }
+    const validFetch = vi.fn(async () => new Response(JSON.stringify(bootstrap)))
+
+    await expect(createRoom('tok_1', 'api', {
+      fetch: validFetch,
+      apiBaseUrl: 'http://api.test',
+    })).resolves.toEqual(bootstrap)
+
+    const invalidFetch = vi.fn(async () => new Response(JSON.stringify({
+      room,
+      rtcConfiguration: bootstrap.rtcConfiguration,
+    })))
+    await expect(createRoom('tok_1', 'api', {
+      fetch: invalidFetch,
+      apiBaseUrl: 'http://api.test',
+    })).rejects.toMatchObject({
+      code: 'INVALID_API_RESPONSE',
+      status: 200,
     })
   })
 })
