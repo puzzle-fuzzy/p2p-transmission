@@ -1146,10 +1146,7 @@ function App() {
             <div className="flex items-center justify-between gap-4">
               <div>
                 <div className="text-xs text-amber-50/50">房间码</div>
-                <div className="mt-1 flex items-center gap-2">
-                  <div className="text-xl font-mono tracking-[0.2em] text-amber-50/80 tabular-nums">
-                    {roomView.room.code}
-                  </div>
+                <div className="mt-1">
                   <RoomCodeCopyButton
                     code={roomView.room.code}
                     onCopy={handleCopyRoomCode}

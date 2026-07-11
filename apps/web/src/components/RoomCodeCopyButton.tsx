@@ -46,18 +46,25 @@ export default function RoomCodeCopyButton({ code, onCopy }: RoomCodeCopyButtonP
     <>
       <button
         type="button"
-        className="flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center rounded-full text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:bg-white/5 focus-visible:text-amber-50/80 focus-visible:outline-none disabled:cursor-wait disabled:bg-transparent disabled:text-amber-50/20"
+        className="group flex min-h-11 shrink-0 cursor-pointer items-center gap-1 rounded-xl text-amber-50/50 transition-colors hover:text-amber-50/80 focus-visible:text-amber-50/80 focus-visible:outline-none disabled:cursor-wait disabled:text-amber-50/20"
         aria-label="复制房间码"
         data-status={status}
         disabled={status === 'copying'}
         onClick={() => { void handleCopy() }}
       >
+        <span className="font-mono text-xl tracking-[0.2em] text-amber-50/80 tabular-nums">
+          {code}
+        </span>
         <span
-          className="material-symbols-outlined"
-          style={{ fontSize: '17px' }}
-          aria-hidden="true"
+          className="flex size-11 shrink-0 items-center justify-center rounded-full transition-colors group-hover:bg-white/5 group-focus-visible:bg-white/5 group-disabled:bg-transparent"
         >
-          content_copy
+          <span
+            className="material-symbols-outlined"
+            style={{ fontSize: '17px' }}
+            aria-hidden="true"
+          >
+            content_copy
+          </span>
         </span>
       </button>
       <span className="sr-only" aria-live="polite" aria-atomic="true">

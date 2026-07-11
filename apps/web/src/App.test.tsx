@@ -203,7 +203,14 @@ vi.mock('./components/IncomingFileRequestDialog', () => ({
 
 vi.mock('./components/RoomCodeCopyButton', () => ({
   default: ({ code, onCopy }: { code: string; onCopy(code: string): Promise<void> }) => (
-    <button type="button" onClick={() => { void onCopy(code) }}>复制测试房间码</button>
+    <button
+      type="button"
+      aria-label="复制测试房间码"
+      onClick={() => { void onCopy(code) }}
+    >
+      <span data-testid="room-code-copy-value">{code}</span>
+      <span>content_copy</span>
+    </button>
   ),
 }))
 
@@ -906,6 +913,8 @@ describe('App transfer integration', () => {
 
   test('wires room copy plus sender text, file, and cancel intents', async () => {
     const user = await enterRoom('sender')
+    expect(screen.getAllByText('012345')).toHaveLength(1)
+    expect(screen.getByTestId('room-code-copy-value').textContent).toBe('012345')
     await user.click(screen.getByRole('button', { name: '复制测试房间码' }))
     expect(clipboardWrite).toHaveBeenCalledWith('012345')
     expect(boundary.showToast).toHaveBeenCalledWith('房间码已复制', 'success')

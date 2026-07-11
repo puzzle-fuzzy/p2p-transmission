@@ -1,45 +1,39 @@
 // @vitest-environment jsdom
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import '../test/dom'
 import RoomCodeCopyButton from './RoomCodeCopyButton'
 
 describe('RoomCodeCopyButton', () => {
-  test('keeps a borderless circular 44px copy affordance in every copy state', async () => {
+  test('makes the room code and icon one exact-once copy target', async () => {
     const user = userEvent.setup()
-    let resolveCopy: (() => void) | undefined
-    const onCopy = vi.fn(() => new Promise<void>(resolve => {
-      resolveCopy = resolve
-    }))
+    const onCopy = vi.fn(async () => undefined)
     render(<RoomCodeCopyButton code="012345" onCopy={onCopy} />)
 
     const button = screen.getByRole('button', { name: '复制房间码' })
+    const code = within(button).getByText('012345')
+    const icon = within(button).getByText('content_copy')
     const liveRegion = document.querySelector('[aria-live="polite"]')
     expect(button.classList.contains('min-h-11')).toBe(true)
-    expect(button.classList.contains('min-w-11')).toBe(true)
-    expect(button.classList.contains('rounded-full')).toBe(true)
+    expect(button.classList.contains('group')).toBe(true)
+    expect(button.classList.contains('rounded-xl')).toBe(true)
     expect(Array.from(button.classList).some(className =>
       className === 'border' || className.startsWith('border-'))).toBe(false)
-    expect(button.classList.contains('hover:bg-white/5')).toBe(true)
-    expect(button.classList.contains('focus-visible:bg-white/5')).toBe(true)
-    expect(button.classList.contains('disabled:bg-transparent')).toBe(true)
-    expect(button.textContent?.trim()).toBe('content_copy')
+    expect(icon.parentElement?.classList.contains('rounded-full')).toBe(true)
+    expect(icon.parentElement?.classList.contains('group-hover:bg-white/5')).toBe(true)
     expect(liveRegion).not.toBeNull()
 
-    await user.click(button)
+    await user.click(code)
 
     expect(onCopy).toHaveBeenCalledTimes(1)
     expect(onCopy).toHaveBeenCalledWith('012345')
-    expect(button.getAttribute('data-status')).toBe('copying')
-    expect(button.textContent?.trim()).toBe('content_copy')
-    expect(liveRegion?.textContent).toBe('正在复制房间码')
-
-    resolveCopy?.()
     await waitFor(() => expect(button.getAttribute('data-status')).toBe('copied'))
-    expect(button.textContent?.trim()).toBe('content_copy')
     expect(liveRegion?.textContent).toBe('房间码已复制')
+
+    await user.click(icon)
+    expect(onCopy).toHaveBeenCalledTimes(2)
   })
 
   test('keeps the copy icon and accessible name after a rejected copy', async () => {
@@ -52,7 +46,8 @@ describe('RoomCodeCopyButton', () => {
     await user.click(button)
 
     expect(button.getAttribute('data-status')).toBe('error')
-    expect(button.textContent?.trim()).toBe('content_copy')
+    expect(within(button).getByText('654321')).not.toBeNull()
+    expect(within(button).getByText('content_copy')).not.toBeNull()
     expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe('无法复制房间码')
     expect(screen.getByRole('button', { name: '复制房间码' })).toBe(button)
     expect(button.getAttribute('aria-label')).toBe(accessibleName)
