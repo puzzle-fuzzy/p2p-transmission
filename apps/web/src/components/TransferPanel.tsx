@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { OverlayScrollbarsComponent } from 'overlayscrollbars-react'
 import Avatar from './Avatar'
 
 type Tab = 'text' | 'file'
@@ -7,7 +8,7 @@ const MAX_CHARS = 500
 
 type FileState = 'pending' | 'transferring' | 'done' | 'error'
 
-export default function TransferPanel({ onToggleLog }: { onToggleLog?: () => void }) {
+export default function TransferPanel() {
   const [tab, setTab] = useState<Tab>('text')
   const [text, setText] = useState('')
   const [files, setFiles] = useState<File[]>([])
@@ -21,8 +22,10 @@ export default function TransferPanel({ onToggleLog }: { onToggleLog?: () => voi
 
   // Cleanup intervals on unmount
   useEffect(() => {
+    const intervals = intervalRefs.current
+
     return () => {
-      intervalRefs.current.forEach(clearInterval)
+      intervals.forEach(clearInterval)
     }
   }, [])
 
@@ -110,26 +113,32 @@ export default function TransferPanel({ onToggleLog }: { onToggleLog?: () => voi
     <div className="w-xl flex flex-col gap-6">
       {/* Tab 切换 */}
       <div className="flex items-center gap-2">
-        <div className="flex rounded-xl bg-white/5 p-1">
+        <div className="flex gap-1">
           <button
-            className={`py-2 px-4 text-sm rounded-lg transition-all cursor-pointer ${
+            className={`relative py-2 px-4 text-sm transition-all cursor-pointer ${
               tab === 'text'
-                ? 'bg-white/10 text-amber-50/80'
+                ? 'text-amber-50/80'
                 : 'text-amber-50/40 hover:text-amber-50/60'
             }`}
             onClick={() => setTab('text')}
           >
             传输文本
+            {tab === 'text' && (
+              <span className="absolute -bottom-px left-2 right-2 h-0.5 bg-amber-50/60 rounded-full" />
+            )}
           </button>
           <button
-            className={`py-2 px-4 text-sm rounded-lg transition-all cursor-pointer ${
+            className={`relative py-2 px-4 text-sm transition-all cursor-pointer ${
               tab === 'file'
-                ? 'bg-white/10 text-amber-50/80'
+                ? 'text-amber-50/80'
                 : 'text-amber-50/40 hover:text-amber-50/60'
             }`}
             onClick={() => setTab('file')}
           >
             传输文件
+            {tab === 'file' && (
+              <span className="absolute -bottom-px left-2 right-2 h-0.5 bg-amber-50/60 rounded-full" />
+            )}
           </button>
         </div>
 
@@ -159,106 +168,116 @@ export default function TransferPanel({ onToggleLog }: { onToggleLog?: () => voi
         </div>
       )}
 
-      {/* 文本输入框 */}
-      {tab === 'text' && (
-        <div className="relative">
-          <textarea
-            placeholder="输入要传输的文本…"
-            maxLength={MAX_CHARS}
-            value={text}
-            onChange={e => setText(e.target.value)}
-            className="w-full h-56 bg-transparent border border-amber-50/15 rounded-xl p-4 pb-8 text-amber-50/80 text-sm outline-none resize-none focus:border-accent transition-colors placeholder:text-amber-50/20"
-          />
-          <span className="absolute bottom-4 right-4 text-amber-50/20 text-xs tabular-nums">
-            {text.length}/{MAX_CHARS}
-          </span>
-        </div>
-      )}
+      {/* 内容区域 - 固定高度容器 */}
+      <div className="h-56">
+        {tab === 'text' && (
+          <div className="relative h-full" style={{ fontSize: 0 }}>
+            <textarea
+              placeholder="输入要传输的文本…"
+              maxLength={MAX_CHARS}
+              value={text}
+              onChange={e => setText(e.target.value)}
+              className="native-scrollbar w-full h-full bg-transparent border border-amber-50/15 rounded-xl p-4 pb-8 text-amber-50/80 text-sm outline-none resize-none focus:border-accent transition-colors placeholder:text-amber-50/20"
+            />
+            <span className="absolute bottom-4 right-4 text-amber-50/20 text-xs tabular-nums">
+              {text.length}/{MAX_CHARS}
+            </span>
+          </div>
+        )}
 
-      {/* 文件选择区域 */}
-      {tab === 'file' && (
-        <div
-          className={`w-full min-h-56 border-2 border-dashed border-amber-50/15 rounded-xl flex flex-col ${
-            files.length === 0 ? 'justify-center items-center gap-2' : 'justify-start'
-          } cursor-pointer hover:border-amber-50/30 transition-colors`}
-          onClick={() => fileInputRef.current?.click()}
-          onKeyDown={e => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault()
-              fileInputRef.current?.click()
-            }
-          }}
-          tabIndex={0}
-          role="button"
-          aria-label="选择文件"
-        >
-          {files.length === 0 ? (
-            <>
-              <span className="material-symbols-outlined text-[32px] leading-none text-amber-50/20">upload_file</span>
-              <span className="text-amber-50/20 text-sm">拖拽文件到此处或点击选择</span>
-              <span className="text-amber-50/10 text-xs">支持所有文件类型</span>
-            </>
-          ) : (
-            <div className="w-full p-3 flex flex-col gap-2" onClick={e => e.stopPropagation()}>
-              <div className="flex flex-col gap-2 max-h-60 overflow-y-auto">
-                {files.map((file, i) => (
-                  <div key={i} className="relative overflow-hidden bg-white/5 rounded-lg">
-                    {/* 背景进度条 */}
-                    <div
-                      className="absolute inset-0 transition-all duration-300 rounded-lg"
-                      style={{
-                        width: `${progress[i] ?? 0}%`,
-                        backgroundColor: fileStates[i] === 'error' ? '#ef4444' : '#5e11d1',
-                        opacity: 0.15,
-                      }}
-                    />
-                    {/* 内容 */}
-                    <div className="relative flex items-center gap-3 px-3 py-2 z-10">
-                      <span className="material-symbols-outlined leading-none text-amber-50/30" style={{ fontSize: '16px' }}>description</span>
-                      <span className="flex-1 text-amber-50/60 text-xs truncate">{file.name}</span>
-                      <span className="text-amber-50/20 text-xs shrink-0">{formatSize(file.size)}</span>
-                      {fileStates[i] === 'done' ? (
-                        <span className="material-symbols-outlined leading-none text-accent" style={{ fontSize: '16px' }}>check_circle</span>
-                      ) : fileStates[i] === 'error' ? (
-                        <button
-                          className="text-red-400 hover:text-red-300 transition-colors cursor-pointer shrink-0"
-                          onClick={() => retryFile(i)}
-                          title="重试"
-                        >
-                          <span className="material-symbols-outlined leading-none" style={{ fontSize: '16px' }}>refresh</span>
-                        </button>
-                      ) : (
-                        <button
-                          className="text-amber-50/20 hover:text-amber-50/50 transition-colors cursor-pointer shrink-0"
-                          onClick={() => removeFile(i)}
-                        >
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
-                      )}
-                    </div>
+        {tab === 'file' && (
+          <div
+            className={`w-full h-full border-2 border-dashed border-amber-50/15 rounded-xl flex flex-col ${
+              files.length === 0 ? 'justify-center items-center gap-2' : 'justify-start'
+            } cursor-pointer hover:border-amber-50/30 transition-colors`}
+            onClick={() => fileInputRef.current?.click()}
+            onKeyDown={e => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                fileInputRef.current?.click()
+              }
+            }}
+            tabIndex={0}
+            role="button"
+            aria-label="选择文件"
+          >
+            {files.length === 0 ? (
+              <>
+                <span className="material-symbols-outlined text-[32px] leading-none text-amber-50/20">upload_file</span>
+                <span className="text-amber-50/20 text-sm">拖拽文件到此处或点击选择</span>
+                <span className="text-amber-50/10 text-xs">支持所有文件类型</span>
+              </>
+            ) : (
+              <div className="w-full flex flex-col h-full min-h-0" onClick={e => e.stopPropagation()}>
+                <OverlayScrollbarsComponent
+                  className="min-h-0 flex-1 p-3"
+                  options={{
+                    overflow: { x: 'hidden', y: 'scroll' },
+                    scrollbars: { autoHide: 'never', theme: 'os-theme-dark' },
+                  }}
+                  defer
+                >
+                  <div className="flex flex-col gap-2">
+                    {files.map((file, i) => (
+                      <div key={i} className="relative overflow-hidden bg-white/5 rounded-lg">
+                        {/* 背景进度条 */}
+                        <div
+                          className="absolute inset-0 transition-all duration-300 rounded-lg"
+                          style={{
+                            width: `${progress[i] ?? 0}%`,
+                            backgroundColor: fileStates[i] === 'error' ? '#ef4444' : '#5e11d1',
+                            opacity: 0.15,
+                          }}
+                        />
+                        {/* 内容 */}
+                        <div className="relative flex items-center gap-3 px-3 py-2 z-10">
+                          <span className="material-symbols-outlined leading-none text-amber-50/30" style={{ fontSize: '16px' }}>description</span>
+                          <span className="flex-1 text-amber-50/60 text-xs truncate">{file.name}</span>
+                          <span className="text-amber-50/20 text-xs shrink-0">{formatSize(file.size)}</span>
+                          {fileStates[i] === 'done' ? (
+                            <span className="material-symbols-outlined leading-none text-accent" style={{ fontSize: '16px' }}>check_circle</span>
+                          ) : fileStates[i] === 'error' ? (
+                            <button
+                              className="text-red-400 hover:text-red-300 transition-colors cursor-pointer shrink-0"
+                              onClick={() => retryFile(i)}
+                              title="重试"
+                            >
+                              <span className="material-symbols-outlined leading-none" style={{ fontSize: '16px' }}>refresh</span>
+                            </button>
+                          ) : (
+                            <button
+                              className="text-amber-50/20 hover:text-amber-50/50 transition-colors cursor-pointer shrink-0"
+                              onClick={() => removeFile(i)}
+                            >
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                </OverlayScrollbarsComponent>
+                <div
+                  className="flex items-center justify-center gap-1.5 text-amber-50/20 hover:text-amber-50/40 transition-colors cursor-pointer"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <span className="material-symbols-outlined leading-none" style={{ fontSize: '14px' }}>add</span>
+                  <span className="text-xs">添加更多文件</span>
+                </div>
               </div>
-              <div
-                className="flex items-center justify-center gap-1.5 mt-1 text-amber-50/20 hover:text-amber-50/40 transition-colors cursor-pointer"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <span className="material-symbols-outlined leading-none" style={{ fontSize: '14px' }}>add</span>
-                <span className="text-xs">添加更多文件</span>
-              </div>
-            </div>
-          )}
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={handleFileChange}
-          />
-        </div>
-      )}
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={handleFileChange}
+            />
+          </div>
+        )}
+      </div>
 
       {/* 传输按钮 */}
       <button

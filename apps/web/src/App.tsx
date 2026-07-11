@@ -1,24 +1,10 @@
-import { useState } from 'react'
 import TransferPanel from './components/TransferPanel'
 
-type LogEntry = { time: string; text: string; type?: 'info' | 'error' }
-
-const logs: LogEntry[] = [
-  { time: '14:23:11', text: '正在沟通好友…' },
-  { time: '14:23:15', text: '已发送 design.png 文件' },
-  { time: '14:23:18', text: '已发送 需求文档.docs 文件' },
-  { time: '14:23:22', text: '好友已接收 design.png' },
-  { time: '14:23:25', text: '传输超时，photo.jpg 发送失败', type: 'error' },
-  { time: '14:23:30', text: '正在等待好友接收 需求文档.docs…' },
-]
-
 function App() {
-  const [logVisible, setLogVisible] = useState(true)
-
   return (
     <div className="h-svh bg-[#2d2d2d] flex justify-center items-center">
       <div className="flex gap-8">
-        <TransferPanel onToggleLog={() => setLogVisible(v => !v)} />
+        <TransferPanel />
         {/* <div className="w-px bg-amber-50/10 transition-opacity duration-250 ease-out" style={{ opacity: logVisible ? 1 : 0 }} />
         <div
           className="overflow-hidden transition-[max-width,min-width] duration-250 ease-out"

@@ -27,6 +27,39 @@
   }
 }
 
+/* Scrollbar 定制 — 适配暗色背景 */
+.os-scrollbar {
+  --os-size: 6px;
+  --os-handle-bg: rgba(255, 255, 255, 0.12);
+  --os-handle-bg-hover: rgba(255, 255, 255, 0.2);
+  --os-handle-bg-active: rgba(255, 255, 255, 0.3);
+  --os-handle-border-radius: 3px;
+  --os-track-bg: transparent;
+  --os-padding-perpendicular: 2px;
+}
+
+.native-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+.native-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.native-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.native-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+}
+
+.native-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
 .material-symbols-outlined {
   font-family: "Material Symbols Outlined";
   font-weight: normal;
