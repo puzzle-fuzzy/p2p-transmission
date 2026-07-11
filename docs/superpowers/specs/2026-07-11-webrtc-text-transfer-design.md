@@ -1,0 +1,192 @@
+# WebRTC Text Transfer Design
+
+## Objective
+
+Complete the first real end-to-end transfer slice: one sender creates a room, one or more receivers join, the browsers establish WebRTC DataChannels, and the sender can offer a text transfer that every receiver explicitly accepts or rejects before the text body is sent.
+
+This milestone replaces the current mock text transfer. File bytes, TURN deployment, resumable transfers, and production deployment remain outside this scope.
+
+## Product Constraints
+
+- The signaling server must never receive or relay transferred text.
+- A receiver must explicitly choose `接收` or `拒绝` before the sender transmits the text body to that receiver.
+- One sender may offer the same text to multiple connected receivers; every receiver decides independently.
+- Only the room sender may initiate a transfer in this milestone.
+- The UI keeps the current restrained dark workbench aesthetic: flat surfaces, faint warm-white borders, Signal Purple primary action, red only for errors, no decorative shadows.
+- The transfer action becomes ready only when at least one DataChannel is open. Room participant count alone is not a connection-ready signal.
+- File transfer remains visible as the next capability but must not simulate success or imply that bytes were transferred.
+
+## Chosen Approach
+
+Use the existing WebSocket channel only for `offer`, `answer`, and ICE candidate signaling. Use each peer's WebRTC DataChannel for transfer requests, receiver decisions, the accepted text body, and delivery acknowledgement.
+
+This is preferred over WebSocket transfer negotiation because it keeps all transfer-specific data between browsers. It is preferred over sending the text immediately and asking afterward because acceptance must happen before content delivery.
+
+## Architecture
+
+### Signaling authorization
+
+The API realtime hub will validate that:
+
+- the signaling socket has joined the referenced room;
+- the target visitor is a current participant in that room;
+- the sender is not targeting itself;
+- transfer metadata messages cannot be injected by non-members.
+
+Invalid messages return stable realtime error codes and are not forwarded.
+
+### Browser peer session
+
+A framework-independent `PeerSession` service owns one `RTCPeerConnection` per remote visitor.
+
+- The room sender is always the offerer.
+- The sender creates one ordered DataChannel named `p2p-transfer` per receiver.
+- The receiver creates its peer when an offer arrives and adopts the channel through `ondatachannel`.
+- ICE candidates received before `remoteDescription` are queued and flushed afterward.
+- Removed room participants have their channel and peer connection closed immediately.
+- A peer is considered ready only while its DataChannel state is `open`.
+- The service exposes events rather than importing React, so protocol and lifecycle behavior can be unit tested with fake WebRTC objects.
+
+The first implementation uses configurable STUN URLs with a public STUN default. TURN credentials and relay policy are deliberately deferred.
+
+### DataChannel protocol
+
+Every message is UTF-8 JSON and must pass runtime shape validation before it affects UI state.
+
+```ts
+type TextTransferRequest = {
+  type: 'transfer:request'
+  transferId: string
+  kind: 'text'
+  characterCount: number
+  byteLength: number
+}
+
+type TextTransferDecision = {
+  type: 'transfer:decision'
+  transferId: string
+  decision: 'accept' | 'reject'
+}
+
+type TextTransferPayload = {
+  type: 'transfer:text'
+  transferId: string
+  text: string
+}
+
+type TextTransferReceipt = {
+  type: 'transfer:receipt'
+  transferId: string
+  status: 'received'
+}
+```
+
+Sender flow:
+
+1. Create a transfer ID and retain the text in sender memory.
+2. Send `transfer:request` to every open receiver channel.
+3. On `accept`, send `transfer:text` only to that peer.
+4. On `reject`, mark only that peer rejected and do not send the text.
+5. On `transfer:receipt`, report successful delivery for that peer.
+
+Receiver flow:
+
+1. Validate `transfer:request` and present the confirmation dialog.
+2. `拒绝` sends a reject decision and removes the pending request.
+3. `接收` sends an accept decision and changes the dialog to a waiting state.
+4. A matching `transfer:text` becomes the received-text view and triggers a receipt.
+5. Payloads with unknown, rejected, or mismatched transfer IDs are ignored and surfaced as protocol errors.
+
+The text limit remains 500 characters for this milestone. The UTF-8 byte length is computed with `TextEncoder` rather than inferred from JavaScript string length.
+
+## Frontend State And Components
+
+### App orchestration
+
+`App` continues to own visitor, room, and realtime lifecycle. It creates one `PeerSession` after HTTP room creation or join, forwards server signaling messages to it, and synchronizes peers whenever room participants change.
+
+Realtime readiness and transfer readiness are separate:
+
+- WebSocket status describes signaling availability.
+- Open DataChannel count controls the sender's transfer button.
+- A receiver can remain in a waiting screen while the peer negotiates.
+
+An expired locally stored visitor token is replaced once when a room operation returns `VISITOR_NOT_FOUND`; the requested room action is then retried with the fresh session.
+
+### Sender panel
+
+The sender retains the existing text composer. Pressing `传输` calls `PeerSession.offerText(text)` instead of a timer. The action label reflects the number of open receivers. File UI is explicitly marked as unavailable in this milestone and contains no mock progress.
+
+Sender feedback uses the existing toast system for request sent, receiver rejected, delivery confirmed, signaling failure, and peer disconnection.
+
+### Receiver waiting state
+
+Receivers do not see an editable sender composer. They see a compact status panel containing the room code, sender identity when available, and one of: connecting, ready and waiting, receiving, or last transfer received.
+
+### Receive confirmation dialog
+
+The new `ReceiveTextDialog` is a real accessible modal:
+
+- a full-viewport translucent charcoal scrim;
+- a flat `#2d2d2d` panel with a faint warm-white border and 12px radius;
+- sender avatar, sender display name, text character/byte summary, and a short privacy note;
+- secondary `拒绝` and Signal Purple primary `接收` actions;
+- initial focus on `接收`, Tab focus containment, Escape equivalent to reject while a decision is pending;
+- `role="dialog"`, `aria-modal="true"`, labelled title and description;
+- responsive width using viewport padding instead of fixed desktop width;
+- reduced-motion-safe opacity and scale transition.
+
+After acceptance, the same modal shows `正在接收…`. After payload arrival it switches to a read-only text surface with `复制文本` and `完成` actions. Closing the completed view does not discard browser clipboard contents.
+
+Only one incoming request is presented at a time. Additional requests are queued in arrival order.
+
+## Failure Handling
+
+- WebSocket close/error updates signaling status and attempts bounded reconnect with exponential delay while the room view is active.
+- DataChannel or peer failure removes that peer from the ready count and rejects its outstanding sender-side transfer state.
+- Malformed DataChannel JSON never reaches React state; the peer session emits a stable `PROTOCOL_ERROR` event.
+- A receiver acceptance waits for a matching payload. If the peer closes first, the dialog becomes an understandable failure state with a close action.
+- A stale visitor session is regenerated once, avoiding an infinite retry loop.
+- Component unmount closes timers, WebSocket subscriptions, DataChannels, and peer connections.
+
+## Test Strategy
+
+### API
+
+- A room member can signal another participant.
+- A non-member cannot target a room participant.
+- A participant cannot target a visitor outside the room.
+- Transfer metadata cannot be injected by a non-member.
+
+### Web unit tests
+
+- Protocol parser accepts every valid message and rejects malformed JSON and invalid shapes.
+- Peer session follows offer/answer/ICE order, queues early ICE, reports channel readiness, and closes removed peers.
+- Text request is sent to all ready receivers.
+- Text payload is sent only after that receiver accepts.
+- Reject, receipt, malformed payload, and peer-close paths emit deterministic events.
+- Existing room reducer tests are updated so participant count no longer means DataChannel readiness.
+
+### Component tests
+
+Component behavior will remain thin enough to cover through state/service tests in this milestone. Manual browser verification covers focus, Escape, responsive layout, copy action, and visual alignment.
+
+### End-to-end acceptance
+
+Using two independent browser sessions:
+
+1. Sender creates a room and receiver joins.
+2. Both report a WebRTC connection; sender transfer action becomes enabled.
+3. Sender offers text; receiver sees the modal before the sender sends the payload.
+4. Reject leaves the receiver without the text and informs the sender.
+5. A second offer accepted by the receiver displays the exact original text.
+6. Copy places the exact text on the clipboard.
+7. Closing the receiver session returns the sender to a waiting state.
+
+## Deferred Work
+
+- File metadata, chunking, backpressure, hashing, cancellation, download, and resume.
+- TURN credentials, relay fallback, and production NAT success telemetry.
+- Persistent rooms or horizontal API scaling.
+- A shared cross-workspace runtime schema package; existing signaling contracts remain unchanged in this focused slice.
+- Automated multi-context Playwright coverage; manual two-session verification is required for this milestone.
