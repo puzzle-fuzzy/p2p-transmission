@@ -241,7 +241,7 @@ class FakeRealtimeClient {
 class FakePeerSession {
   readonly syncRoom = vi.fn()
   readonly handleSignal = vi.fn(async () => undefined)
-  readonly readyPeerCount = vi.fn(() => 1)
+  readonly readyPeerIds = vi.fn((): readonly string[] => ['receiver'])
   readonly close = vi.fn()
   readonly offerText = vi.fn((_text: string) => ({
     transferId: 'text-1',

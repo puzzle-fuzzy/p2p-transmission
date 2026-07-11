@@ -12,7 +12,7 @@ export type RoomFlowState = {
   session?: VisitorSession
   room?: PublicRoom
   role?: ParticipantRole
-  readyPeerCount: number
+  readyPeerIds: readonly string[]
   error: string
 }
 
@@ -23,18 +23,18 @@ export type RoomFlowAction =
   | { type: 'room:joined'; room: PublicRoom }
   | { type: 'realtime:connected' }
   | { type: 'realtime:disconnected' }
-  | { type: 'peer:ready-count'; count: number }
+  | { type: 'peer:ready-ids'; peerIds: readonly string[] }
   | { type: 'server:message'; message: ServerRealtimeMessage }
   | { type: 'error'; message: string }
 
 export const initialRoomFlowState: RoomFlowState = {
   phase: 'booting',
-  readyPeerCount: 0,
+  readyPeerIds: [],
   error: '',
 }
 
-const readyPhaseFor = (readyPeerCount: number): RoomPhase =>
-  readyPeerCount > 0 ? 'ready' : 'connecting'
+const readyPhaseFor = (readyPeerIds: readonly string[]): RoomPhase =>
+  readyPeerIds.length > 0 ? 'ready' : 'connecting'
 
 const removeParticipant = (room: PublicRoom, visitorId: string): PublicRoom => ({
   ...room,
@@ -53,7 +53,7 @@ export const roomFlowReducer = (
       session: action.session,
       room: undefined,
       role: undefined,
-      readyPeerCount: 0,
+      readyPeerIds: [],
       error: '',
     }
   }
@@ -62,7 +62,7 @@ export const roomFlowReducer = (
     return {
       ...state,
       phase: 'joining',
-      readyPeerCount: 0,
+      readyPeerIds: [],
       error: '',
     }
   }
@@ -73,7 +73,7 @@ export const roomFlowReducer = (
       phase: 'room',
       room: action.room,
       role: 'sender',
-      readyPeerCount: 0,
+      readyPeerIds: [],
       error: '',
     }
   }
@@ -84,7 +84,7 @@ export const roomFlowReducer = (
       phase: 'room',
       room: action.room,
       role: 'receiver',
-      readyPeerCount: 0,
+      readyPeerIds: [],
       error: '',
     }
   }
@@ -93,7 +93,7 @@ export const roomFlowReducer = (
     return {
       ...state,
       phase: 'connecting',
-      readyPeerCount: 0,
+      readyPeerIds: [],
       error: '',
     }
   }
@@ -102,17 +102,17 @@ export const roomFlowReducer = (
     return {
       ...state,
       phase: state.room ? 'connecting' : state.phase,
-      readyPeerCount: 0,
+      readyPeerIds: [],
     }
   }
 
-  if (action.type === 'peer:ready-count') {
-    const readyPeerCount = Math.max(0, Math.trunc(action.count))
+  if (action.type === 'peer:ready-ids') {
+    const readyPeerIds = Array.from(new Set(action.peerIds))
 
     return {
       ...state,
-      phase: readyPhaseFor(readyPeerCount),
-      readyPeerCount,
+      phase: readyPhaseFor(readyPeerIds),
+      readyPeerIds,
       error: '',
     }
   }

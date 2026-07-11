@@ -510,8 +510,8 @@ function App() {
 
         if (event.type === 'peer:state') {
           dispatch({
-            type: 'peer:ready-count',
-            count: peerSession.readyPeerCount(),
+            type: 'peer:ready-ids',
+            peerIds: peerSession.readyPeerIds(),
           })
           if (event.state === 'ready') {
             peerRetryCountsRef.current.delete(event.peerId)
@@ -1126,6 +1126,7 @@ function App() {
         return receiver ? [receiver] : []
       })
     : roomReceivers
+  const readyPeerCount = state.readyPeerIds.length
 
   return (
     <div className="min-h-svh bg-[#2d2d2d] px-4 py-6 text-amber-50 sm:flex sm:items-center sm:justify-center">
@@ -1160,7 +1161,7 @@ function App() {
                   {state.role === 'sender' ? '发送者' : '接收者'}
                 </div>
                 <div className="mt-0.5 text-amber-50/60">
-                  {state.readyPeerCount > 0 ? '点对点已连接' : '正在建立点对点连接'}
+                  {readyPeerCount > 0 ? '点对点已连接' : '正在建立点对点连接'}
                 </div>
               </div>
             </div>
@@ -1170,7 +1171,7 @@ function App() {
                 visitor={roomView.session.visitor}
                 room={roomView.room}
                 receivers={transferReceivers}
-                readyPeerCount={state.readyPeerCount}
+                readyPeerCount={readyPeerCount}
                 activity={transferUiState.activity}
                 files={fileSelections}
                 selectionError={selectionError}

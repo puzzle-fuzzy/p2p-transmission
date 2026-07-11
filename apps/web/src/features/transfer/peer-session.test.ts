@@ -243,6 +243,33 @@ describe('peer session v2', () => {
     expect(connection.remoteDescription).toBeNull()
   })
 
+  test('returns exact ready peer IDs in room order and removes closed peers', async () => {
+    const first = new FakePeerConnection()
+    const second = new FakePeerConnection()
+    const receiverTwo = { ...receiver, id: 'vis_receiver_2' }
+    const { session } = senderHarness([first, second])
+    session.syncRoom(room([receiver, receiverTwo]))
+    await settle()
+
+    const firstChannel = first.channels[0] as FakeDataChannel
+    const secondChannel = second.channels[0] as FakeDataChannel
+    expect(session.readyPeerIds()).toEqual([])
+
+    secondChannel.open()
+    expect(session.readyPeerIds()).toEqual([receiverTwo.id])
+
+    firstChannel.open()
+    const snapshot = session.readyPeerIds()
+    expect(snapshot).toEqual([receiver.id, receiverTwo.id])
+    expect(session.readyPeerIds()).not.toBe(snapshot)
+
+    firstChannel.close()
+    expect(session.readyPeerIds()).toEqual([receiverTwo.id])
+
+    session.close()
+    expect(session.readyPeerIds()).toEqual([])
+  })
+
   test('delivers text directly, waits for one receipt, and excludes concurrent offers', async () => {
     const connection = new FakePeerConnection()
     const { session, events } = senderHarness([connection])

@@ -221,7 +221,7 @@ export type PeerSession = {
   acceptFiles(peerId: string, transferId: string): boolean
   rejectFiles(peerId: string, transferId: string): boolean
   cancelTransfer(transferId: string): boolean
-  readyPeerCount(): number
+  readyPeerIds(): readonly string[]
   subscribe(listener: (event: PeerSessionEvent) => void): () => void
   close(): void
 }
@@ -1208,8 +1208,8 @@ export const createPeerSession = ({
       }
       return cancelled
     },
-    readyPeerCount() {
-      return readyEntries().length
+    readyPeerIds() {
+      return readyEntries().map(entry => entry.peerId)
     },
     subscribe(listener) {
       listeners.add(listener)

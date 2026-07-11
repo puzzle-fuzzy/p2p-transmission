@@ -45,7 +45,7 @@ describe('room flow reducer', () => {
       ...initialRoomFlowState,
       room,
       role: 'sender',
-      readyPeerCount: 1,
+      readyPeerIds: ['vis_2'],
     }, {
       type: 'visitor:ready',
       session: visitorSession,
@@ -55,7 +55,7 @@ describe('room flow reducer', () => {
     expect(state.session).toEqual(visitorSession)
     expect(state.room).toBeUndefined()
     expect(state.role).toBeUndefined()
-    expect(state.readyPeerCount).toBe(0)
+    expect(state.readyPeerIds).toEqual([])
   })
 
   test('room created stores sender room state', () => {
@@ -118,28 +118,30 @@ describe('room flow reducer', () => {
 
     expect(state.phase).toBe('connecting')
     expect(state.room?.participants).toHaveLength(2)
-    expect(state.readyPeerCount).toBe(0)
+    expect(state.readyPeerIds).toEqual([])
   })
 
-  test('peer readiness controls the ready phase independently of membership', () => {
+  test('peer readiness IDs control the phase and are copied and deduplicated', () => {
+    const peerIds = ['vis_2', 'vis_3', 'vis_2']
     const readyState = roomFlowReducer({
       ...initialRoomFlowState,
       phase: 'connecting',
       room,
       role: 'sender',
       session: visitorSession,
-    }, { type: 'peer:ready-count', count: 1 })
+    }, { type: 'peer:ready-ids', peerIds })
+    peerIds.length = 0
 
     expect(readyState.phase).toBe('ready')
-    expect(readyState.readyPeerCount).toBe(1)
+    expect(readyState.readyPeerIds).toEqual(['vis_2', 'vis_3'])
 
     const connectingState = roomFlowReducer(readyState, {
-      type: 'peer:ready-count',
-      count: 0,
+      type: 'peer:ready-ids',
+      peerIds: [],
     })
 
     expect(connectingState.phase).toBe('connecting')
-    expect(connectingState.readyPeerCount).toBe(0)
+    expect(connectingState.readyPeerIds).toEqual([])
   })
 
   test('realtime disconnect clears peer readiness', () => {
@@ -149,11 +151,11 @@ describe('room flow reducer', () => {
       room,
       role: 'sender',
       session: visitorSession,
-      readyPeerCount: 1,
+      readyPeerIds: ['vis_2'],
     }, { type: 'realtime:disconnected' })
 
     expect(state.phase).toBe('connecting')
-    expect(state.readyPeerCount).toBe(0)
+    expect(state.readyPeerIds).toEqual([])
   })
 
   test('participant left updates membership without guessing peer readiness', () => {
@@ -176,7 +178,7 @@ describe('room flow reducer', () => {
         ],
       },
       error: '',
-      readyPeerCount: 1,
+      readyPeerIds: ['vis_2'],
     }
 
     const state = roomFlowReducer(stateWithParticipants, {
@@ -185,7 +187,7 @@ describe('room flow reducer', () => {
     })
 
     expect(state.phase).toBe('ready')
-    expect(state.readyPeerCount).toBe(1)
+    expect(state.readyPeerIds).toEqual(['vis_2'])
     expect(state.room?.participants).toHaveLength(1)
     expect(state.room?.receivers).toEqual([])
   })
