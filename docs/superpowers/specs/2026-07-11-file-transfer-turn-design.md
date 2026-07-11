@@ -1,7 +1,7 @@
 # File Transfer, Transfer Motion, and TURN Design
 
 **Date:** 2026-07-11  
-**Status:** Approved design, pending implementation plan  
+**Status:** Approved design with executable implementation plans  
 **Branch:** `codex/file-transfer-turn`
 
 ## 1. Goal
@@ -47,7 +47,7 @@ Use one ordered, reliable RTCDataChannel per sender/receiver pair for both JSON 
 Why this approach:
 
 - existing peer lifecycle, authorization, stale-session guards, receipts, and timeouts remain reusable;
-- ordered delivery lets a `file:start` control frame, its binary chunks, and `file:end` be interpreted without a binary header on every chunk;
+- ordered delivery serializes control and binary frames, while a fixed 16-byte binary header identifies stream/chunk ownership so cancelled or late chunks can be rejected deterministically;
 - one channel per peer avoids channel churn for a 10-file batch;
 - DataChannel `bufferedAmount` and `bufferedamountlow` provide explicit backpressure.
 
@@ -72,11 +72,12 @@ MAX_FILE_NAME_BYTES = 255
 MAX_MIME_TYPE_CHARACTERS = 128
 MAX_MIME_TYPE_BYTES = 128
 FILE_CHUNK_BYTES = 16 * 1024
+FILE_CHUNK_HEADER_BYTES = 16
 DATA_CHANNEL_HIGH_WATER_BYTES = 1024 * 1024
-DATA_CHANNEL_LOW_WATER_BYTES = 256 * 1024
+DATA_CHANNEL_LOW_WATER_BYTES = 64 * 1024
 DECISION_TIMEOUT_MS = 30_000
-TRANSFER_IDLE_TIMEOUT_MS = 30_000
-RECEIPT_TIMEOUT_MS = 15_000
+TRANSFER_IDLE_TIMEOUT_MS = 60_000
+RECEIPT_TIMEOUT_MS = 30_000
 ```
 
 The file batch limit is evaluated before any request is sent and again at the receiver protocol boundary. Empty files are allowed and count toward the 10-file limit. Control frames are capped at 16 KiB of UTF-8 data; file names and MIME types must satisfy both their character and UTF-8 byte limits so a valid 10-file request always fits that frame budget.
@@ -97,9 +98,13 @@ type TransferProtocolMessage =
       transferId: string
       files: Array<{
         fileId: string
+        streamId: number
         name: string
         mimeType: string
         byteLength: number
+        lastModified: number
+        chunkSize: number
+        chunkCount: number
       }>
     }
   | {
@@ -113,19 +118,30 @@ type TransferProtocolMessage =
       type: 'transfer:file-start'
       transferId: string
       fileId: string
+      streamId: number
     }
   | {
       v: 2
       type: 'transfer:file-end'
       transferId: string
       fileId: string
+      streamId: number
+      chunkCount: number
       byteLength: number
     }
   | {
       v: 2
       type: 'transfer:receipt'
       transferId: string
-      kind: 'text' | 'file'
+      kind: 'text'
+      status: 'received'
+    }
+  | {
+      v: 2
+      type: 'transfer:receipt'
+      transferId: string
+      kind: 'file'
+      fileId: string
       status: 'received'
     }
   | {
@@ -145,9 +161,27 @@ type TransferProtocolMessage =
     }
 ```
 
-Control-frame parsing uses exact keys, finite bounded integers, capped strings, and aggregate batch validation. File names have control characters and path separators removed before display/download and are never used as filesystem paths by the application.
+Control-frame parsing uses exact keys, finite bounded integers, capped strings, and aggregate batch validation. File IDs and non-zero stream IDs are unique inside a batch; `chunkCount` equals `ceil(byteLength / chunkSize)` and is zero only for an empty file. File names have control characters and path separators removed before display/download and are never used as filesystem paths by the application.
 
-### 5.3 Text Flow
+### 5.3 Binary Chunk Frames
+
+Binary messages use a fixed 16-byte big-endian header followed by payload:
+
+```text
+bytes 0..3   magic 0x50325032 ("P2P2")
+byte 4       protocol version 2
+byte 5       frame type 1 (file chunk)
+bytes 6..7   header length 16
+bytes 8..11  uint32 streamId (non-zero)
+bytes 12..15 uint32 chunkIndex
+bytes 16..   payload
+```
+
+`encodeFileChunkFrame` and `parseFileChunkFrame` live in the contracts workspace and reject bad magic/version/type/header length, zero stream IDs, out-of-range indices, empty payloads, and payloads larger than the negotiated `chunkSize`. Strings are parsed only as control frames; `ArrayBuffer` is parsed only as binary.
+
+For each peer, `chunkSize = min(16 KiB, floor(maxMessageSize) - 16)`. If the peer does not expose a maximum, use a conservative 64 KiB transport maximum before subtracting the header. A resulting payload below 1 KiB disables file transfer for that peer while leaving text available. File request descriptors are generated per peer because negotiated maxima can differ.
+
+### 5.4 Text Flow
 
 ```text
 sender clicks Send
@@ -161,7 +195,7 @@ sender clicks Send
 
 There is no request or decision frame for text. Closing the dialog only dismisses local UI; it does not retroactively reject the text. Multiple received texts use a FIFO queue capped at five dialogs. Overflow calls `discardText`, which sends `transfer:error` with `INVALID_STATE`, clears the pending incoming record, and does not overwrite the visible message. Receipt emission is therefore owned by an explicit App-to-PeerSession acknowledgement rather than happening automatically inside the DataChannel message handler.
 
-### 5.4 File Flow
+### 5.5 File Flow
 
 ```text
 sender selects 1–10 files
@@ -171,10 +205,11 @@ sender selects 1–10 files
 → Reject: transfer:decision(reject), no binary data is sent
 → Accept: transfer:decision(accept)
 → sender sends each file sequentially on that peer channel:
-   transfer:file-start → ordered ArrayBuffer chunks → transfer:file-end
-→ receiver verifies active transfer, file order, and exact byte count
-→ after every file is complete, receiver creates downloadable Blob URLs
-→ receiver sends transfer:receipt(kind=file)
+   transfer:file-start → ordered headed ArrayBuffer chunks → transfer:file-end
+→ receiver verifies transfer/stream identity, strict chunk index, expected chunk length, file order, and exact totals
+→ receiver creates that file Blob and sends transfer:receipt(kind=file,fileId)
+→ sender starts the next file only after the per-file receipt
+→ after every file is complete, receiver exposes downloadable Blob URLs and the sender marks that peer terminal
 → dialog shows completed files with Save actions and Close
 ```
 
@@ -182,15 +217,15 @@ Only one outgoing transfer—either one text message or one file batch—is acti
 
 The receiver keeps at most one accepted file batch active per peer. Because the total batch is capped at 100 MiB, the compatible fallback may buffer chunks in memory and construct Blobs. Object URLs are revoked when the result is cleared or the component unmounts. Automatic downloads are not forced because browsers may block asynchronous multi-file downloads; the completed dialog provides explicit Save links.
 
-### 5.5 Backpressure and Integrity
+### 5.6 Backpressure and Integrity
 
-Each channel is ordered and reliable. Before binary transfer it uses `binaryType = 'arraybuffer'` and `bufferedAmountLowThreshold = 256 KiB`.
+Each channel is ordered and reliable. Before binary transfer it uses `binaryType = 'arraybuffer'` and `bufferedAmountLowThreshold = 64 KiB`.
 
-The sender reads each File in 16 KiB slices. It stops enqueueing while `bufferedAmount` exceeds 1 MiB and resumes only after `bufferedamountlow` or channel close/error. This uses the browser’s defined queue counters rather than timer polling.
+The sender is a single-flight pump. Before reading the next File slice, it verifies `bufferedAmount + nextFrameBytes <= 1 MiB`; otherwise it waits for `bufferedamountlow` or channel close/error. After every await it rechecks peer generation, transfer state, and cancellation. Once all chunks for a file are queued, it temporarily sets `bufferedAmountLowThreshold = 0`, immediately resolves if the buffer is already zero, otherwise waits for the next low event at zero, then restores 64 KiB before sending `file:end` and starting the receipt timer. A prior low event at 64 KiB cannot satisfy the zero-drain wait. This uses the browser’s defined queue counters rather than timer polling.
 
-The receiver resets a 30-second inactivity watchdog for every valid chunk. It rejects chunks without an accepted active file, bytes beyond the declared length, a mismatched `file:end`, duplicate file starts, or files arriving out of batch order. Ordered reliable SCTP/DTLS handles transport ordering and integrity; the application additionally verifies declared byte counts.
+The receiver resets a 60-second inactivity watchdog for every valid chunk. It rejects unknown streams, non-sequential indices, wrong payload length, bytes beyond the declared length, a mismatched `file:end`, duplicate file starts, or files arriving out of batch order. Ordered reliable SCTP/DTLS handles transport ordering and integrity; the application additionally verifies chunk indices/counts and declared byte totals. SHA-256 and resumable transfer remain outside this milestone because browser Web Crypto has no incremental digest API and hashing 100 MiB would duplicate memory.
 
-Cancellation closes local readers/writers, clears waiters and timers, discards partial chunks, revokes object URLs, sends a terminal frame when possible, and emits one idempotent terminal event.
+Cancellation closes local readers/writers, clears waiters and timers, discards partial chunks, revokes object URLs, sends a terminal frame when possible, and emits one idempotent terminal event. Each PeerSession peer entry owns an exported `StreamTombstones` registry with `add`, `has`, and `clear`; it keeps at most 32 cancelled stream IDs for 30 seconds so the inbound binary handler can discard already queued late chunks without an error storm or mistaking them for a new batch.
 
 ## 6. PeerSession and UI State
 
@@ -308,7 +343,7 @@ type TurnMode = 'off' | 'static' | 'api'
 - `static`: TURN URLs, username, and credential come from `VITE_*`; allowed only for local/private testing because build-time values are public.
 - `api`: production-recommended mode; the API signs short-lived coturn REST credentials for an authenticated room member.
 
-`iceTransportPolicy` defaults to `all`, which allows direct candidates first and relay candidates when needed. `relay` is supported only for explicit relay verification.
+`iceTransportPolicy` defaults to `all`, which allows direct candidates first and relay candidates when needed. `relay` is supported only for explicit relay verification. This policy is owned by Web configuration and overlaid locally for `off`, `static`, and `api` modes; the API `RTCConfigurationDto` carries only validated `iceServers` and never accepts or emits the policy.
 
 ### 11.2 Atomic Room Bootstrap and Credentials
 
@@ -367,9 +402,11 @@ type RoomAttachMessage = {
 
 `room:attach` only verifies and attaches the authenticated socket to an existing bootstrap-created membership with the same role. It never calls `joinRoom`, creates a participant, or bypasses HTTP/IP/visitor/global admission limits. A visitor without bootstrap membership receives `ROOM_MEMBERSHIP_REQUIRED` and cannot send signaling.
 
-Bootstrap creates the membership in `connecting` state with a 15-second attach deadline. A successful attach changes it to `online`. Unexpected socket disconnect or the bounded client reconnect path returns it to `connecting` and starts a fresh 15-second resume window instead of deleting it immediately. Re-attaching within that window preserves membership and rebuilds PeerSession state. Socket replacement remains generation-safe.
+Bootstrap creates the membership in `connecting` state with a 15-second attach deadline. A successful attach changes it to `online`. Unexpected socket disconnect or the bounded client reconnect path returns it to `connecting` and starts a fresh 15-second resume window instead of deleting it immediately. Re-attaching within that window preserves membership and rebuilds PeerSession state.
 
-Explicit `room:leave`, attach/resume deadline expiry, room expiry, or visitor expiry removes membership and broadcasts `participant:left` exactly once. An explicit sender leave closes the room and removes all participants. Periodic cleanup also removes bootstrap memberships whose first WebSocket attach never arrives.
+Socket replacement first snapshots the old socket's attached rooms, marks those memberships `connecting`, and starts new resume deadlines before closing/replacing the old generation. The replacement socket starts with an empty attached-room set; it cannot receive signaling until `room:attach` succeeds. Signal delivery requires both RoomService membership status `online` and the current target socket's attached-room set to contain the code. Late close callbacks from the replaced generation are ignored.
+
+Explicit `room:leave`, attach/resume deadline expiry, room expiry, or visitor expiry removes membership and broadcasts `participant:left` exactly once. Any terminal sender removal closes the room and removes all participants; a room never survives without its sender. Periodic cleanup also removes bootstrap memberships whose first WebSocket attach never arrives.
 
 ### 11.4 Configuration
 
@@ -387,6 +424,7 @@ VITE_ICE_TRANSPORT_POLICY=all
 API/coturn:
 
 ```env
+STUN_URLS=stun:stun.example.com:3478
 TURN_URLS=turn:turn.example.com:3478?transport=udp,turns:turn.example.com:5349?transport=tcp
 TURN_SHARED_SECRET=<server-only random secret>
 TURN_CREDENTIAL_GRACE_SECONDS=300
@@ -409,7 +447,7 @@ Add a self-host template based on `coturn/coturn:4.14.0-r0` with:
 - no anonymous access;
 - documented certificate/key mount paths, with real secrets excluded from the repository.
 
-The template is deployable only after the operator supplies a public address/domain, firewall rules, and TLS certificate. Automated tests validate config generation and credential signing; full relay verification remains an environment test because CI has no public TURN endpoint.
+The template is deployable only after the operator supplies a public address/domain, firewall rules, and TLS certificate. A server-side script validates these inputs plus `TURN_SHARED_SECRET`, calls the tested renderer, and atomically writes a mode-0600 `.local/turnserver.conf` without printing rendered contents. Compose mounts only that generated local config (and local certificate/key) with missing-source creation disabled, so deployment fails when generation or secret material is absent. The checked-in example leaves `static-auth-secret` commented/empty and is intentionally unusable. Automated tests validate config generation and credential signing; full relay verification remains an environment test because CI has no public TURN endpoint.
 
 ## 12. API Hardening Included in Scope
 
@@ -421,7 +459,7 @@ TURN adds an abuse-sensitive public resource, so this milestone also includes:
 - rate-limit room creation to 30/hour/IP and 10/hour/visitor;
 - rate-limit room joins to 60/minute/IP and 20/minute/visitor;
 - rate-limit API-mode credential bootstrap to 300/minute/instance, 20/minute/IP, 5/minute/visitor, and 30/minute/room before signing;
-- cap the instance at 10,000 live visitors, 2,000 live rooms, 20 receivers per room, 10,000 sockets, and 50,000 rate-limit keys; admission first sweeps expired state, then returns `CAPACITY_EXCEEDED` without evicting active users;
+- cap the instance at 10,000 live visitors, 2,000 live rooms, 20 receivers per room, 10,000 sockets, and 50,000 rate-limit keys; admission first asks the Maintenance service to sweep expired state, then returns `CAPACITY_EXCEEDED` without evicting active users;
 - expire visitors after two hours without authenticated HTTP or WebSocket activity;
 - run room/attach-window cleanup every 30 seconds and visitor/rate-limit-key cleanup every 60 seconds;
 - remove rate-limit windows after their longest configured window plus 60 seconds, and reject unseen keys while the key cap is full;
@@ -429,6 +467,8 @@ TURN adds an abuse-sensitive public resource, so this milestone also includes:
 - keep stable typed API error codes;
 - never log or serialize TURN shared secrets or issued credentials;
 - document that the in-memory API remains single-instance and is not high availability.
+
+Only Maintenance deletes expired visitors: it collects the expired IDs, cascades each through RoomService and emits deterministic room transitions, then removes both visitor lookup entries. Visitor admission never self-sweeps, because deleting a visitor without the room cascade would strand membership state.
 
 All limits and cleanup services use injectable clocks/schedulers, expose explicit `start()`/`stop()` lifecycle methods for tests, and use stable `RATE_LIMITED` or `CAPACITY_EXCEEDED` errors. Server timers are released on shutdown. coturn quotas remain the final bandwidth/allocation boundary if an attacker rotates visitor IDs, rooms, or IPs. General account systems, persistent databases, distributed rate limiting, billing, observability stacks, and automatic TURN credential refresh/ICE restart are outside this milestone.
 
