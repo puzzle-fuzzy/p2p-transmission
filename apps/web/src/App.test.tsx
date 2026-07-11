@@ -91,6 +91,7 @@ vi.mock('./components/RoomJoin', () => ({
 type MockTransferPanelProps = {
   activity?: OutgoingActivity
   files: FileSelection[]
+  receivers: PublicVisitor[]
   onFilesAdded(files: readonly File[]): void
   onSendText(text: string): Promise<void>
   onSendFiles(): Promise<void>
@@ -103,7 +104,10 @@ vi.mock('./components/TransferPanel', () => ({
       ? Object.values(props.activity.files)[0]
       : undefined
     return (
-      <div data-testid="transfer-panel">
+      <div
+        data-testid="transfer-panel"
+        data-receiver-ids={props.receivers.map(receiver => receiver.id).join(',')}
+      >
         <button
           type="button"
           disabled={Boolean(props.activity)}
@@ -168,6 +172,7 @@ vi.mock('./components/IncomingFileRequestDialog', () => ({
     state,
     onAccept,
     onReject,
+    onCancel,
     onClose,
   }: {
     files: Array<{ name: string }>
@@ -178,6 +183,7 @@ vi.mock('./components/IncomingFileRequestDialog', () => ({
     }
     onAccept(): void
     onReject(): void
+    onCancel(): void
     onClose(): void
   }) => (
     <div role="dialog" aria-label="收到文件">
@@ -193,6 +199,9 @@ vi.mock('./components/IncomingFileRequestDialog', () => ({
           <button type="button" onClick={onAccept}>接收测试文件</button>
           <button type="button" onClick={onReject}>拒绝测试文件</button>
         </>
+      )}
+      {state.status === 'receiving' && (
+        <button type="button" onClick={onCancel}>取消测试接收</button>
       )}
       {(state.status === 'received' || state.status === 'error') && (
         <button type="button" onClick={onClose}>关闭文件弹窗</button>
@@ -266,7 +275,7 @@ class FakePeerSession {
   readonly discardText = vi.fn(() => true)
   readonly acceptFiles = vi.fn(() => true)
   readonly rejectFiles = vi.fn(() => true)
-  readonly cancelTransfer = vi.fn(() => true)
+  readonly cancelTransfer = vi.fn((_transferId: string) => true)
   private readonly listeners = new Set<(event: PeerSessionEvent) => void>()
 
   readonly subscribe = vi.fn((listener: (event: PeerSessionEvent) => void) => {
@@ -506,6 +515,28 @@ describe('App transfer integration', () => {
     }))
   })
 
+  test('passes only ready room receivers to the transfer panel', async () => {
+    const receiverTwo = visitor('receiver-2', '接收者二号')
+    const roomWithTwoReceivers: PublicRoom = {
+      ...room,
+      receivers: [receiver.id, receiverTwo.id],
+      participants: [
+        ...room.participants,
+        {
+          visitor: receiverTwo,
+          role: 'receiver',
+          joinedAt: 1,
+          status: 'online',
+        },
+      ],
+    }
+    boundary.createRoom.mockResolvedValueOnce({ room: roomWithTwoReceivers })
+
+    await enterRoom('sender')
+
+    expect(screen.getByTestId('transfer-panel').dataset.receiverIds).toBe(receiver.id)
+  })
+
   test('returns to a clean lobby when attached membership is no longer valid', async () => {
     await enterRoom('receiver')
     emit({
@@ -736,6 +767,46 @@ describe('App transfer integration', () => {
       'file-1': 0.25,
       'file-2': 0.75,
     })
+  })
+
+  test('cancels an active incoming batch and clears pending progress safely', async () => {
+    const user = await enterRoom('receiver')
+    emit({
+      type: 'transfer:file-requested',
+      peerId: sender.id,
+      transferId: 'files-cancel',
+      files: [{
+        fileId: 'file-cancel',
+        streamId: 14,
+        name: '取消.bin',
+        mimeType: 'application/octet-stream',
+        byteLength: 100,
+        lastModified: 1,
+        chunkSize: 1024,
+        chunkCount: 1,
+      }],
+    })
+
+    await user.click(screen.getByRole('button', { name: '接收测试文件' }))
+    emit(receivingProgress('files-cancel', 'file-cancel', 25, 100))
+    expect(requestFrame).toHaveBeenCalledTimes(1)
+    peerSession.cancelTransfer.mockImplementationOnce(transferId => {
+      peerSession.emit({
+        type: 'transfer:terminal',
+        peerId: sender.id,
+        transferId,
+        outcome: 'cancelled',
+      })
+      return true
+    })
+
+    await user.click(screen.getByRole('button', { name: '取消测试接收' }))
+
+    expect(peerSession.cancelTransfer).toHaveBeenCalledTimes(1)
+    expect(peerSession.cancelTransfer).toHaveBeenCalledWith('files-cancel')
+    expect(cancelFrame).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('file-dialog-status')).toBeNull()
+    expect(screen.getByTestId('receiver-panel').textContent).toBe('waiting')
   })
 
   test('revokes received URLs once when realtime resets and does not revoke again on unmount', async () => {

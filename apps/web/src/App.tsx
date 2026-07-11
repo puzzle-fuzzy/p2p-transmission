@@ -1088,9 +1088,20 @@ function App() {
   const handleRejectFiles = useCallback(() => {
     const current = incomingFileRef.current
     if (!current || current.state.status !== 'pending') return
-    peerSessionRef.current?.rejectFiles(current.peerId, current.transferId)
+    const { peerId, transferId } = current
     replaceIncomingFile()
     setReceiverPanelState({ status: 'waiting' })
+    peerSessionRef.current?.rejectFiles(peerId, transferId)
+  }, [replaceIncomingFile])
+
+  const handleCancelFiles = useCallback(() => {
+    const current = incomingFileRef.current
+    if (!current || current.state.status !== 'receiving') return
+    const { transferId } = current
+    progressSchedulerRef.current?.clear()
+    replaceIncomingFile()
+    setReceiverPanelState({ status: 'waiting' })
+    peerSessionRef.current?.cancelTransfer(transferId)
   }, [replaceIncomingFile])
 
   const handleCloseFiles = useCallback(() => {
@@ -1120,13 +1131,8 @@ function App() {
   const activeText = incomingTexts[0]
   const receiverSender = senderFromRoom(roomView?.room)
   const roomReceivers = receiversFromRoom(roomView?.room)
-  const transferReceivers = transferUiState.activity
-    ? transferUiState.activity.peerIds.flatMap(peerId => {
-        const receiver = visitorFromRoom(roomView?.room, peerId)
-        return receiver ? [receiver] : []
-      })
-    : roomReceivers
-  const readyPeerCount = state.readyPeerIds.length
+  const readyPeerIdSet = new Set(state.readyPeerIds)
+  const connectedReceivers = roomReceivers.filter(receiver => readyPeerIdSet.has(receiver.id))
 
   return (
     <div className="min-h-svh bg-[#2d2d2d] px-4 py-6 text-amber-50 sm:flex sm:items-center sm:justify-center">
@@ -1158,7 +1164,7 @@ function App() {
                   {state.role === 'sender' ? '发送者' : '接收者'}
                 </div>
                 <div className="mt-0.5 text-amber-50/60">
-                  {readyPeerCount > 0 ? '点对点已连接' : '正在建立点对点连接'}
+                  {state.readyPeerIds.length > 0 ? '点对点已连接' : '正在建立点对点连接'}
                 </div>
               </div>
             </div>
@@ -1166,9 +1172,7 @@ function App() {
             {state.role === 'sender' ? (
               <TransferPanel
                 visitor={roomView.session.visitor}
-                room={roomView.room}
-                receivers={transferReceivers}
-                readyPeerCount={readyPeerCount}
+                receivers={connectedReceivers}
                 activity={transferUiState.activity}
                 files={fileSelections}
                 selectionError={selectionError}
@@ -1205,6 +1209,7 @@ function App() {
           state={incomingFile.state}
           onAccept={handleAcceptFiles}
           onReject={handleRejectFiles}
+          onCancel={handleCancelFiles}
           onClose={handleCloseFiles}
         />
       )}

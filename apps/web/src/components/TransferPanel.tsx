@@ -1,12 +1,11 @@
 import { useId, useRef, useState } from 'react'
-import { MAX_TEXT_CHARACTERS, type PublicRoom, type PublicVisitor } from '@p2p/contracts'
+import { MAX_TEXT_CHARACTERS, type PublicVisitor } from '@p2p/contracts'
 import type { FileSelection } from '../features/transfer/file-selection'
 import {
   aggregateFileProgress,
   isTransferLocked,
   type OutgoingActivity,
 } from '../features/transfer/ui-state'
-import Avatar from './Avatar'
 import FileTransferRow from './FileTransferRow'
 import TransferPeerFlow from './TransferPeerFlow'
 
@@ -14,9 +13,7 @@ type Tab = 'text' | 'file'
 
 export type TransferPanelProps = {
   visitor: PublicVisitor
-  room: PublicRoom
   receivers: PublicVisitor[]
-  readyPeerCount: number
   activity?: OutgoingActivity
   files: FileSelection[]
   selectionError: string
@@ -45,9 +42,7 @@ const terminalErrorProgress = (
 
 export default function TransferPanel({
   visitor,
-  room,
   receivers,
-  readyPeerCount,
   activity,
   files,
   selectionError,
@@ -66,10 +61,16 @@ export default function TransferPanel({
   const fileTabRef = useRef<HTMLButtonElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const tabId = useId()
-  const connectedCount = Math.max(0, Math.trunc(readyPeerCount))
+  const connectedCount = receivers.length
   const locked = isTransferLocked({ activity }) || submitting
   const canSendText = connectedCount > 0 && Boolean(text.trim()) && !locked
   const canSendFiles = connectedCount > 0 && files.length > 0 && !locked
+  const connectedLabel = `${String(connectedCount)} 位接收者已连接`
+  const activePeerIds = new Set(activity?.peerIds ?? [])
+  const flowReceivers = activity
+    ? receivers.filter(receiver => activePeerIds.has(receiver.id))
+    : receivers
+  const flowPhase = activity?.phase ?? 'idle'
 
   const selectTab = (nextTab: Tab, focus = false) => {
     if (locked) return
@@ -132,19 +133,21 @@ export default function TransferPanel({
     onFilesAdded(Array.from(nextFiles))
   }
 
-  const activityLabel = activity?.kind === 'file'
-    ? activity.phase === 'requesting'
-      ? '正在等待接收方确认文件'
-      : activity.phase === 'transferring'
-        ? '正在传输文件'
-        : activity.phase === 'complete'
-          ? '文件传输完成'
-          : '文件传输结束，但有接收方未完成'
-    : activity?.phase === 'complete'
-      ? '文本传输完成'
-      : activity?.phase === 'error'
-        ? '文本传输结束，但有接收方未完成'
-        : '正在传输文本'
+  const activityLabel = !activity
+    ? connectedLabel
+    : activity.kind === 'file'
+      ? activity.phase === 'requesting'
+        ? '正在等待接收方确认文件'
+        : activity.phase === 'transferring'
+          ? '正在传输文件'
+          : activity.phase === 'complete'
+            ? '文件传输完成'
+            : '文件传输结束，但有接收方未完成'
+      : activity.phase === 'complete'
+        ? '文本传输完成'
+        : activity.phase === 'error'
+          ? '文本传输结束，但有接收方未完成'
+          : '正在传输文本'
 
   return (
     <section
@@ -197,31 +200,18 @@ export default function TransferPanel({
           </button>
         </div>
 
-        <div className="flex items-center justify-between gap-3 sm:justify-end">
-          <div className="min-w-0 text-left sm:text-right">
-            <div className="text-xs text-amber-50/50 tabular-nums">房间 {room.code}</div>
-            <div className="mt-0.5 text-xs text-amber-50/60">
-              {connectedCount > 0
-                ? `${String(connectedCount)} 位接收者已连接`
-                : '等待接收者连接'}
-            </div>
+        <div className="flex w-full flex-nowrap items-center justify-between gap-3 sm:w-auto sm:justify-end">
+          <div className="shrink-0 whitespace-nowrap text-xs text-amber-50/60 tabular-nums">
+            {connectedLabel}
           </div>
-          {!activity && (
-            <Avatar seed={visitor.avatarSeed} label={visitor.displayName} className="shrink-0" />
-          )}
-        </div>
-      </div>
-
-      {activity && (
-        <div className="flex justify-center rounded-xl border border-amber-50/10 bg-white/[0.025] px-4 py-4">
           <TransferPeerFlow
             sender={visitor}
-            receivers={receivers}
-            phase={activity.phase}
+            receivers={flowReceivers}
+            phase={flowPhase}
             accessibleLabel={activityLabel}
           />
         </div>
-      )}
+      </div>
 
       {(sendError || selectionError) && (
         <div className="flex items-center gap-2 rounded-xl border border-amber-50/15 bg-white/5 px-4 py-2.5 text-xs text-amber-50/70" role="alert">
@@ -305,38 +295,43 @@ export default function TransferPanel({
               </div>
             ) : (
               <div className="flex flex-1 flex-col gap-2" onClick={event => event.stopPropagation()}>
-                {files.map(selection => {
-                  const presentation = activity?.files[selection.fileId]
-                  const progress = presentation
-                    ? presentation.state === 'error'
-                      ? terminalErrorProgress(activity, selection.fileId)
-                      : aggregateFileProgress(activity, selection.fileId)
-                    : 0
-                  const state = presentation?.state ?? 'queued'
-                  return (
-                    <FileTransferRow
-                      key={selection.fileId}
-                      fileId={selection.fileId}
-                      name={selection.file.name}
-                      byteLength={selection.file.size}
-                      progress={progress}
-                      state={state}
-                      action={!locked ? (
-                        <button
-                          type="button"
-                          className="flex size-11 shrink-0 items-center justify-center rounded-full text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50 focus-visible:bg-white/5 focus-visible:text-amber-50 focus-visible:outline-none"
-                          onClick={event => {
-                            event.stopPropagation()
-                            onFileRemoved(selection.fileId)
-                          }}
-                          aria-label={`移除 ${selection.file.name}`}
-                        >
-                          <span className="material-symbols-outlined" style={{ fontSize: '16px' }} aria-hidden="true">close</span>
-                        </button>
-                      ) : undefined}
-                    />
-                  )
-                })}
+                <div
+                  className="native-scrollbar max-h-52 space-y-2 overflow-y-auto overscroll-contain pr-1 sm:max-h-56"
+                  data-testid="selected-file-scroll"
+                >
+                  {files.map(selection => {
+                    const presentation = activity?.files[selection.fileId]
+                    const progress = presentation
+                      ? presentation.state === 'error'
+                        ? terminalErrorProgress(activity, selection.fileId)
+                        : aggregateFileProgress(activity, selection.fileId)
+                      : 0
+                    const state = presentation?.state ?? 'queued'
+                    return (
+                      <FileTransferRow
+                        key={selection.fileId}
+                        fileId={selection.fileId}
+                        name={selection.file.name}
+                        byteLength={selection.file.size}
+                        progress={progress}
+                        state={state}
+                        action={!locked ? (
+                          <button
+                            type="button"
+                            className="flex size-11 shrink-0 items-center justify-center rounded-full text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50 focus-visible:bg-white/5 focus-visible:text-amber-50 focus-visible:outline-none"
+                            onClick={event => {
+                              event.stopPropagation()
+                              onFileRemoved(selection.fileId)
+                            }}
+                            aria-label={`移除 ${selection.file.name}`}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: '16px' }} aria-hidden="true">close</span>
+                          </button>
+                        ) : undefined}
+                      />
+                    )
+                  })}
+                </div>
                 {!locked && (
                   <button
                     type="button"

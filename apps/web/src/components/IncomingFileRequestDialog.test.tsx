@@ -25,6 +25,7 @@ const files: IncomingFileRequestItem[] = [
 const callbacks = () => ({
   onAccept: vi.fn(),
   onReject: vi.fn(),
+  onCancel: vi.fn(),
   onClose: vi.fn(),
 })
 
@@ -44,6 +45,13 @@ describe('IncomingFileRequestDialog', () => {
     expect(screen.getByText('设计稿.png').textContent).toBe('设计稿.png')
     expect(screen.getByText('说明.txt').textContent).toBe('说明.txt')
     expect(screen.getByText(/2 个文件 · 3.0 KB/)).not.toBeNull()
+    const list = screen.getByRole('list', { name: '待接收文件' })
+    expect(list.className).toContain('max-h-52')
+    expect(list.className).toContain('sm:max-h-56')
+    expect(list.className).toContain('overscroll-contain')
+    const accept = screen.getByRole('button', { name: '接收全部' })
+    expect(accept.parentElement?.className)
+      .toContain('grid-cols-[minmax(0,1fr)_minmax(0,2fr)]')
     expect(document.activeElement).toBe(screen.getByRole('button', { name: '拒绝' }))
   })
 
@@ -59,7 +67,7 @@ describe('IncomingFileRequestDialog', () => {
       />,
     )
 
-    const accept = screen.getByRole('button', { name: '接收' }) as HTMLButtonElement
+    const accept = screen.getByRole('button', { name: '接收全部' }) as HTMLButtonElement
     const reject = screen.getByRole('button', { name: '拒绝' }) as HTMLButtonElement
     await user.click(accept)
     await user.click(accept)
@@ -90,7 +98,7 @@ describe('IncomingFileRequestDialog', () => {
     expect(actions.onReject).toHaveBeenCalledTimes(1)
   })
 
-  test('shows independent receiving progress inside each file row with disabled actions', () => {
+  test('shows independent receiving progress with one exact-once Cancel action', () => {
     const actions = callbacks()
     render(
       <IncomingFileRequestDialog
@@ -114,11 +122,41 @@ describe('IncomingFileRequestDialog', () => {
     expect(second.getAttribute('aria-valuenow')).toBe('76')
     expect(second.getAttribute('style')).toContain('76%')
     expect(screen.queryByLabelText('接收进度')).toBeNull()
-    expect((screen.getByRole('button', { name: '接收' }) as HTMLButtonElement).disabled).toBe(true)
-    expect((screen.getByRole('button', { name: '拒绝' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.queryByRole('button', { name: '接收全部' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '拒绝' })).toBeNull()
+
+    const cancel = screen.getByRole('button', { name: '取消接收' })
+    expect(cancel.className).toContain('w-full')
+    expect(document.activeElement).toBe(cancel)
+    fireEvent.click(cancel)
+    fireEvent.click(cancel)
+    expect(actions.onCancel).toHaveBeenCalledTimes(1)
   })
 
-  test('renders explicit Save links and closes completed results with Escape', () => {
+  test('Escape cancels receiving exactly once', () => {
+    const actions = callbacks()
+    render(
+      <IncomingFileRequestDialog
+        sender={sender}
+        files={files}
+        state={{
+          status: 'receiving',
+          progressByFileId: { 'file-1': 0.25, 'file-2': 0 },
+        }}
+        {...actions}
+      />,
+    )
+
+    const dialog = screen.getByRole('dialog')
+    fireEvent(dialog, new Event('cancel', { cancelable: true }))
+    fireEvent(dialog, new Event('cancel', { cancelable: true }))
+
+    expect(actions.onCancel).toHaveBeenCalledTimes(1)
+    expect(actions.onReject).not.toHaveBeenCalled()
+    expect(actions.onClose).not.toHaveBeenCalled()
+  })
+
+  test('renders completed shared rows with native downloads and closes with Escape', () => {
     const actions = callbacks()
     render(
       <IncomingFileRequestDialog
@@ -135,10 +173,28 @@ describe('IncomingFileRequestDialog', () => {
       />,
     )
 
-    const links = screen.getAllByRole('link', { name: '保存' }) as HTMLAnchorElement[]
-    expect(links).toHaveLength(2)
-    expect(links[0]?.getAttribute('href')).toBe('blob:file-1')
-    expect(links[0]?.getAttribute('download')).toBe('设计稿.png')
+    const list = screen.getByRole('list', { name: '已接收文件' })
+    expect(list.className).toContain('max-h-52')
+    expect(list.className).toContain('sm:max-h-56')
+    expect(screen.getByTestId('file-transfer-row-file-1')).not.toBeNull()
+    expect(screen.getByTestId('file-transfer-row-file-2')).not.toBeNull()
+    expect(
+      screen.getByRole('progressbar', { name: '设计稿.png 传输进度' })
+        .getAttribute('aria-valuenow'),
+    ).toBe('100')
+    expect(
+      screen.getByRole('progressbar', { name: '说明.txt 传输进度' })
+        .getAttribute('aria-valuenow'),
+    ).toBe('100')
+
+    const firstDownload = screen.getByRole('link', { name: '下载 设计稿.png' })
+    expect(firstDownload.className).toContain('size-11')
+    expect(firstDownload.className).toContain('rounded-full')
+    expect(firstDownload.getAttribute('href')).toBe('blob:file-1')
+    expect(firstDownload.getAttribute('download')).toBe('设计稿.png')
+    const secondDownload = screen.getByRole('link', { name: '下载 说明.txt' })
+    expect(secondDownload.getAttribute('href')).toBe('blob:file-2')
+    expect(secondDownload.getAttribute('download')).toBe('说明.txt')
     expect(document.activeElement).toBe(screen.getByRole('button', { name: '关闭' }))
 
     fireEvent(
@@ -161,7 +217,9 @@ describe('IncomingFileRequestDialog', () => {
 
     expect(screen.getByText('连接已断开').textContent).toBe('连接已断开')
     expect(screen.getAllByText('传输失败')).toHaveLength(files.length)
+    expect(screen.getByRole('list', { name: '待接收文件' }).className)
+      .toContain('max-h-52')
     expect(screen.getByRole('button', { name: '关闭' })).not.toBeNull()
-    expect(screen.queryByRole('button', { name: '接收' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '接收全部' })).toBeNull()
   })
 })

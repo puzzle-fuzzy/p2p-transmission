@@ -25,6 +25,7 @@ export type IncomingFileRequestDialogProps = {
   state: IncomingFileRequestDialogState
   onAccept(): void
   onReject(): void
+  onCancel(): void
   onClose(): void
 }
 
@@ -41,10 +42,12 @@ export default function IncomingFileRequestDialog({
   state,
   onAccept,
   onReject,
+  onCancel,
   onClose,
 }: IncomingFileRequestDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const rejectButtonRef = useRef<HTMLButtonElement>(null)
+  const cancelButtonRef = useRef<HTMLButtonElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const decisionMadeRef = useRef(false)
   const closingRef = useRef(false)
@@ -77,12 +80,12 @@ export default function IncomingFileRequestDialog({
       return
     }
 
-    if (state.status === 'received' || state.status === 'error') {
-      closeButtonRef.current?.focus()
+    if (state.status === 'receiving') {
+      cancelButtonRef.current?.focus()
       return
     }
 
-    dialogRef.current?.focus()
+    closeButtonRef.current?.focus()
   }, [state.status])
 
   const rejectOnce = () => {
@@ -102,6 +105,14 @@ export default function IncomingFileRequestDialog({
     onAccept()
   }
 
+  const cancelOnce = () => {
+    if (state.status !== 'receiving' || closingRef.current) return
+
+    closingRef.current = true
+    dialogRef.current?.close()
+    onCancel()
+  }
+
   const closeOnce = () => {
     if (closingRef.current) return
 
@@ -110,7 +121,12 @@ export default function IncomingFileRequestDialog({
     onClose()
   }
 
-  const pendingActionsDisabled = state.status !== 'pending' || decisionMade
+  const listedFiles = state.status === 'received' ? state.files : files
+  const downloadableFiles = new Map<string, DownloadableReceivedFile>(
+    state.status === 'received'
+      ? state.files.map(file => [file.fileId, file] as const)
+      : [],
+  )
 
   return (
     <dialog
@@ -123,7 +139,8 @@ export default function IncomingFileRequestDialog({
       onCancel={event => {
         event.preventDefault()
         if (state.status === 'pending') rejectOnce()
-        if (state.status === 'received' || state.status === 'error') closeOnce()
+        else if (state.status === 'receiving') cancelOnce()
+        else closeOnce()
       }}
     >
       <div className="p-5 sm:p-6">
@@ -143,13 +160,19 @@ export default function IncomingFileRequestDialog({
           </div>
         </div>
 
-        {state.status !== 'received' && (
-          <ul className="native-scrollbar mt-5 max-h-52 space-y-2 overflow-y-auto" aria-label="待接收文件">
-            {files.map(file => {
-              const progress = state.status === 'receiving'
-                ? state.progressByFileId[file.fileId] ?? 0
+        <ul
+          className="native-scrollbar mt-5 max-h-52 space-y-2 overflow-y-auto overscroll-contain sm:max-h-56"
+          aria-label={state.status === 'received' ? '已接收文件' : '待接收文件'}
+        >
+          {listedFiles.map(file => {
+            const progress = state.status === 'receiving'
+              ? state.progressByFileId[file.fileId] ?? 0
+              : state.status === 'received'
+                ? 1
                 : 0
-              const fileState = state.status === 'error'
+            const fileState = state.status === 'received'
+              ? 'completed'
+              : state.status === 'error'
                 ? 'error'
                 : state.status === 'receiving'
                   ? progress >= 1
@@ -158,46 +181,31 @@ export default function IncomingFileRequestDialog({
                       ? 'transferring'
                       : 'queued'
                   : 'queued'
+            const downloadable = downloadableFiles.get(file.fileId)
 
-              return (
-                <li key={file.fileId}>
-                  <FileTransferRow
-                    fileId={file.fileId}
-                    name={file.name}
-                    byteLength={file.byteLength}
-                    progress={progress}
-                    state={fileState}
-                  />
-                </li>
-              )
-            })}
-          </ul>
-        )}
-
-        {state.status === 'received' && (
-          <div className="mt-5">
-            <p className="text-xs text-amber-50/50">文件已接收，可分别保存到本机。</p>
-            <ul className="mt-3 space-y-2" aria-label="已接收文件">
-              {state.files.map(file => (
-                <li
-                  key={file.fileId}
-                  className="flex min-w-0 items-center gap-3 rounded-lg bg-white/5 px-3 py-2"
-                >
-                  <span className="min-w-0 flex-1 truncate text-sm text-amber-50/70">
-                    {file.name}
-                  </span>
-                  <a
-                    className="flex min-h-11 shrink-0 items-center rounded-lg border border-amber-50/15 px-3 text-xs text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
-                    href={file.url}
-                    download={file.name}
-                  >
-                    保存
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+            return (
+              <li key={file.fileId}>
+                <FileTransferRow
+                  fileId={file.fileId}
+                  name={file.name}
+                  byteLength={file.byteLength}
+                  progress={progress}
+                  state={fileState}
+                  action={downloadable ? (
+                    <a
+                      href={downloadable.url}
+                      download={downloadable.name}
+                      aria-label={`下载 ${downloadable.name}`}
+                      className="flex size-11 shrink-0 items-center justify-center rounded-full text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:bg-white/5 focus-visible:text-amber-50/80 focus-visible:outline-none"
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: '17px' }} aria-hidden="true">download</span>
+                    </a>
+                  ) : undefined}
+                />
+              </li>
+            )
+          })}
+        </ul>
 
         {state.status === 'error' && (
           <div className="mt-5 rounded-lg border border-amber-50/15 bg-white/5 px-4 py-3">
@@ -208,13 +216,13 @@ export default function IncomingFileRequestDialog({
           </div>
         )}
 
-        {(state.status === 'pending' || state.status === 'receiving') && (
-          <div className="mt-5 grid grid-cols-2 gap-2">
+        {state.status === 'pending' && (
+          <div className="mt-5 grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2">
             <button
               ref={rejectButtonRef}
               type="button"
               className="min-h-11 rounded-xl border border-amber-50/15 px-4 text-sm tracking-[0.05em] text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none disabled:cursor-not-allowed disabled:text-amber-50/20"
-              disabled={pendingActionsDisabled}
+              disabled={decisionMade}
               onClick={rejectOnce}
             >
               拒绝
@@ -222,19 +230,30 @@ export default function IncomingFileRequestDialog({
             <button
               type="button"
               className="min-h-11 rounded-xl border border-accent bg-accent px-4 text-sm tracking-[0.05em] text-white/90 transition-[filter,border-color] hover:brightness-110 active:brightness-90 focus-visible:border-amber-50/80 focus-visible:outline-none disabled:cursor-not-allowed disabled:brightness-75"
-              disabled={pendingActionsDisabled}
+              disabled={decisionMade}
               onClick={acceptOnce}
             >
-              接收
+              接收全部
             </button>
           </div>
+        )}
+
+        {state.status === 'receiving' && (
+          <button
+            ref={cancelButtonRef}
+            type="button"
+            className="mt-5 min-h-11 w-full rounded-xl border border-amber-50/15 px-4 text-sm tracking-[0.05em] text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
+            onClick={cancelOnce}
+          >
+            取消接收
+          </button>
         )}
 
         {(state.status === 'received' || state.status === 'error') && (
           <button
             ref={closeButtonRef}
             type="button"
-            className="mt-5 min-h-11 w-full rounded-xl border border-accent bg-accent px-4 text-sm tracking-[0.05em] text-white/90 transition-[filter,border-color] hover:brightness-110 active:brightness-90 focus-visible:border-amber-50/80 focus-visible:outline-none"
+            className="mt-5 min-h-11 w-full rounded-xl border border-amber-50/15 px-4 text-sm tracking-[0.05em] text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
             onClick={closeOnce}
           >
             关闭

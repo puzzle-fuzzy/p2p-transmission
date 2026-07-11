@@ -5,7 +5,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import '../test/dom'
-import type { PublicRoom, PublicVisitor } from '../shared/contracts'
+import type { PublicVisitor } from '../shared/contracts'
 import type { FileSelection } from '../features/transfer/file-selection'
 import type { OutgoingActivity } from '../features/transfer/ui-state'
 import transferPanelSource from './TransferPanel.tsx?raw'
@@ -23,26 +23,11 @@ const sender = createVisitor('sender', '发送者')
 const receiverOne = createVisitor('receiver-1', '接收者一')
 const receiverTwo = createVisitor('receiver-2', '接收者二')
 
-const room: PublicRoom = {
-  code: '012345',
-  senderId: sender.id,
-  receivers: [receiverOne.id, receiverTwo.id],
-  participants: [
-    { visitor: sender, role: 'sender', joinedAt: 1, status: 'online' },
-    { visitor: receiverOne, role: 'receiver', joinedAt: 1, status: 'online' },
-    { visitor: receiverTwo, role: 'receiver', joinedAt: 1, status: 'online' },
-  ],
-  createdAt: 1,
-  expiresAt: 2,
-}
-
 type PanelProps = ComponentProps<typeof TransferPanel>
 
 const createProps = (overrides: Partial<PanelProps> = {}): PanelProps => ({
   visitor: sender,
-  room,
   receivers: [receiverOne, receiverTwo],
-  readyPeerCount: 2,
   files: [],
   selectionError: '',
   onFilesAdded: vi.fn(),
@@ -110,7 +95,57 @@ const createFailedFileTransfer = (
   },
 })
 
+const createActiveTextTransfer = (): OutgoingActivity => ({
+  generation: 1,
+  transferId: 'transfer-text',
+  kind: 'text',
+  phase: 'transferring',
+  peerIds: [receiverTwo.id],
+  peers: {
+    [receiverTwo.id]: { accepted: true, progress: 0.5 },
+  },
+  files: {},
+})
+
 describe('TransferPanel', () => {
+  test('keeps the connected label and peer flow together while filtering active recipients', () => {
+    const initialProps = createProps()
+    const { rerender } = render(<TransferPanel {...initialProps} />)
+
+    const label = screen.getByText('2 位接收者已连接')
+    const status = screen.getByRole('status')
+    expect(label.parentElement).toBe(status.parentElement)
+    expect(label.parentElement?.className).toContain('flex-nowrap')
+    expect(status.getAttribute('data-phase')).toBe('idle')
+    expect(status.getAttribute('data-active')).toBe('false')
+    expect(screen.getByTitle(receiverOne.displayName)).not.toBeNull()
+    expect(screen.getByTitle(receiverTwo.displayName)).not.toBeNull()
+    expect(screen.queryByText(/房间\s+012345/)).toBeNull()
+
+    rerender(
+      <TransferPanel
+        {...initialProps}
+        activity={createActiveTextTransfer()}
+      />,
+    )
+
+    expect(screen.getByText('2 位接收者已连接')).not.toBeNull()
+    expect(status.getAttribute('data-phase')).toBe('transferring')
+    expect(status.getAttribute('data-active')).toBe('true')
+    expect(screen.queryByTitle(receiverOne.displayName)).toBeNull()
+    expect(screen.getByTitle(receiverTwo.displayName)).not.toBeNull()
+  })
+
+  test('renders a sender-only idle flow when no receiver is ready', () => {
+    render(<TransferPanel {...createProps({ receivers: [] })} />)
+
+    const status = screen.getByRole('status')
+    expect(screen.getByText('0 位接收者已连接')).not.toBeNull()
+    expect(screen.getByTitle(sender.displayName)).not.toBeNull()
+    expect(status.querySelector('.transfer-peer-flow__line')).toBeNull()
+    expect(status.querySelectorAll('.transfer-peer-flow__dot')).toHaveLength(0)
+  })
+
   test('implements wrapping arrow keys plus Home/End for tabs', async () => {
     const user = userEvent.setup()
     render(<TransferPanel {...createProps()} />)
@@ -179,12 +214,24 @@ describe('TransferPanel', () => {
 
     await user.click(screen.getByRole('tab', { name: '传输文件' }))
     const dropZone = screen.getByRole('button', { name: '选择要传输的文件' })
+    const fileScroll = screen.getByTestId('selected-file-scroll')
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     const inputClick = vi.spyOn(input, 'click')
 
     await user.click(dropZone)
     expect(inputClick).toHaveBeenCalledTimes(1)
     expect(input.multiple).toBe(true)
+    expect(fileScroll.className).toContain('native-scrollbar')
+    expect(fileScroll.className).toContain('max-h-52')
+    expect(fileScroll.className).toContain('sm:max-h-56')
+    expect(fileScroll.className).toContain('overflow-y-auto')
+    expect(fileScroll.className).toContain('overscroll-contain')
+    expect(fileScroll.querySelector('[data-testid^="file-transfer-row-"]')).not.toBeNull()
+
+    const addMore = Array.from(dropZone.querySelectorAll('button')).find(button =>
+      button.querySelector('.material-symbols-outlined')?.textContent?.trim() === 'add')
+    expect(addMore).toBeDefined()
+    expect(fileScroll.contains(addMore as Node)).toBe(false)
 
     fireEvent.change(input, { target: { files: [pickedFile] } })
     expect(onFilesAdded).toHaveBeenLastCalledWith([pickedFile])
