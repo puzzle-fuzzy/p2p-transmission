@@ -16,6 +16,7 @@ export type Participant = {
   role: ParticipantRole;
   joinedAt: number;
   status: ParticipantStatus;
+  attachDeadlineAt?: number;
 };
 
 export type Room = {
@@ -25,12 +26,17 @@ export type Room = {
   participants: Map<string, Participant>;
   createdAt: number;
   expiresAt: number;
+  revision: number;
 };
 
 export type RoomErrorCode =
   | "VISITOR_NOT_FOUND"
   | "ROOM_NOT_FOUND"
-  | "ROOM_SENDER_EXISTS";
+  | "ROOM_SENDER_EXISTS"
+  | "ROOM_MEMBERSHIP_REQUIRED"
+  | "ROOM_EXPIRED"
+  | "INVALID_STATE"
+  | "CAPACITY_EXCEEDED";
 
 export type RoomError = {
   code: RoomErrorCode;
@@ -38,3 +44,32 @@ export type RoomError = {
 };
 
 export type RoomResult = { ok: true; room: PublicRoom } | { ok: false; error: RoomError };
+
+export type RoomMutationPlan = {
+  id: string;
+  revision: number;
+  kind: "create" | "join";
+  visitorId: string;
+  role: ParticipantRole;
+  room: PublicRoom;
+};
+
+export type RoomMutationPlanResult =
+  | { ok: true; plan: RoomMutationPlan }
+  | { ok: false; error: RoomError };
+
+export type RoomTransition =
+  | { type: "room:participants"; room: PublicRoom }
+  | { type: "participant:left"; roomCode: string; visitorId: string };
+
+export type RoomTransitionResult =
+  | {
+      ok: true;
+      room: PublicRoom;
+      transitions: RoomTransition[];
+    }
+  | {
+      ok: false;
+      error: RoomError;
+      transitions: RoomTransition[];
+    };
