@@ -208,7 +208,7 @@ const resolver = createClientIpResolver({
 })
 ~~~
 
-Assert direct socket IP wins normally, spoofed X-Forwarded-For from an untrusted peer is ignored, trusted proxy uses the first valid forwarded address, malformed/missing values fall back to socket IP, and no address returns stable unknown.
+Assert direct socket IP wins normally and every X-Forwarded-For value from an untrusted direct peer is ignored. For a trusted direct peer, append the socket address to the parsed X-Forwarded-For chain, walk right-to-left while addresses are in `trustedProxyIps`, and select the first untrusted valid hop as the client. Explicitly test `attacker-spoof, real-client` behind one trusted proxy and a multi-proxy chain so the spoofed leftmost value cannot win. Malformed/missing chains fall back to the direct socket IP, and no address returns stable unknown.
 
 - [ ] **Step 3: Run and confirm red**
 
@@ -241,7 +241,7 @@ Use unknown environment strings plus explicit parsing. Server REST mode fails at
 
 - [ ] **Step 5: Implement injected IP resolution**
 
-Use node:net isIP. The resolver consumes directAddress and headers rather than importing Elysia, so routes adapt server.requestIP(request)?.address into it and tests remain pure.
+Use node:net isIP. Never trust a forwarded chain merely because the flag is enabled: the direct peer must itself be configured as trusted, and only the right-to-left trusted suffix is stripped. The resolver consumes directAddress and headers rather than importing Elysia, so routes adapt server.requestIP(request)?.address into it and tests remain pure.
 
 - [ ] **Step 6: Verify and commit**
 
@@ -523,6 +523,7 @@ git commit -m "feat: prepare resumable room membership"
 - Create: services/api/src/modules/maintenance/service.test.ts
 - Modify: services/api/src/modules/room/routes.ts
 - Modify: services/api/src/context.ts
+- Modify: services/api/src/app.test.ts
 
 **Interfaces:**
 - Consumes visitors, rooms, TURN, limits, maintenance sweep, client IP.
@@ -548,7 +549,7 @@ Maintenance tests assert its admission sweep performs this exclusive order: coll
 
 - [ ] **Step 2: Write failing route tests**
 
-POST /v1/rooms and POST /v1/rooms/:code/join accept iceMode. Test 401/404/409/429/503, no-store on API credential responses, no secret fields, role default receiver, and returned connecting participant.
+POST /v1/rooms and POST /v1/rooms/:code/join accept iceMode. During this vertical migration only, an absent field maps to `off` so the still-current Web client remains functional; invalid present values still fail. Test missing→off, explicit off/api, 401/404/409/429/503, no-store on API credential responses, no secret fields, role default receiver, and returned connecting participant. Task 10 sends the field from Web and then makes it required.
 
 - [ ] **Step 3: Run and confirm red**
 
@@ -607,7 +608,7 @@ bun run --cwd services/api typecheck
 Expected: PASS.
 
 ~~~bash
-git add services/api/src/modules/room/bootstrap.ts services/api/src/modules/room/bootstrap.test.ts services/api/src/modules/maintenance services/api/src/modules/room/routes.ts services/api/src/context.ts
+git add services/api/src/modules/room/bootstrap.ts services/api/src/modules/room/bootstrap.test.ts services/api/src/modules/maintenance services/api/src/modules/room/routes.ts services/api/src/context.ts services/api/src/app.test.ts
 git commit -m "feat: bootstrap rooms with ICE atomically"
 ~~~
 
@@ -631,7 +632,7 @@ Cover no bootstrap membership, wrong role, expired attach deadline, valid attach
 
 - [ ] **Step 2: Write failing reconnect/replacement tests**
 
-Assert unexpected close marks connecting without participant:left, attach inside 15 seconds restores online, cleanup after deadline emits one left, and explicit leave is immediate. On socket replacement, capture the previous socket's attached rooms, call `markConnecting` for them and start fresh resume deadlines before closing/replacing it; the new socket begins with an empty `connection.rooms` set and cannot receive room signaling until it attaches. Assert the old replaced socket close cannot downgrade the new generation, and authenticated WebSocket activity touches visitor.lastSeenAt so an active connection is not swept as idle.
+Assert unexpected close marks connecting without participant:left, attach inside 15 seconds restores online, cleanup after deadline emits one left, and explicit leave is immediate. On socket replacement, capture the previous socket's attached rooms, call `markConnecting` for them and start fresh resume deadlines before closing/replacing it; the new socket begins with an empty `connection.rooms` set and cannot receive room signaling until it attaches. Assert the old replaced socket close cannot downgrade the new generation, and authenticated WebSocket activity touches visitor.lastSeenAt so an active connection is not swept as idle. At exactly 10,000 sockets, replacement by the same authenticated visitor is allowed as a net-zero swap and the old connection is closed only after the replacement is admitted.
 
 - [ ] **Step 3: Run and confirm red**
 
@@ -645,7 +646,7 @@ room:attach calls rooms.attach and adds the code to that socket only after succe
 
 - [ ] **Step 5: Enforce socket capacity and origin policy**
 
-Reject the 10,001st live socket with CAPACITY_EXCEEDED. WebSocket upgrade/open validates Origin against configured origins; originless connections are rejected in production configuration.
+Before socket capacity admission, call `maintenance.sweepForAdmission()` and synchronously consume its expired-visitor events so stale sockets are closed and removed. Reject the 10,001st distinct live socket with CAPACITY_EXCEEDED after that sweep; a same-visitor replacement does not increment the count. Test one stale socket freed before admission, a genuine 10,001st distinct visitor rejection, and a full-capacity replacement. WebSocket upgrade/open validates Origin against configured origins; originless connections are rejected in production configuration.
 
 - [ ] **Step 6: Verify and commit**
 
@@ -859,7 +860,7 @@ Reconnect sends room:attach synchronously before flushing queued signals. Peer r
 
 - [ ] **Step 7: Remove the room:join compatibility shim**
 
-Only after App/realtime-client tests use room:attach, delete room:join from ClientRealtimeMessage, API schemas, Hub branches, and fixtures. Add the negative TypeScript contract fixture promised by Task 1. Run contracts, API Hub, and Web realtime tests together so no intermediate stale caller remains.
+Only after App/realtime-client tests use room:attach and API clients always send `iceMode`, make the HTTP field required, delete room:join from ClientRealtimeMessage, API schemas, Hub branches, and fixtures, and remove the Task 7 missing→off compatibility test. Add the negative TypeScript contract fixture promised by Task 1. Run contracts, API route/Hub, and Web API/realtime tests together so no intermediate stale caller remains.
 
 - [ ] **Step 8: Verify and commit**
 

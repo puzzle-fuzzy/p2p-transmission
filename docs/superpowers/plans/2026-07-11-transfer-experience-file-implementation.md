@@ -83,7 +83,7 @@
 - Modify: packages/contracts/src/index.ts
 
 **Interfaces:**
-- Produces: FileDescriptor, TransferProtocolMessage, parseTransferMessage, encodeTransferMessage.
+- Produces: FileDescriptor, TransferProtocolMessage, parseTransferMessage, encodeTransferMessage, sanitizeFileName.
 - Produces: encodeFileChunkFrame, parseFileChunkFrame, FileChunkFrame.
 - Consumes: no DOM, File, Blob, React, WebRTC, or service APIs.
 
@@ -118,7 +118,7 @@ expectProtocolMessage({
 })
 ~~~
 
-Add explicit cases for v1 rejection, 10 files, 11 files, exactly 100 MiB, 100 MiB + 1, duplicate fileId, duplicate/zero streamId, invalid chunkCount, UTF-8 name/MIME byte overflow, fractional/NaN/Infinity sizes, extra keys, and an over-16-KiB control frame.
+Add explicit cases for v1 rejection, 10 files, 11 files, exactly 100 MiB, 100 MiB + 1, duplicate fileId, duplicate/zero streamId, invalid chunkCount, UTF-8 name/MIME byte overflow, fractional/NaN/Infinity sizes, extra keys, and an over-16-KiB control frame. Test `sanitizeFileName` against `../secret`, Windows separators, NUL/C0/C1 controls, whitespace-only, `.`, and `..`; it strips controls and `/\\`, trims, and falls back to `未命名文件` when no safe display/download name remains.
 
 - [ ] **Step 2: Add failing binary codec tests**
 
@@ -129,7 +129,7 @@ const encoded = encodeFileChunkFrame({
   streamId: 0x01020304,
   chunkIndex: 0x05060708,
   payload: new Uint8Array([0xaa, 0xbb]),
-})
+}, 2)
 
 expect(Array.from(new Uint8Array(encoded))).toEqual([
   0x50, 0x32, 0x50, 0x32,
@@ -140,7 +140,7 @@ expect(Array.from(new Uint8Array(encoded))).toEqual([
 ])
 ~~~
 
-Add invalid magic, version, type, header length, zero streamId, empty payload, and configured payload-limit cases.
+Add invalid magic, version, type, header length, zero/fractional/out-of-uint32 streamId, negative/fractional/out-of-uint32 chunkIndex, empty payload, and configured payload-limit cases for both encoder and parser.
 
 - [ ] **Step 3: Run contract tests and confirm red**
 
@@ -176,7 +176,7 @@ export type FileDescriptor = {
 }
 ~~~
 
-Use discriminated receipt branches so text has no fileId and file requires fileId. Keep exact-key validation. Validate the aggregate with a single reduce and safe integers no larger than MAX_FILE_BATCH_BYTES.
+Use discriminated receipt branches so text has no fileId and file requires fileId. Keep exact-key validation. Validate the aggregate with a single reduce and safe integers no larger than MAX_FILE_BATCH_BYTES. `sanitizeFileName` is pure and exported; PeerSession applies it to every remotely received descriptor before storing or emitting it, and local file selection applies it before descriptor creation. UI and download attributes never receive the raw remote name.
 
 - [ ] **Step 5: Implement the binary codec**
 
@@ -187,7 +187,13 @@ export type FileChunkFrame = {
   payload: Uint8Array
 }
 
-export const encodeFileChunkFrame = (frame: FileChunkFrame): ArrayBuffer => {
+export const encodeFileChunkFrame = (
+  frame: FileChunkFrame,
+  maximumPayloadBytes: number,
+): ArrayBuffer => {
+  assertUint32(frame.streamId, { nonZero: true })
+  assertUint32(frame.chunkIndex)
+  assertPayload(frame.payload, maximumPayloadBytes)
   const bytes = new Uint8Array(FILE_CHUNK_HEADER_BYTES + frame.payload.byteLength)
   const view = new DataView(bytes.buffer)
   view.setUint32(0, 0x50325032)
@@ -201,7 +207,7 @@ export const encodeFileChunkFrame = (frame: FileChunkFrame): ArrayBuffer => {
 }
 ~~~
 
-parseFileChunkFrame accepts ArrayBuffer plus maximumPayloadBytes and returns a discriminated result without throwing on untrusted input.
+The encoder throws `RangeError` unless streamId is a non-zero uint32, chunkIndex is a uint32, maximumPayloadBytes is a positive safe integer, and payload is a non-empty Uint8Array no larger than that negotiated maximum. `parseFileChunkFrame` accepts ArrayBuffer plus maximumPayloadBytes and returns a discriminated result without throwing on untrusted input under the same limits.
 
 - [ ] **Step 6: Export and verify contracts**
 
@@ -323,6 +329,7 @@ FakeFile records slice ranges and can defer or reject arrayBuffer reads. This pr
 Cover:
 
 - resolveFileChunkSize(maxMessageSize) returns min(16 KiB, maxMessageSize - 16);
+- undefined maxMessageSize uses a conservative 64 KiB transport maximum before subtracting the header and therefore resolves to the 16 KiB application cap;
 - payload below 1 KiB returns FILE_TRANSFER_UNSUPPORTED;
 - final short chunk and empty file;
 - exact binary streamId/chunkIndex;
@@ -503,11 +510,11 @@ Assert request frames contain descriptors only and File.slice count is zero befo
 
 - [ ] **Step 2: Write failing receiver validation tests**
 
-Cover file-start order, stream/index mismatch, wrong final-chunk size, overflow, duplicate start, mismatched end totals, per-file receipt, 10-file strict sequence, empty files, and exact reconstructed Blob bytes.
+Cover file-start order, stream/index mismatch, wrong final-chunk size, overflow, duplicate start, mismatched end totals, per-file receipt, 10-file strict sequence, empty files, malicious remote names sanitized before event/Blob download metadata, exact reconstructed Blob bytes, and one final ordered `transfer:files-received` event containing every completed file.
 
 - [ ] **Step 3: Write failing lifecycle tests**
 
-Cover 30-second decision timeout, 60-second chunk inactivity, stalled drain, 30-second file receipt timeout, cancel, read failure, channel close/error aborting the engine waiter, peer replacement generation, tombstoned late chunks, text/file mutual exclusion, and close cleanup.
+Cover 30-second decision timeout, 60-second chunk inactivity, stalled drain, 30-second file receipt timeout, cancel, read failure, channel close/error aborting the engine waiter, peer replacement generation, tombstoned late chunks, text/file mutual exclusion, and close cleanup. Add two orchestration cases: (1) mixed supported/unsupported peers sends no request to the `<1 KiB` peer, records it terminal failed with `FILE_TRANSFER_UNSUPPORTED`, and lets supported peers proceed; (2) two peers accept, one pump remains stalled, and the other independently reaches receipt/completion without awaiting the stalled peer.
 
 - [ ] **Step 4: Run and confirm red**
 
@@ -540,10 +547,20 @@ type IncomingFileBatch = {
   fileIndex: number
   nextChunkIndex: number
   parts: Uint8Array[]
+  completedFiles: ReceivedFile[]
+}
+
+export type ReceivedFile = {
+  fileId: string
+  name: string
+  mimeType: string
+  byteLength: number
+  lastModified: number
+  blob: Blob
 }
 ~~~
 
-Each PeerEntry creates one StreamTombstones registry. Binary handler dispatches ArrayBuffer only, checks tombstones before active-stream validation, and clears the registry on peer close. String handler dispatches v2 control only. Never interleave files within a peer.
+Each PeerEntry creates one StreamTombstones registry. Binary handler dispatches ArrayBuffer only, checks tombstones before active-stream validation, and clears the registry on peer close. String handler dispatches v2 control only. Never interleave files within a peer. An accepted decision starts that peer's pump with fire-and-track (`void pumpPeerBatch(...)` plus owned rejection handling); it never awaits another peer's pump.
 
 - [ ] **Step 6: Implement typed public methods/events**
 
@@ -552,6 +569,7 @@ type TransferOfferResult = {
   transferId: string
   peerIds: string[]
   peerCount: number
+  unsupportedPeerIds: string[]
 }
 
 offerFiles(files: readonly FileSelection[]): TransferOfferResult
@@ -560,9 +578,26 @@ rejectFiles(peerId: string, transferId: string): boolean
 cancelTransfer(transferId: string): boolean
 ~~~
 
-Name sender progress bytesQueued and receiver progress bytesReceived. Terminal success requires receipts, not sender queue completion.
+`peerIds` contains every ready target, `peerCount` is the number actually offered, and `unsupportedPeerIds` is a subset seeded as terminal failed by App. If every peer is unsupported, no request is sent and the resulting activity enters the 400 ms error terminal hold before unlocking. Name sender progress bytesQueued and receiver progress bytesReceived. Terminal success requires receipts, not sender queue completion.
 
 Every transfer:file-progress event includes fileId, fileBytes, fileTotalBytes, batchBytes, and batchTotalBytes so presentation can aggregate individual file rows without guessing.
+
+Define and export the complete cross-task event contract rather than leaving UI consumers to infer it:
+
+~~~ts
+export type PeerSessionEvent =
+  | { type: 'peer:state'; peerId: string; state: 'connecting' | 'ready' | 'closed' }
+  | { type: 'transfer:text-received'; peerId: string; transferId: string; text: string }
+  | { type: 'transfer:file-requested'; peerId: string; transferId: string; files: FileDescriptor[] }
+  | { type: 'transfer:file-decision'; peerId: string; transferId: string; decision: 'accept' | 'reject' }
+  | { type: 'transfer:file-progress'; peerId: string; transferId: string; fileId: string; direction: 'sending' | 'receiving'; fileBytes: number; fileTotalBytes: number; batchBytes: number; batchTotalBytes: number }
+  | { type: 'transfer:file-receipt'; peerId: string; transferId: string; fileId: string }
+  | { type: 'transfer:files-received'; peerId: string; transferId: string; files: ReceivedFile[] }
+  | { type: 'transfer:terminal'; peerId: string; transferId: string; outcome: 'completed' | 'rejected' | 'cancelled' | 'failed' | 'timed-out'; code?: 'FILE_TRANSFER_UNSUPPORTED' | 'TRANSFER_ERROR' }
+  | { type: 'error'; peerId?: string; transferId?: string; code: 'PEER_ERROR' | 'PROTOCOL_ERROR' | 'TRANSFER_ERROR'; message: string }
+~~~
+
+The final received event is emitted exactly once only after `completedFiles.length === descriptors.length`; cancellation/error clears parts and completed Blobs without exposing a partial final event.
 
 - [ ] **Step 7: Verify and commit**
 
@@ -862,7 +897,7 @@ git commit -m "feat: enable sender file batches"
 
 - [ ] **Step 1: Wire concrete peer identities and activity**
 
-Build receiver visitors from current room participants and PeerSession peer IDs. offerText/offerFiles results create the pure OutgoingActivity with a new generation.
+Build receiver visitors from current room participants and PeerSession peer IDs. offerText/offerFiles results create the pure OutgoingActivity with a new generation; `unsupportedPeerIds` are seeded as terminal failed before event subscription can race, while offered peers begin requesting.
 
 - [ ] **Step 2: Wire text FIFO before ACK**
 

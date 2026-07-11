@@ -161,7 +161,7 @@ type TransferProtocolMessage =
     }
 ```
 
-Control-frame parsing uses exact keys, finite bounded integers, capped strings, and aggregate batch validation. File IDs and non-zero stream IDs are unique inside a batch; `chunkCount` equals `ceil(byteLength / chunkSize)` and is zero only for an empty file. File names have control characters and path separators removed before display/download and are never used as filesystem paths by the application.
+Control-frame parsing uses exact keys, finite bounded integers, capped strings, and aggregate batch validation. File IDs and non-zero stream IDs are unique inside a batch; `chunkCount` equals `ceil(byteLength / chunkSize)` and is zero only for an empty file. Before a descriptor is stored or emitted, file names have C0/C1 controls plus `/` and `\\` removed, surrounding whitespace trimmed, and empty/`.`/`..` results replaced with `未命名文件`. Only this sanitized value reaches display or the browser `download` attribute; names are never used as filesystem paths by the application.
 
 ### 5.3 Binary Chunk Frames
 
@@ -179,7 +179,7 @@ bytes 16..   payload
 
 `encodeFileChunkFrame` and `parseFileChunkFrame` live in the contracts workspace and reject bad magic/version/type/header length, zero stream IDs, out-of-range indices, empty payloads, and payloads larger than the negotiated `chunkSize`. Strings are parsed only as control frames; `ArrayBuffer` is parsed only as binary.
 
-For each peer, `chunkSize = min(16 KiB, floor(maxMessageSize) - 16)`. If the peer does not expose a maximum, use a conservative 64 KiB transport maximum before subtracting the header. A resulting payload below 1 KiB disables file transfer for that peer while leaving text available. File request descriptors are generated per peer because negotiated maxima can differ.
+For each peer, `chunkSize = min(16 KiB, floor(maxMessageSize) - 16)`. If the peer does not expose a maximum, use a conservative 64 KiB transport maximum before subtracting the header. A resulting payload below 1 KiB disables file transfer for that peer while leaving text available. That peer receives no file request and is immediately represented as terminal failed with `FILE_TRANSFER_UNSUPPORTED`; supported peers in the same batch continue independently. If all ready peers are unsupported, the activity presents its error terminal hold and unlocks normally. File request descriptors are generated per peer because negotiated maxima can differ.
 
 ### 5.4 Text Flow
 
@@ -404,7 +404,7 @@ type RoomAttachMessage = {
 
 Bootstrap creates the membership in `connecting` state with a 15-second attach deadline. A successful attach changes it to `online`. Unexpected socket disconnect or the bounded client reconnect path returns it to `connecting` and starts a fresh 15-second resume window instead of deleting it immediately. Re-attaching within that window preserves membership and rebuilds PeerSession state.
 
-Socket replacement first snapshots the old socket's attached rooms, marks those memberships `connecting`, and starts new resume deadlines before closing/replacing the old generation. The replacement socket starts with an empty attached-room set; it cannot receive signaling until `room:attach` succeeds. Signal delivery requires both RoomService membership status `online` and the current target socket's attached-room set to contain the code. Late close callbacks from the replaced generation are ignored.
+Socket replacement first snapshots the old socket's attached rooms, marks those memberships `connecting`, and starts new resume deadlines before closing/replacing the old generation. The replacement socket starts with an empty attached-room set; it cannot receive signaling until `room:attach` succeeds. Signal delivery requires both RoomService membership status `online` and the current target socket's attached-room set to contain the code. Late close callbacks from the replaced generation are ignored. Socket capacity admission runs Maintenance first; replacing the current socket for the same authenticated visitor is a net-zero operation and remains allowed at the exact instance cap.
 
 Explicit `room:leave`, attach/resume deadline expiry, room expiry, or visitor expiry removes membership and broadcasts `participant:left` exactly once. Any terminal sender removal closes the room and removes all participants; a room never survives without its sender. Periodic cleanup also removes bootstrap memberships whose first WebSocket attach never arrives.
 
@@ -454,7 +454,7 @@ The template is deployable only after the operator supplies a public address/dom
 TURN adds an abuse-sensitive public resource, so this milestone also includes:
 
 - replace wildcard CORS with configured allowed origins and local-development defaults as browser defense in depth, not as the server abuse boundary;
-- resolve the client IP from the socket address by default and honor forwarding headers only when `TRUST_PROXY=true` behind a documented trusted proxy;
+- resolve the client IP from the socket address by default and honor forwarding headers only when `TRUST_PROXY=true` and the direct peer is configured as trusted; parse the forwarded chain right-to-left, strip only the trusted proxy suffix, and select the first untrusted hop so a client-prepended spoof cannot control rate-limit identity;
 - rate-limit visitor creation to 30/hour/IP;
 - rate-limit room creation to 30/hour/IP and 10/hour/visitor;
 - rate-limit room joins to 60/minute/IP and 20/minute/visitor;
