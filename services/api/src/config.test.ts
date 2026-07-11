@@ -113,7 +113,7 @@ describe("API configuration", () => {
 
     expect(defaultGrace.turn?.credentialGraceMs).toBe(300_000);
     expect(explicitGrace.turn?.credentialGraceMs).toBe(450_000);
-    for (const invalid of ["-1", "1.5", "NaN", "9007199254740991"]) {
+    for (const invalid of ["0", "-1", "1.5", "NaN", "9007199254740991"]) {
       expect(() => loadApiConfig({
         TURN_URLS: "turn:turn.example.com:3478",
         TURN_SHARED_SECRET: secret32,

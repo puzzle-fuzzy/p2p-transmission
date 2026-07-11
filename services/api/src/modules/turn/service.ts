@@ -26,6 +26,12 @@ export const createTurnService = (
 ): TurnService => ({
   issue(visitorId, roomExpiresAt) {
     if (!config.turn) return { ok: false, error: turnNotConfigured };
+    if (
+      !Number.isSafeInteger(config.turn.credentialGraceMs)
+      || config.turn.credentialGraceMs < 1
+    ) {
+      throw new RangeError("TURN credential grace must be positive milliseconds");
+    }
     if (!/^[A-Za-z0-9_-]{1,128}$/u.test(visitorId)) {
       throw new RangeError("Visitor ID is invalid for TURN credentials");
     }

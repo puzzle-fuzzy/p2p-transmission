@@ -71,12 +71,12 @@ const validateIceUrls = (
 const parseGraceMs = (value: string | undefined) => {
   const raw = value?.trim() ?? String(DEFAULT_TURN_CREDENTIAL_GRACE_SECONDS);
   if (!/^\d+$/u.test(raw)) {
-    throw new Error("TURN_CREDENTIAL_GRACE_SECONDS must be a non-negative whole number");
+    throw new Error("TURN_CREDENTIAL_GRACE_SECONDS must be a positive whole number");
   }
 
   const seconds = Number(raw);
   const milliseconds = seconds * 1_000;
-  if (!Number.isSafeInteger(seconds) || !Number.isSafeInteger(milliseconds)) {
+  if (seconds < 1 || !Number.isSafeInteger(seconds) || !Number.isSafeInteger(milliseconds)) {
     throw new Error("TURN_CREDENTIAL_GRACE_SECONDS is outside the safe range");
   }
   return milliseconds;

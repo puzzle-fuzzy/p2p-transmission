@@ -26,10 +26,10 @@ describe("TURN credential service", () => {
       turn: {
         urls: ["turn:turn.example.com:3478"],
         sharedSecret: "0123456789abcdef0123456789abcdef",
-        credentialGraceMs: 0,
+        credentialGraceMs: 300_000,
       },
     }), { now: () => 1_600_000_000_000 });
-    const result = service.issue("vis_001", 1_700_000_000_000);
+    const result = service.issue("vis_001", 1_699_999_700_000);
 
     expect(result).toEqual({
       ok: true,
@@ -95,6 +95,9 @@ describe("TURN credential service", () => {
     expect(() => service.issue("", 2)).toThrow(RangeError);
     expect(() => service.issue("bad:id", 2)).toThrow(RangeError);
     expect(() => service.issue("vis_001", 2.5)).toThrow(RangeError);
+    expect(() => createTurnService(config({
+      turn: { ...config().turn!, credentialGraceMs: 0 },
+    }), { now: () => 1 }).issue("vis_001", 2)).toThrow(RangeError);
     expect(() => createTurnService(config({
       turn: {
         ...config().turn!,
