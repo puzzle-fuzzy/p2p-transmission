@@ -2,6 +2,7 @@
 
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { StrictMode } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import './test/dom'
 import type { FileSelection } from './features/transfer/file-selection'
@@ -382,6 +383,69 @@ beforeEach(() => {
 })
 
 describe('App transfer integration', () => {
+  test('reuses visitor bootstrap across StrictMode and ignores it after unmount', async () => {
+    boundary.loadVisitorSession.mockReturnValue(undefined)
+    let resolveVisitor!: (session: VisitorSession) => void
+    const pendingVisitor = new Promise<VisitorSession>(resolve => {
+      resolveVisitor = resolve
+    })
+    boundary.createVisitor.mockReturnValue(pendingVisitor)
+    const rendered = render(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    )
+
+    await waitFor(() => expect(boundary.createVisitor).toHaveBeenCalledTimes(1))
+    rendered.unmount()
+    await act(async () => {
+      resolveVisitor(sessionFor(sender))
+      await pendingVisitor
+    })
+
+    expect(boundary.saveVisitorSession).not.toHaveBeenCalled()
+    expect(boundary.createRealtimeClient).not.toHaveBeenCalled()
+  })
+
+  test('does not connect realtime when a deferred room bootstrap resolves after unmount', async () => {
+    let resolveBootstrap!: (value: { room: PublicRoom }) => void
+    const pendingBootstrap = new Promise<{ room: PublicRoom }>(resolve => {
+      resolveBootstrap = resolve
+    })
+    boundary.createRoom.mockReturnValueOnce(pendingBootstrap)
+    const user = userEvent.setup()
+    const rendered = render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: '创建测试房间' }))
+    await waitFor(() => expect(boundary.createRoom).toHaveBeenCalledTimes(1))
+    rendered.unmount()
+    await act(async () => {
+      resolveBootstrap({ room })
+      await pendingBootstrap
+    })
+
+    expect(boundary.createRealtimeClient).not.toHaveBeenCalled()
+    expect(boundary.createPeerSession).not.toHaveBeenCalled()
+  })
+
+  test('rejects a bootstrap that omits the authenticated membership', async () => {
+    const invalidRoom: PublicRoom = {
+      ...room,
+      senderId: null,
+      participants: room.participants.filter(participant => participant.role !== 'sender'),
+    }
+    boundary.createRoom.mockResolvedValueOnce({ room: invalidRoom })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: '创建测试房间' }))
+    await waitFor(() => expect(boundary.showToast).toHaveBeenCalledWith(
+      '服务端返回的房间成员关系无效',
+    ))
+
+    expect(boundary.createRealtimeClient).not.toHaveBeenCalled()
+  })
+
   test('bootstraps ICE before realtime and attaches membership before creating peers', async () => {
     boundary.loadVisitorSession.mockReturnValue(sessionFor(sender))
     const user = userEvent.setup()

@@ -99,6 +99,13 @@ describe('runtime ICE config', () => {
   test('fails closed for malformed API bootstrap and invalid modes/policies', () => {
     const api = parseClientIceMode({ VITE_TURN_MODE: 'api' })
     expect(() => resolveBootstrapRtcConfiguration(api, { room })).toThrow('TURN 凭据')
+    expect(() => resolveBootstrapRtcConfiguration(api, {
+      room,
+      rtcConfiguration: {
+        iceServers: [{ urls: ['stun:stun.example.com:3478'] }],
+      },
+      credentialExpiresAt: room.expiresAt + 300_000,
+    })).toThrow('TURN 中继')
     expect(() => parseClientIceMode({ VITE_TURN_MODE: 'unknown' })).toThrow()
     expect(() => parseClientIceMode({ VITE_ICE_TRANSPORT_POLICY: 'none' })).toThrow()
   })

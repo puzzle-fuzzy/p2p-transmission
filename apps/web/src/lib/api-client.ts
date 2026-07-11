@@ -74,8 +74,21 @@ const request = async <T>(
 export const createVisitor = (options?: ApiClientOptions) =>
   request<VisitorResponse>('/v1/visitors', { method: 'POST' }, options)
 
-const assertRoomBootstrap = (value: unknown): RoomSessionBootstrap => {
-  if (isRoomSessionBootstrap(value)) return value
+const assertRoomBootstrap = (
+  value: unknown,
+  iceMode: RoomIceMode,
+  expectedRoomCode?: string,
+): RoomSessionBootstrap => {
+  if (isRoomSessionBootstrap(value)) {
+    const hasCredential = value.rtcConfiguration !== undefined
+      && value.credentialExpiresAt !== undefined
+    if (
+      hasCredential === (iceMode === 'api')
+      && (expectedRoomCode === undefined || value.room.code === expectedRoomCode)
+    ) {
+      return value
+    }
+  }
   throw new ApiClientError('服务端返回了无效的房间配置', 'INVALID_API_RESPONSE', 200)
 }
 
@@ -93,7 +106,7 @@ export const createRoom = async (
     body: JSON.stringify({ iceMode }),
   }, options)
 
-  return assertRoomBootstrap(response)
+  return assertRoomBootstrap(response, iceMode)
 }
 
 export const joinRoom = async (
@@ -112,7 +125,7 @@ export const joinRoom = async (
     body: JSON.stringify({ role, iceMode }),
   }, options)
 
-  return assertRoomBootstrap(response)
+  return assertRoomBootstrap(response, iceMode, code)
 }
 
 export const getRoom = async (code: string, options?: ApiClientOptions) => {

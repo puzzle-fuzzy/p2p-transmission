@@ -42,7 +42,7 @@ describe('api-client', () => {
     }
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ room })))
 
-    await createRoom('tok_1', 'api', { fetch: fetchMock, apiBaseUrl: 'http://api.test' })
+    await createRoom('tok_1', 'off', { fetch: fetchMock, apiBaseUrl: 'http://api.test' })
     await joinRoom('123456', 'tok_2', 'receiver', 'off', {
       fetch: fetchMock,
       apiBaseUrl: 'http://api.test',
@@ -55,7 +55,7 @@ describe('api-client', () => {
         authorization: 'Bearer tok_1',
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ iceMode: 'api' }),
+      body: JSON.stringify({ iceMode: 'off' }),
     })
     expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://api.test/v1/rooms/123456/join', {
       method: 'POST',
@@ -145,5 +145,39 @@ describe('api-client', () => {
       code: 'INVALID_API_RESPONSE',
       status: 200,
     })
+  })
+
+  test('rejects credentials in off mode and a mismatched joined room code', async () => {
+    const room = {
+      code: '123456',
+      senderId: 'vis_1',
+      receivers: [],
+      participants: [],
+      createdAt: 1,
+      expiresAt: 2,
+    }
+    const credentialed = {
+      room,
+      rtcConfiguration: {
+        iceServers: [{
+          urls: ['turn:turn.example.com:3478'],
+          username: '3:vis_1',
+          credential: 'signed',
+        }],
+      },
+      credentialExpiresAt: 3,
+    }
+    const credentialedFetch = vi.fn(async () => new Response(JSON.stringify(credentialed)))
+
+    await expect(createRoom('tok_1', 'off', {
+      fetch: credentialedFetch,
+      apiBaseUrl: 'http://api.test',
+    })).rejects.toMatchObject({ code: 'INVALID_API_RESPONSE' })
+
+    const wrongRoomFetch = vi.fn(async () => new Response(JSON.stringify({ room })))
+    await expect(joinRoom('654321', 'tok_1', 'receiver', 'off', {
+      fetch: wrongRoomFetch,
+      apiBaseUrl: 'http://api.test',
+    })).rejects.toMatchObject({ code: 'INVALID_API_RESPONSE' })
   })
 })

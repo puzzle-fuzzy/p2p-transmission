@@ -121,6 +121,27 @@ const isTerminalActivity = (activity?: OutgoingActivity) =>
 
 const createFileId = () => `file_${crypto.randomUUID()}`
 
+const assertBootstrapMembership = (
+  bootstrap: RoomSessionBootstrap,
+  visitorId: string,
+  role: ParticipantRole,
+) => {
+  const participant = bootstrap.room.participants.find(candidate => (
+    candidate.visitor.id === visitorId
+  ))
+  const roleMatchesRoom = role === 'sender'
+    ? bootstrap.room.senderId === visitorId
+    : bootstrap.room.receivers.includes(visitorId)
+  if (
+    !participant
+    || participant.role !== role
+    || participant.status === 'left'
+    || !roleMatchesRoom
+  ) {
+    throw new Error('服务端返回的房间成员关系无效')
+  }
+}
+
 function App() {
   const [state, dispatch] = useReducer(roomFlowReducer, initialRoomFlowState)
   const [transferUiState, setTransferUiState] = useState<TransferUiState>(
@@ -160,11 +181,15 @@ function App() {
   const pendingOutgoingEventsRef = useRef<PeerSessionEvent[]>([])
   const peerRetryCountsRef = useRef(new Map<string, number>())
   const peerRetryTimersRef = useRef(new Set<ReturnType<typeof setTimeout>>())
-  const bootedRef = useRef(false)
+  const visitorBootstrapPromiseRef = useRef<Promise<VisitorSession> | undefined>(undefined)
 
   const replaceFileSelections = useCallback((selections: FileSelection[]) => {
     fileSelectionsRef.current = selections
     setFileSelections(selections)
+  }, [])
+
+  const invalidatePendingOperations = useCallback(() => {
+    operationGenerationRef.current += 1
   }, [])
 
   const replaceIncomingTexts = useCallback((texts: IncomingText[]) => {
@@ -340,30 +365,33 @@ function App() {
   }, [disposePeerSession, disposeRoomLifecycle, resetTransferPresentation])
 
   useEffect(() => {
-    if (!bootedRef.current) {
-      bootedRef.current = true
-
-      const boot = async () => {
-        try {
-          const existingSession = loadVisitorSession()
-          if (existingSession) {
-            dispatch({ type: 'visitor:ready', session: existingSession })
-            return
-          }
-
-          const session = await createVisitor()
-          saveVisitorSession(session)
-          dispatch({ type: 'visitor:ready', session })
-        } catch {
-          showToast('无法连接服务')
-          dispatch({ type: 'error', message: '无法连接服务' })
+    const bootGeneration = operationGenerationRef.current
+    const boot = async () => {
+      try {
+        const existingSession = loadVisitorSession()
+        if (existingSession) {
+          if (operationGenerationRef.current !== bootGeneration) return
+          dispatch({ type: 'visitor:ready', session: existingSession })
+          return
         }
-      }
 
-      void boot()
+        const pendingSession = visitorBootstrapPromiseRef.current ?? createVisitor()
+        visitorBootstrapPromiseRef.current = pendingSession
+        const session = await pendingSession
+        if (operationGenerationRef.current !== bootGeneration) return
+        saveVisitorSession(session)
+        dispatch({ type: 'visitor:ready', session })
+      } catch {
+        if (operationGenerationRef.current !== bootGeneration) return
+        showToast('无法连接服务')
+        dispatch({ type: 'error', message: '无法连接服务' })
+      }
     }
 
+    void boot()
+
     return () => {
+      invalidatePendingOperations()
       const realtime = realtimeRef.current
       realtimeRef.current = undefined
       realtime?.close()
@@ -375,6 +403,7 @@ function App() {
     disposeBrowserTransferResources,
     disposePeerSession,
     disposeRoomLifecycle,
+    invalidatePendingOperations,
     showToast,
   ])
 
@@ -752,11 +781,14 @@ function App() {
   const runWithFreshSession = useCallback(async <T,>(
     session: VisitorSession,
     operation: (activeSession: VisitorSession) => Promise<T>,
+    operationGeneration: number,
   ) => {
     try {
+      const value = await operation(session)
+      if (operationGenerationRef.current !== operationGeneration) return undefined
       return {
         session,
-        value: await operation(session),
+        value,
       }
     } catch (error) {
       if (!(error instanceof ApiClientError) || error.code !== 'VISITOR_NOT_FOUND') {
@@ -764,13 +796,18 @@ function App() {
       }
     }
 
+    if (operationGenerationRef.current !== operationGeneration) return undefined
     clearVisitorSession()
     const freshSession = await createVisitor()
+    if (operationGenerationRef.current !== operationGeneration) return undefined
     saveVisitorSession(freshSession)
+    if (operationGenerationRef.current !== operationGeneration) return undefined
+    const value = await operation(freshSession)
+    if (operationGenerationRef.current !== operationGeneration) return undefined
 
     return {
       session: freshSession,
-      value: await operation(freshSession),
+      value,
     }
   }, [])
 
@@ -784,12 +821,15 @@ function App() {
       const result = await runWithFreshSession(
         state.session,
         activeSession => createRoom(activeSession.token, roomIceMode(iceMode)),
+        operationGeneration,
       )
+      if (!result) return
       if (operationGenerationRef.current !== operationGeneration) return
       if (result.session.token !== state.session.token) {
         dispatch({ type: 'visitor:ready', session: result.session })
       }
       const rtcConfiguration = resolveBootstrapRtcConfiguration(iceMode, result.value)
+      assertBootstrapMembership(result.value, result.session.visitor.id, 'sender')
       roomRef.current = result.value.room
       dispatch({ type: 'room:created', room: result.value.room })
       connectRealtime(
@@ -822,12 +862,15 @@ function App() {
           'receiver',
           roomIceMode(iceMode),
         ),
+        operationGeneration,
       )
+      if (!result) return
       if (operationGenerationRef.current !== operationGeneration) return
       if (result.session.token !== state.session.token) {
         dispatch({ type: 'visitor:ready', session: result.session })
       }
       const rtcConfiguration = resolveBootstrapRtcConfiguration(iceMode, result.value)
+      assertBootstrapMembership(result.value, result.session.visitor.id, 'receiver')
       roomRef.current = result.value.room
       dispatch({ type: 'room:joined', room: result.value.room })
       connectRealtime(

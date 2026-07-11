@@ -109,6 +109,14 @@ export const resolveBootstrapRtcConfiguration = (
   if (!bootstrap.rtcConfiguration || !bootstrap.credentialExpiresAt) {
     throw new Error('服务端没有返回 TURN 凭据，请检查中继配置')
   }
+  const hasCredentialedTurn = bootstrap.rtcConfiguration.iceServers.some(server => (
+    server.urls.some(url => url.startsWith('turn:') || url.startsWith('turns:'))
+    && Boolean(server.username)
+    && Boolean(server.credential)
+  ))
+  if (!hasCredentialedTurn) {
+    throw new Error('服务端没有返回可用的 TURN 中继，请检查中继配置')
+  }
   return {
     iceServers: bootstrap.rtcConfiguration.iceServers.map(toRtcIceServer),
     iceTransportPolicy: mode.iceTransportPolicy,
