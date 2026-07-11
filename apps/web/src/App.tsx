@@ -244,23 +244,39 @@ function App() {
     const current = incomingFileRef.current
     if (!current || current.state.status !== 'receiving') return
 
-    const progress = events.reduce((maximum, event) => {
+    const progressByFileId = { ...current.state.progressByFileId }
+    const knownFileIds = new Set(current.files.map(file => file.fileId))
+    let changed = false
+
+    for (const event of events) {
       if (
         event.direction !== 'receiving'
         || event.peerId !== current.peerId
         || event.transferId !== current.transferId
+        || !knownFileIds.has(event.fileId)
       ) {
-        return maximum
+        continue
       }
-      if (event.batchTotalBytes <= 0) return maximum
-      return Math.max(maximum, event.batchBytes / event.batchTotalBytes * 100)
-    }, current.state.progress)
 
-    if (progress === current.state.progress) return
-    replaceIncomingFile({
-      ...current,
-      state: { status: 'receiving', progress: Math.min(100, progress) },
-    })
+      const ratio = event.fileTotalBytes <= 0
+        ? 1
+        : event.fileBytes / event.fileTotalBytes
+      const next = Number.isFinite(ratio)
+        ? Math.min(1, Math.max(0, ratio))
+        : 0
+      const previous = progressByFileId[event.fileId] ?? 0
+      if (next <= previous) continue
+
+      progressByFileId[event.fileId] = next
+      changed = true
+    }
+
+    if (changed) {
+      replaceIncomingFile({
+        ...current,
+        state: { status: 'receiving', progressByFileId },
+      })
+    }
   }, [replaceIncomingFile])
 
   const getProgressScheduler = useCallback(() => {
@@ -1056,7 +1072,15 @@ function App() {
     }
     replaceIncomingFile({
       ...current,
-      state: { status: 'receiving', progress: 0 },
+      state: {
+        status: 'receiving',
+        progressByFileId: Object.fromEntries(
+          current.files.map(file => [
+            file.fileId,
+            file.byteLength === 0 ? 1 : 0,
+          ]),
+        ),
+      },
     })
     setReceiverPanelState({ status: 'receiving' })
   }, [replaceIncomingFile])

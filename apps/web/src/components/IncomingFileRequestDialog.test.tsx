@@ -90,20 +90,30 @@ describe('IncomingFileRequestDialog', () => {
     expect(actions.onReject).toHaveBeenCalledTimes(1)
   })
 
-  test('shows real receiving progress with disabled actions', () => {
+  test('shows independent receiving progress inside each file row with disabled actions', () => {
     const actions = callbacks()
     render(
       <IncomingFileRequestDialog
         sender={sender}
         files={files}
-        state={{ status: 'receiving', progress: 37.6 }}
+        state={{
+          status: 'receiving',
+          progressByFileId: {
+            'file-1': 0.25,
+            'file-2': 0.756,
+          },
+        }}
         {...actions}
       />,
     )
 
-    const progress = screen.getByRole('progressbar')
-    expect(progress.getAttribute('aria-valuenow')).toBe('38')
-    expect(screen.getByText('38%').textContent).toBe('38%')
+    const first = screen.getByRole('progressbar', { name: '设计稿.png 传输进度' })
+    const second = screen.getByRole('progressbar', { name: '说明.txt 传输进度' })
+    expect(first.getAttribute('aria-valuenow')).toBe('25')
+    expect(first.getAttribute('style')).toContain('25%')
+    expect(second.getAttribute('aria-valuenow')).toBe('76')
+    expect(second.getAttribute('style')).toContain('76%')
+    expect(screen.queryByLabelText('接收进度')).toBeNull()
     expect((screen.getByRole('button', { name: '接收' }) as HTMLButtonElement).disabled).toBe(true)
     expect((screen.getByRole('button', { name: '拒绝' }) as HTMLButtonElement).disabled).toBe(true)
   })
@@ -150,6 +160,7 @@ describe('IncomingFileRequestDialog', () => {
     )
 
     expect(screen.getByText('连接已断开').textContent).toBe('连接已断开')
+    expect(screen.getAllByText('传输失败')).toHaveLength(files.length)
     expect(screen.getByRole('button', { name: '关闭' })).not.toBeNull()
     expect(screen.queryByRole('button', { name: '接收' })).toBeNull()
   })

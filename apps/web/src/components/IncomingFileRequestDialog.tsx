@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { PublicVisitor } from '../shared/contracts'
 import Avatar from './Avatar'
+import FileTransferRow from './FileTransferRow'
 
 export type IncomingFileRequestItem = {
   fileId: string
@@ -14,7 +15,7 @@ export type DownloadableReceivedFile = IncomingFileRequestItem & {
 
 export type IncomingFileRequestDialogState =
   | { status: 'pending' }
-  | { status: 'receiving'; progress: number }
+  | { status: 'receiving'; progressByFileId: Readonly<Record<string, number>> }
   | { status: 'received'; files: readonly DownloadableReceivedFile[] }
   | { status: 'error'; message?: string }
 
@@ -32,11 +33,6 @@ const formatByteLength = (byteLength: number) => {
   if (byteLength < 1024 * 1024) return `${(byteLength / 1024).toFixed(1)} KB`
 
   return `${(byteLength / (1024 * 1024)).toFixed(1)} MB`
-}
-
-const clampProgress = (progress: number) => {
-  if (!Number.isFinite(progress)) return 0
-  return Math.min(100, Math.max(0, progress))
 }
 
 export default function IncomingFileRequestDialog({
@@ -60,11 +56,6 @@ export default function IncomingFileRequestDialog({
     [files, sender.id],
   )
   const totalBytes = files.reduce((total, file) => total + file.byteLength, 0)
-  const progress = state.status === 'receiving'
-    ? clampProgress(state.progress)
-    : state.status === 'received'
-      ? 100
-      : 0
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -154,48 +145,33 @@ export default function IncomingFileRequestDialog({
 
         {state.status !== 'received' && (
           <ul className="native-scrollbar mt-5 max-h-52 space-y-2 overflow-y-auto" aria-label="待接收文件">
-            {files.map(file => (
-              <li
-                key={file.fileId}
-                className="flex min-w-0 items-center gap-3 rounded-lg bg-white/5 px-3 py-2.5"
-              >
-                <span
-                  className="material-symbols-outlined shrink-0 text-amber-50/40"
-                  style={{ fontSize: '18px' }}
-                  aria-hidden="true"
-                >
-                  description
-                </span>
-                <span className="min-w-0 flex-1 truncate text-sm text-amber-50/70">
-                  {file.name}
-                </span>
-                <span className="shrink-0 text-xs tabular-nums text-amber-50/40">
-                  {formatByteLength(file.byteLength)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+            {files.map(file => {
+              const progress = state.status === 'receiving'
+                ? state.progressByFileId[file.fileId] ?? 0
+                : 0
+              const fileState = state.status === 'error'
+                ? 'error'
+                : state.status === 'receiving'
+                  ? progress >= 1
+                    ? 'completed'
+                    : progress > 0
+                      ? 'transferring'
+                      : 'queued'
+                  : 'queued'
 
-        {state.status === 'receiving' && (
-          <div className="mt-5" aria-label="接收进度">
-            <div className="flex items-center justify-between text-xs text-amber-50/50">
-              <span>正在接收</span>
-              <span className="tabular-nums">{Math.round(progress)}%</span>
-            </div>
-            <div
-              className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10"
-              role="progressbar"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={Math.round(progress)}
-            >
-              <div
-                className="transfer-dialog-progress h-full origin-left rounded-full bg-accent"
-                style={{ transform: `scaleX(${progress / 100})` }}
-              />
-            </div>
-          </div>
+              return (
+                <li key={file.fileId}>
+                  <FileTransferRow
+                    fileId={file.fileId}
+                    name={file.name}
+                    byteLength={file.byteLength}
+                    progress={progress}
+                    state={fileState}
+                  />
+                </li>
+              )
+            })}
+          </ul>
         )}
 
         {state.status === 'received' && (

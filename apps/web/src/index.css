@@ -90,10 +90,6 @@
   animation-delay: 240ms;
 }
 
-.transfer-dialog-progress {
-  transition: transform 160ms cubic-bezier(0.25, 1, 0.5, 1);
-}
-
 /* Scrollbar 定制 — 适配暗色背景 */
 .os-scrollbar {
   --os-size: 6px;
@@ -156,9 +152,5 @@
     animation: none;
     opacity: 0.6;
     transform: none;
-  }
-
-  .transfer-dialog-progress {
-    transition: none;
   }
 }

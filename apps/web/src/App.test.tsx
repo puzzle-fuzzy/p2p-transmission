@@ -171,13 +171,22 @@ vi.mock('./components/IncomingFileRequestDialog', () => ({
     onClose,
   }: {
     files: Array<{ name: string }>
-    state: { status: string; files?: Array<{ name: string; url: string }> }
+    state: {
+      status: string
+      files?: Array<{ name: string; url: string }>
+      progressByFileId?: Record<string, number>
+    }
     onAccept(): void
     onReject(): void
     onClose(): void
   }) => (
     <div role="dialog" aria-label="收到文件">
       <div data-testid="file-dialog-status">{state.status}</div>
+      {state.status === 'receiving' && (
+        <output data-testid="incoming-file-progress">
+          {JSON.stringify(state.progressByFileId)}
+        </output>
+      )}
       {files.map(file => <span key={file.name}>{file.name}</span>)}
       {state.status === 'pending' && (
         <>
@@ -333,6 +342,23 @@ const enterRoom = async (role: 'sender' | 'receiver') => {
 const emit = (event: PeerSessionEvent) => {
   act(() => peerSession.emit(event))
 }
+
+const receivingProgress = (
+  transferId: string,
+  fileId: string,
+  fileBytes: number,
+  fileTotalBytes: number,
+): PeerSessionEvent => ({
+  type: 'transfer:file-progress',
+  peerId: sender.id,
+  transferId,
+  fileId,
+  direction: 'receiving',
+  fileBytes,
+  fileTotalBytes,
+  batchBytes: fileBytes,
+  batchTotalBytes: fileTotalBytes,
+})
 
 beforeEach(() => {
   realtime = new FakeRealtimeClient()
@@ -631,6 +657,78 @@ describe('App transfer integration', () => {
     await user.click(screen.getByRole('button', { name: '关闭文件弹窗' }))
     expect(revokeObjectUrl).toHaveBeenCalledTimes(1)
     expect(revokeObjectUrl).toHaveBeenCalledWith('blob:test-1')
+  })
+
+  test('tracks receiving progress independently per file without regressions', async () => {
+    const user = await enterRoom('receiver')
+    emit({
+      type: 'transfer:file-requested',
+      peerId: sender.id,
+      transferId: 'files-progress',
+      files: [
+        {
+          fileId: 'file-1',
+          streamId: 11,
+          name: '第一份.bin',
+          mimeType: 'application/octet-stream',
+          byteLength: 100,
+          lastModified: 1,
+          chunkSize: 1024,
+          chunkCount: 1,
+        },
+        {
+          fileId: 'file-2',
+          streamId: 12,
+          name: '第二份.bin',
+          mimeType: 'application/octet-stream',
+          byteLength: 100,
+          lastModified: 1,
+          chunkSize: 1024,
+          chunkCount: 1,
+        },
+        {
+          fileId: 'file-empty',
+          streamId: 13,
+          name: '空文件.txt',
+          mimeType: 'text/plain',
+          byteLength: 0,
+          lastModified: 1,
+          chunkSize: 1024,
+          chunkCount: 0,
+        },
+      ],
+    })
+
+    await user.click(screen.getByRole('button', { name: '接收测试文件' }))
+    expect(JSON.parse(screen.getByTestId('incoming-file-progress').textContent!)).toEqual({
+      'file-1': 0,
+      'file-2': 0,
+      'file-empty': 1,
+    })
+
+    emit(receivingProgress('files-progress', 'file-1', 25, 100))
+    emit(receivingProgress('files-progress', 'file-2', 75, 100))
+    act(() => {
+      const callback = frameCallbacks.get(1)
+      frameCallbacks.delete(1)
+      callback?.(0)
+    })
+    expect(JSON.parse(screen.getByTestId('incoming-file-progress').textContent!)).toEqual({
+      'file-1': 0.25,
+      'file-2': 0.75,
+      'file-empty': 1,
+    })
+
+    emit(receivingProgress('files-progress', 'file-1', 10, 100))
+    act(() => {
+      const callback = frameCallbacks.get(2)
+      frameCallbacks.delete(2)
+      callback?.(0)
+    })
+    expect(JSON.parse(screen.getByTestId('incoming-file-progress').textContent!)).toMatchObject({
+      'file-1': 0.25,
+      'file-2': 0.75,
+    })
   })
 
   test('revokes received URLs once when realtime resets and does not revoke again on unmount', async () => {
