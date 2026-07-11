@@ -739,4 +739,95 @@ describe('peer session v2', () => {
     })
     expect(outgoing.session.offerText('unlocked').peerCount).toBe(1)
   })
+
+  test('read failure sends cancellation before reporting a local terminal failure', async () => {
+    const connection = new FakePeerConnection()
+    const { session, events } = senderHarness([connection])
+    session.syncRoom(room())
+    await settle()
+    const channel = connection.channels[0] as FakeDataChannel
+    channel.open()
+    const file = new File(['x'], 'broken.bin')
+    vi.spyOn(file, 'slice').mockReturnValue({
+      arrayBuffer: () => Promise.reject(new Error('read failed')),
+    } as Blob)
+    const offered = session.offerFiles([{ fileId: 'file_1', file }])
+    channel.emit({ v: 2, type: 'transfer:decision', transferId: offered.transferId, decision: 'accept' })
+    await settleDeep()
+
+    const cancelIndex = controls(channel).findIndex(frame =>
+      frame.type === 'transfer:cancel'
+      && frame.transferId === offered.transferId)
+    expect(cancelIndex).toBeGreaterThan(-1)
+    expect(events).toContainEqual({
+      type: 'transfer:terminal',
+      peerId: receiver.id,
+      transferId: offered.transferId,
+      outcome: 'failed',
+      code: 'TRANSFER_ERROR',
+    })
+  })
+
+  test('detaches a replaced data channel so stale callbacks cannot affect the peer', async () => {
+    const { connection, channel: first, events } = await receiverHarness()
+    const second = connection.emitDataChannel(new FakeDataChannel())
+    second.open()
+    const eventsBeforeStaleFrame = events.length
+
+    first.emit({ v: 2, type: 'transfer:text', transferId: 'tx_stale', text: 'stale' })
+    first.close()
+    expect(events).toHaveLength(eventsBeforeStaleFrame)
+    expect(connection.closed).toBe(false)
+
+    second.emit({ v: 2, type: 'transfer:text', transferId: 'tx_current', text: 'current' })
+    expect(events).toContainEqual({
+      type: 'transfer:text-received',
+      peerId: sender.id,
+      transferId: 'tx_current',
+      text: 'current',
+    })
+  })
+
+  test('buffers replacement-generation ICE while the old peer entry still exists', async () => {
+    const first = new FakePeerConnection()
+    const second = new FakePeerConnection()
+    const connections = [first, second]
+    const session = createPeerSession({
+      selfId: receiver.id,
+      roomCode: '123456',
+      role: 'receiver',
+      createPeerConnection: () => connections.shift() as FakePeerConnection,
+      sendSignal: () => undefined,
+    })
+    await session.handleSignal({
+      type: 'signal:offer',
+      roomCode: '123456',
+      from: sender.id,
+      peerSessionId: 'peer_old',
+      description: { type: 'offer', sdp: 'old-offer' },
+    })
+    const candidate: IceCandidateDto = {
+      candidate: 'replacement-candidate',
+      sdpMid: '0',
+      sdpMLineIndex: 0,
+      usernameFragment: null,
+    }
+    await session.handleSignal({
+      type: 'signal:ice',
+      roomCode: '123456',
+      from: sender.id,
+      peerSessionId: 'peer_new',
+      candidate,
+    })
+    await session.handleSignal({
+      type: 'signal:offer',
+      roomCode: '123456',
+      from: sender.id,
+      peerSessionId: 'peer_new',
+      description: { type: 'offer', sdp: 'new-offer' },
+    })
+
+    expect(first.closed).toBe(true)
+    expect(second.addedIce).toEqual([candidate])
+  })
 })

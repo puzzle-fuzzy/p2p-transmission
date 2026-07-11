@@ -333,6 +333,7 @@ export const createPeerSession = ({
       : outcome === 'cancelled' || outcome === 'timed-out'
         ? 'cancelled'
         : 'failed'
+    maybeDeleteOutgoing(transferId)
     emit({
       type: 'transfer:terminal',
       peerId,
@@ -340,7 +341,6 @@ export const createPeerSession = ({
       outcome,
       ...(outcome === 'failed' ? { code: 'TRANSFER_ERROR' as const } : {}),
     })
-    maybeDeleteOutgoing(transferId)
   }
 
   const finishFilePeer = (
@@ -366,6 +366,7 @@ export const createPeerSession = ({
         : outcome === 'cancelled' || outcome === 'timed-out'
           ? 'cancelled'
           : 'failed'
+    maybeDeleteOutgoing(transferId)
     emit({
       type: 'transfer:terminal',
       peerId,
@@ -373,7 +374,6 @@ export const createPeerSession = ({
       outcome,
       ...(outcome === 'failed' ? { code: 'TRANSFER_ERROR' as const } : {}),
     })
-    maybeDeleteOutgoing(transferId)
   }
 
   const tombstoneBatch = (entry: PeerEntry, batch: IncomingFileBatch) => {
@@ -514,9 +514,8 @@ export const createPeerSession = ({
       if (!peer.terminal) {
         sendFrame(entry, {
           v: 2,
-          type: 'transfer:error',
+          type: 'transfer:cancel',
           transferId,
-          code: 'BUFFER_ERROR',
         })
         finishFilePeer(transferId, transfer, entry.peerId, 'failed')
       }
@@ -845,6 +844,16 @@ export const createPeerSession = ({
       emitError('Unsupported peer data channel', entry.peerId, undefined, 'PROTOCOL_ERROR')
       return
     }
+    const previousChannel = entry.channel
+    if (previousChannel && previousChannel !== channel) {
+      cancelPeerTransfers(entry)
+      previousChannel.onopen = null
+      previousChannel.onclose = null
+      previousChannel.onerror = null
+      previousChannel.onmessage = null
+      previousChannel.onbufferedamountlow = null
+      previousChannel.close()
+    }
     entry.channel = channel
     channel.binaryType = 'arraybuffer'
     channel.onopen = () => {
@@ -853,15 +862,17 @@ export const createPeerSession = ({
       }
     }
     channel.onclose = () => {
-      if (peers.get(entry.peerId) === entry && !entry.closed) closePeer(entry.peerId)
+      if (peers.get(entry.peerId) === entry && !entry.closed && entry.channel === channel) {
+        closePeer(entry.peerId)
+      }
     }
     channel.onerror = () => {
-      if (peers.get(entry.peerId) !== entry || entry.closed) return
+      if (peers.get(entry.peerId) !== entry || entry.closed || entry.channel !== channel) return
       emitError('Peer data channel failed', entry.peerId)
       closePeer(entry.peerId)
     }
     channel.onmessage = event => {
-      if (peers.get(entry.peerId) !== entry || entry.closed) return
+      if (peers.get(entry.peerId) !== entry || entry.closed || entry.channel !== channel) return
       if (typeof event.data === 'string') {
         const parsed = parseTransferMessage(event.data)
         if (!parsed.ok) emitError(parsed.error.message, entry.peerId, undefined, 'PROTOCOL_ERROR')
@@ -995,7 +1006,7 @@ export const createPeerSession = ({
     }
     const entry = peers.get(message.from)
     if (!entry || entry.peerSessionId !== message.peerSessionId || entry.closed) {
-      if (role === 'receiver' && !entry) {
+      if (role === 'receiver' && (!entry || entry.peerSessionId !== message.peerSessionId)) {
         const key = compoundKey(message.from, message.peerSessionId)
         const candidates = earlyIce.get(key) ?? []
         candidates.push(message.candidate)
