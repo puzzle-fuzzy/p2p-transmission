@@ -40,7 +40,9 @@ describe('TransferPeerFlow', () => {
     expect(screen.getByTitle('Receiver 1').textContent).toBe('R1')
     expect(screen.getByTitle('Receiver 3').textContent).toBe('R3')
     expect(screen.queryByTitle('Receiver 4')).toBeNull()
-    expect(screen.getByText('+3').textContent).toBe('+3')
+    const overflow = screen.getByText('+3')
+    expect(overflow.textContent).toBe('+3')
+    expect(overflow.className).toContain('max-sm:!size-8')
   })
 
   test('renders only the sender when no receiver is connected', () => {
@@ -77,7 +79,10 @@ describe('TransferPeerFlow', () => {
     const requestingLine = status.querySelector('.transfer-peer-flow__line')
     expect(status.getAttribute('data-active')).toBe('false')
     expect(requestingLine).not.toBeNull()
-    expect(requestingLine?.parentElement?.className).toContain('w-8')
+    expect(requestingLine?.parentElement?.className).toContain('w-5')
+    expect(requestingLine?.parentElement?.className).toContain('sm:w-8')
+    expect(screen.getByTitle('Sender').className).toContain('max-sm:!size-8')
+    expect(screen.getByTitle('Receiver').className).toContain('max-sm:!size-8')
     expect(status.querySelectorAll('.transfer-peer-flow__dot')).toHaveLength(0)
 
     rerender(
@@ -92,6 +97,8 @@ describe('TransferPeerFlow', () => {
     expect(status.getAttribute('data-active')).toBe('true')
     expect(status.querySelector('.transfer-peer-flow__line')).toBeNull()
     expect(status.querySelectorAll('.transfer-peer-flow__dot')).toHaveLength(3)
+    expect(status.querySelector('.transfer-peer-flow__dot')?.parentElement?.className)
+      .toContain('sm:gap-1.5')
 
     rerender(
       <TransferPeerFlow

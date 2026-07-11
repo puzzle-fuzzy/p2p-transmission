@@ -38,18 +38,18 @@ export default function TransferPeerFlow({
       aria-live="polite"
       aria-atomic="true"
     >
-      <div className="flex min-w-0 items-center gap-3" aria-hidden="true">
+      <div className="flex min-w-0 items-center gap-1 sm:gap-3" aria-hidden="true">
         <Avatar
           seed={sender.avatarSeed}
           label={sender.displayName}
-          className="shrink-0"
+          className="shrink-0 max-sm:!size-8"
         />
 
         {hasReceivers && (
           <>
-            <span className="flex w-8 shrink-0 items-center justify-center" aria-hidden="true">
+            <span className="flex w-5 shrink-0 items-center justify-center sm:w-8" aria-hidden="true">
               {active ? (
-                <span className="flex items-center gap-1.5">
+                <span className="flex items-center gap-1 sm:gap-1.5">
                   <span className="transfer-peer-flow__dot size-1 rounded-full bg-accent" />
                   <span className="transfer-peer-flow__dot size-1 rounded-full bg-accent" />
                   <span className="transfer-peer-flow__dot size-1 rounded-full bg-accent" />
@@ -59,17 +59,17 @@ export default function TransferPeerFlow({
               )}
             </span>
 
-            <span className="flex min-w-0 items-center pl-2">
+            <span className="flex min-w-0 items-center pl-1 sm:pl-2">
               {visibleReceivers.map((receiver, index) => (
                 <Avatar
                   key={receiver.id}
                   seed={receiver.avatarSeed}
                   label={receiver.displayName}
-                  className={`shrink-0 ${index === 0 ? '' : '-ml-2'}`}
+                  className={`shrink-0 max-sm:!size-8 ${index === 0 ? '' : '-ml-2'}`}
                 />
               ))}
               {overflow > 0 && (
-                <span className="-ml-2 flex size-9 shrink-0 items-center justify-center rounded-full border-2 border-[#2d2d2d] bg-white/10 text-[11px] tabular-nums text-amber-50/70">
+                <span className="-ml-2 flex size-9 shrink-0 items-center justify-center rounded-full border-2 border-[#2d2d2d] bg-white/10 text-[11px] tabular-nums text-amber-50/70 max-sm:!size-8">
                   +{overflow}
                 </span>
               )}

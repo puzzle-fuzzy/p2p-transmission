@@ -200,8 +200,8 @@ export default function TransferPanel({
           </button>
         </div>
 
-        <div className="flex w-full flex-nowrap items-center justify-between gap-3 sm:w-auto sm:justify-end">
-          <div className="shrink-0 whitespace-nowrap text-xs text-amber-50/60 tabular-nums">
+        <div className="flex w-full flex-nowrap items-center justify-between gap-2 sm:w-auto sm:justify-end sm:gap-3">
+          <div className="shrink-0 whitespace-nowrap text-[11px] text-amber-50/60 tabular-nums sm:text-xs">
             {connectedLabel}
           </div>
           <TransferPeerFlow
