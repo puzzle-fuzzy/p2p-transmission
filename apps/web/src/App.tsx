@@ -381,7 +381,8 @@ function App() {
           })
           .catch(() => {
             if (operationGenerationRef.current !== recoveryGeneration) return
-            dispatch({ type: 'error', message: '无法恢复访客会话' })
+            dispatch({ type: 'visitor:ready', session })
+            showToast('无法恢复访客会话，请稍后重试')
           })
       }
     })
@@ -601,7 +602,7 @@ function App() {
                 <div className="text-amber-50/50">
                   {state.role === 'sender' ? '发送者' : '接收者'}
                 </div>
-                <div className="mt-0.5 text-amber-50/40">
+                <div className="mt-0.5 text-amber-50/60">
                   {state.readyPeerCount > 0 ? '点对点已连接' : '正在建立点对点连接'}
                 </div>
               </div>

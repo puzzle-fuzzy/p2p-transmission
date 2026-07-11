@@ -17,6 +17,7 @@ export type RealtimeClientOptions = {
   WebSocketCtor?: WebSocketConstructor
   realtimeUrl?: (token: string) => string
   reconnectDelays?: readonly number[]
+  stableConnectionMs?: number
 }
 
 export type RealtimeStatus = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'closed'
@@ -36,6 +37,7 @@ const parseError: ServerRealtimeMessage = {
 }
 
 const defaultReconnectDelays = [500, 1_000, 2_000] as const
+const defaultStableConnectionMs = 5_000
 const openReadyState = 1
 
 export const createRealtimeClient = ({
@@ -43,6 +45,7 @@ export const createRealtimeClient = ({
   WebSocketCtor = WebSocket as unknown as WebSocketConstructor,
   realtimeUrl = getRealtimeUrl,
   reconnectDelays = defaultReconnectDelays,
+  stableConnectionMs = defaultStableConnectionMs,
 }: RealtimeClientOptions): RealtimeClient => {
   const listeners = new Set<(message: ServerRealtimeMessage) => void>()
   const statusListeners = new Set<(status: RealtimeStatus) => void>()
@@ -51,6 +54,7 @@ export const createRealtimeClient = ({
   let status: RealtimeStatus = 'idle'
   let reconnectAttempt = 0
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+  let stabilityTimer: ReturnType<typeof setTimeout> | undefined
   let explicitlyClosed = false
 
   const emit = (message: ServerRealtimeMessage) => {
@@ -81,6 +85,13 @@ export const createRealtimeClient = ({
     reconnectTimer = undefined
   }
 
+  const clearStabilityTimer = () => {
+    if (stabilityTimer === undefined) return
+
+    clearTimeout(stabilityTimer)
+    stabilityTimer = undefined
+  }
+
   const reconnectLimit = Math.min(reconnectDelays.length, 3)
 
   const scheduleReconnect = () => {
@@ -104,6 +115,7 @@ export const createRealtimeClient = ({
   const handleUnexpectedClose = (closedSocket: WebSocketLike) => {
     if (socket !== closedSocket || explicitlyClosed) return
 
+    clearStabilityTimer()
     detachSocket(closedSocket)
     socket = undefined
     scheduleReconnect()
@@ -125,8 +137,14 @@ export const createRealtimeClient = ({
     nextSocket.onopen = () => {
       if (socket !== nextSocket || explicitlyClosed) return
 
-      reconnectAttempt = 0
       setStatus('open')
+      clearStabilityTimer()
+      stabilityTimer = setTimeout(() => {
+        stabilityTimer = undefined
+        if (socket !== nextSocket || explicitlyClosed) return
+
+        reconnectAttempt = 0
+      }, Math.max(0, stableConnectionMs))
 
       if (socket !== nextSocket || explicitlyClosed) return
 
@@ -172,6 +190,7 @@ export const createRealtimeClient = ({
     close() {
       explicitlyClosed = true
       clearReconnectTimer()
+      clearStabilityTimer()
       pendingMessages.splice(0)
       reconnectAttempt = 0
 

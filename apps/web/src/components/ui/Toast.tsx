@@ -22,7 +22,7 @@ const toneStyles: Record<ToastTone, {
   },
   info: {
     container: 'border-amber-50/15 bg-[#333333] text-amber-50/70',
-    dismiss: 'text-amber-50/40 hover:text-amber-50/70',
+    dismiss: 'text-amber-50/60 hover:text-amber-50/80',
     icon: 'info',
   },
 }

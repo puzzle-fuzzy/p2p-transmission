@@ -51,9 +51,13 @@ export default function RoomJoin({
   }
 
   return (
-    <div className="flex flex-col items-center">
+    <div className="flex w-full max-w-sm flex-col items-center">
       {/* 验证码输入 */}
-      <div className="flex gap-3 mb-8" onPaste={handlePaste}>
+      <fieldset
+        className="mb-8 grid w-full grid-cols-6 gap-2 sm:gap-3"
+        onPaste={handlePaste}
+      >
+        <legend className="sr-only">输入 6 位房间码</legend>
         {Array.from({ length: 6 }).map((_, i) => (
           <input
             key={i}
@@ -61,13 +65,14 @@ export default function RoomJoin({
             type="text"
             maxLength={1}
             inputMode="numeric"
+            aria-label={`房间码第 ${i + 1} 位`}
             value={digits[i]}
-            className="w-12 h-14 bg-transparent border border-amber-50/15 rounded-lg text-center text-amber-50 text-xl font-mono outline-none focus:border-accent transition-colors"
+            className="h-14 min-w-0 w-full rounded-lg border border-amber-50/15 bg-transparent text-center font-mono text-xl text-amber-50 outline-none transition-colors focus:border-accent"
             onChange={e => handleInput(i, e)}
             onKeyDown={e => handleKeyDown(i, e)}
           />
         ))}
-      </div>
+      </fieldset>
       {/* 加入房间 */}
       <button
         className={`w-full py-3 px-16 rounded-xl text-sm transition-all ${
@@ -83,7 +88,7 @@ export default function RoomJoin({
       {/* 分割线 */}
       <div className="w-full flex items-center gap-3 my-5">
         <div className="flex-1 h-px bg-amber-50/10" />
-        <span className="text-amber-50/20 text-xs">OR</span>
+        <span className="text-xs text-amber-50/50">OR</span>
         <div className="flex-1 h-px bg-amber-50/10" />
       </div>
       {/* 创建房间 */}

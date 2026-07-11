@@ -90,7 +90,7 @@ export default function TransferPanel({
             className={`min-h-11 flex-1 rounded-lg px-4 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-[#2d2d2d] sm:flex-none ${
               tab === 'text'
                 ? 'bg-white/10 text-amber-50/80'
-                : 'text-amber-50/40 hover:text-amber-50/60'
+                : 'text-amber-50/60 hover:text-amber-50/80'
             }`}
             onClick={() => selectTab('text')}
             onKeyDown={handleTabKeyDown}
@@ -108,7 +108,7 @@ export default function TransferPanel({
             className={`min-h-11 flex-1 rounded-lg px-4 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-[#2d2d2d] sm:flex-none ${
               tab === 'file'
                 ? 'bg-white/10 text-amber-50/80'
-                : 'text-amber-50/40 hover:text-amber-50/60'
+                : 'text-amber-50/60 hover:text-amber-50/80'
             }`}
             onClick={() => selectTab('file')}
             onKeyDown={handleTabKeyDown}
@@ -120,7 +120,7 @@ export default function TransferPanel({
         <div className="flex items-center justify-between gap-3 sm:justify-end">
           <div className="min-w-0 text-left sm:text-right">
             <div className="text-xs text-amber-50/50 tabular-nums">房间 {room.code}</div>
-            <div className="mt-0.5 text-xs text-amber-50/40">
+            <div className="mt-0.5 text-xs text-amber-50/60">
               {connectedCount > 0
                 ? `${connectedCount} 位接收者已连接`
                 : '等待接收者连接'}
@@ -163,7 +163,7 @@ export default function TransferPanel({
               className="native-scrollbar h-full w-full resize-none rounded-xl border border-amber-50/15 bg-transparent p-4 pb-9 text-sm text-amber-50/80 outline-none transition-colors placeholder:text-amber-50/50 focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-[#2d2d2d]"
               aria-label="要传输的文本"
             />
-            <span className="pointer-events-none absolute bottom-4 right-4 text-xs text-amber-50/40 tabular-nums">
+            <span className="pointer-events-none absolute bottom-4 right-4 text-xs text-amber-50/60 tabular-nums">
               {text.length}/{MAX_CHARS}
             </span>
           </div>
@@ -185,7 +185,7 @@ export default function TransferPanel({
             upload_file
           </span>
           <div className="mt-3 text-sm text-amber-50/60">文件传输将在下一阶段开放</div>
-          <p className="mt-2 max-w-sm text-xs leading-5 text-amber-50/40">
+          <p className="mt-2 max-w-sm text-xs leading-5 text-amber-50/60">
             当前里程碑先完成真实文本传输，文件分片与进度将在后续接入。
           </p>
         </div>

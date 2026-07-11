@@ -195,7 +195,7 @@ describe('realtime-client', () => {
     expect(statuses).toEqual(['idle', 'connecting', 'open'])
   })
 
-  test('reconnects an unexpectedly closed socket with bounded exponential delays', () => {
+  test('bounds reconnects even when every socket briefly opens before closing', () => {
     vi.useFakeTimers()
     FakeWebSocket.instances = []
     const statuses: RealtimeStatus[] = []
@@ -216,21 +216,50 @@ describe('realtime-client', () => {
     vi.advanceTimersByTime(1)
     expect(FakeWebSocket.instances).toHaveLength(2)
 
+    FakeWebSocket.instances[1]?.open()
     FakeWebSocket.instances[1]?.emitClose()
     vi.advanceTimersByTime(999)
     expect(FakeWebSocket.instances).toHaveLength(2)
     vi.advanceTimersByTime(1)
     expect(FakeWebSocket.instances).toHaveLength(3)
 
+    FakeWebSocket.instances[2]?.open()
     FakeWebSocket.instances[2]?.emitClose()
     vi.advanceTimersByTime(2_000)
     expect(FakeWebSocket.instances).toHaveLength(4)
 
+    FakeWebSocket.instances[3]?.open()
     FakeWebSocket.instances[3]?.emitClose()
-    vi.runAllTimers()
+    vi.advanceTimersByTime(10_000)
 
     expect(FakeWebSocket.instances).toHaveLength(4)
     expect(statuses.at(-1)).toBe('closed')
+  })
+
+  test('restores the reconnect budget after a stable connection', () => {
+    vi.useFakeTimers()
+    FakeWebSocket.instances = []
+    const client = createRealtimeClient({
+      token: 'tok_1',
+      WebSocketCtor: FakeWebSocket,
+      realtimeUrl: token => `ws://api.test/v1/realtime?token=${token}`,
+      reconnectDelays: [100, 200, 300],
+      stableConnectionMs: 1_000,
+    })
+
+    client.connect()
+    FakeWebSocket.instances[0]?.open()
+    FakeWebSocket.instances[0]?.emitClose()
+    vi.advanceTimersByTime(100)
+
+    FakeWebSocket.instances[1]?.open()
+    vi.advanceTimersByTime(1_000)
+    FakeWebSocket.instances[1]?.emitClose()
+
+    vi.advanceTimersByTime(99)
+    expect(FakeWebSocket.instances).toHaveLength(2)
+    vi.advanceTimersByTime(1)
+    expect(FakeWebSocket.instances).toHaveLength(3)
   })
 
   test('explicit close clears handlers and never reconnects', () => {

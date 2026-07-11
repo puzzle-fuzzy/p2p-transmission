@@ -94,18 +94,18 @@ export default function IncomingTextRequestDialog({
                 <h2 id={titleId} className="text-sm font-medium text-amber-50/80">
                   接收这段文本？
                 </h2>
-                <p className="mt-1 truncate text-xs text-amber-50/50">
+                <p className="mt-1 truncate text-xs text-amber-50/60">
                   来自 {request.sender.displayName}
                 </p>
               </div>
             </div>
 
-            <div className="mt-5 flex flex-wrap gap-x-4 gap-y-2 rounded-lg bg-white/5 px-3 py-2.5 text-xs text-amber-50/50">
+            <div className="mt-5 flex flex-wrap gap-x-4 gap-y-2 rounded-lg bg-white/5 px-3 py-2.5 text-xs text-amber-50/60">
               <span>{request.characterCount} 个字符</span>
               <span>{formatByteLength(request.byteLength)}</span>
             </div>
 
-            <p id={descriptionId} className="mt-4 text-xs leading-5 text-amber-50/50">
+            <p id={descriptionId} className="mt-4 text-xs leading-5 text-amber-50/60">
               确认接收后，对方才会发送文本内容。拒绝后不会接收正文。
             </p>
 
@@ -132,7 +132,7 @@ export default function IncomingTextRequestDialog({
         ) : (
           <div className="flex min-h-44 flex-col items-center justify-center px-2 py-5 text-center">
             <span
-              className="material-symbols-outlined motion-safe:animate-spin text-amber-50/50"
+              className="material-symbols-outlined motion-safe:animate-spin text-amber-50/60"
               style={{ fontSize: '24px' }}
               aria-hidden="true"
             >
@@ -141,7 +141,7 @@ export default function IncomingTextRequestDialog({
             <h2 id={titleId} className="mt-4 text-sm font-medium text-amber-50/80">
               正在接收…
             </h2>
-            <p id={descriptionId} className="mt-2 text-xs leading-5 text-amber-50/50">
+            <p id={descriptionId} className="mt-2 text-xs leading-5 text-amber-50/60">
               请保持当前页面打开，文本到达后会显示在主面板中。
             </p>
           </div>

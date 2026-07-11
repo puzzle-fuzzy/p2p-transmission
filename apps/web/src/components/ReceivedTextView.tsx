@@ -73,11 +73,11 @@ export default function ReceivedTextView({ state, onCopy }: ReceivedTextViewProp
       />
       <div className="min-w-0">
         <div className="truncate text-sm text-amber-50/80">{state.sender.displayName}</div>
-        <div className="text-xs text-amber-50/40">发送者</div>
+        <div className="text-xs text-amber-50/60">发送者</div>
       </div>
     </div>
   ) : (
-    <div className="flex items-center gap-3 text-amber-50/40">
+    <div className="flex items-center gap-3 text-amber-50/60">
       <span
         className="material-symbols-outlined flex size-9 items-center justify-center rounded-full border border-amber-50/15"
         style={{ fontSize: '18px' }}
@@ -93,7 +93,7 @@ export default function ReceivedTextView({ state, onCopy }: ReceivedTextViewProp
     <section className="w-[calc(100vw-2rem)] max-w-xl" aria-label="文本接收状态">
       <div className="flex items-center justify-between gap-4">
         {senderSummary}
-        <div className="shrink-0 text-right text-xs text-amber-50/40">
+        <div className="shrink-0 text-right text-xs text-amber-50/60">
           {state.status === 'waiting' && '等待文本'}
           {state.status === 'receiving' && '接收中'}
           {state.status === 'received' && '已接收'}
@@ -135,7 +135,7 @@ export default function ReceivedTextView({ state, onCopy }: ReceivedTextViewProp
         <div className="mt-6">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-sm font-medium text-amber-50/80">收到的文本</h2>
-            <span className="text-xs text-amber-50/40 tabular-nums">
+            <span className="text-xs text-amber-50/60 tabular-nums">
               {state.text.length} 个字符
             </span>
           </div>
