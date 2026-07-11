@@ -133,8 +133,7 @@ const attach = (
   socketId: string,
   roomCode: string,
   role: "sender" | "receiver",
-  type: "room:attach" | "room:join" = "room:attach",
-) => hub.handleMessage(socketId, { type, roomCode, role });
+) => hub.handleMessage(socketId, { type: "room:attach", roomCode, role });
 
 const participantStatus = (harness: Harness, roomCode: string, visitorId: string) => {
   const result = harness.rooms.getRoom(roomCode);
@@ -156,7 +155,7 @@ const offer = (
 });
 
 describe("realtime hub attach and resume", () => {
-  test("room:attach and legacy room:join are attach-only and never create membership", () => {
+  test("room:attach is attach-only and never creates membership", () => {
     const harness = createHarness();
     const sender = harness.visitors.createVisitor();
     const outsider = harness.visitors.createVisitor();
@@ -167,10 +166,10 @@ describe("realtime hub attach and resume", () => {
     connect(harness.hub, senderSocket.socket, sender.token);
     connect(harness.hub, outsiderSocket.socket, outsider.token);
 
-    attach(harness.hub, outsiderSocket.socket.id, created.room.code, "receiver", "room:join");
+    attach(harness.hub, outsiderSocket.socket.id, created.room.code, "receiver");
     expect(latestErrorCode(outsiderSocket.sent)).toBe("ROOM_MEMBERSHIP_REQUIRED");
-    const roomAfterLegacyJoin = harness.rooms.getRoom(created.room.code);
-    expect(roomAfterLegacyJoin.ok && roomAfterLegacyJoin.room.participants
+    const roomAfterAttach = harness.rooms.getRoom(created.room.code);
+    expect(roomAfterAttach.ok && roomAfterAttach.room.participants
       .some(participant => participant.visitor.id === outsider.id)).toBe(false);
 
     attach(harness.hub, senderSocket.socket.id, created.room.code, "receiver");

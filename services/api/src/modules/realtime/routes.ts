@@ -28,11 +28,6 @@ const clientMessageSchema = t.Union([
     role: t.Union([t.Literal("sender"), t.Literal("receiver")]),
   }),
   t.Object({
-    type: t.Literal("room:join"),
-    roomCode: t.String(),
-    role: t.Union([t.Literal("sender"), t.Literal("receiver")]),
-  }),
-  t.Object({
     type: t.Literal("room:leave"),
     roomCode: t.String(),
   }),

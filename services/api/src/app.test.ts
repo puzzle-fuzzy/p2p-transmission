@@ -232,12 +232,13 @@ describe("app routes", () => {
     expect(fullHarness.context.visitors.size()).toBe(1);
   });
 
-  test("maps missing iceMode to off and defaults join role to receiver", async () => {
+  test("requires iceMode and defaults join role to receiver", async () => {
     const { app } = createTestHarness();
     const sender = await createVisitor(app);
     const receiver = await createVisitor(app);
 
-    const createResponse = await app.handle(roomRequest(sender.token));
+    const missingMode = await app.handle(roomRequest(sender.token));
+    const createResponse = await app.handle(roomRequest(sender.token, { iceMode: "off" }));
     const created = await json<{
       room: {
         code: string;
@@ -246,7 +247,7 @@ describe("app routes", () => {
       };
       rtcConfiguration?: unknown;
     }>(createResponse);
-    const joinResponse = await app.handle(new Request(
+    const missingJoinMode = await app.handle(new Request(
       `http://api.test/v1/rooms/${created.room.code}/join`,
       {
         method: "POST",
@@ -257,6 +258,17 @@ describe("app routes", () => {
         body: JSON.stringify({}),
       },
     ));
+    const joinResponse = await app.handle(new Request(
+      `http://api.test/v1/rooms/${created.room.code}/join`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${receiver.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ iceMode: "off" }),
+      },
+    ));
     const joined = await json<{
       room: {
         receivers: string[];
@@ -265,6 +277,8 @@ describe("app routes", () => {
       rtcConfiguration?: unknown;
     }>(joinResponse);
 
+    expect(missingMode.status).toBe(422);
+    expect(missingJoinMode.status).toBe(422);
     expect(createResponse.status).toBe(200);
     expect(joinResponse.status).toBe(200);
     expect(created.rtcConfiguration).toBeUndefined();
@@ -316,7 +330,7 @@ describe("app routes", () => {
     const sender = await createVisitor(app);
     const secondSender = await createVisitor(app);
 
-    const unauthorized = await app.handle(roomRequest("bad"));
+    const unauthorized = await app.handle(roomRequest("bad", { iceMode: "off" }));
     const missing = await app.handle(new Request("http://api.test/v1/rooms/000000/join", {
       method: "POST",
       headers: {
@@ -377,8 +391,14 @@ describe("app routes", () => {
     const atCapacity = createTestHarness({ maxRooms: 1 });
     const senderOne = await createVisitor(atCapacity.app);
     const senderTwo = await createVisitor(atCapacity.app);
-    expect((await atCapacity.app.handle(roomRequest(senderOne.token))).status).toBe(200);
-    const capacityFailure = await atCapacity.app.handle(roomRequest(senderTwo.token));
+    expect((await atCapacity.app.handle(roomRequest(
+      senderOne.token,
+      { iceMode: "off" },
+    ))).status).toBe(200);
+    const capacityFailure = await atCapacity.app.handle(roomRequest(
+      senderTwo.token,
+      { iceMode: "off" },
+    ));
 
     expect(turnFailure.status).toBe(503);
     expect(await json<{ error: { code: string } }>(turnFailure)).toMatchObject({

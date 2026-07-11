@@ -286,7 +286,7 @@ export const createRealtimeHub = (
 
   const attach = (
     connection: Connection,
-    message: Extract<ClientRealtimeMessage, { type: "room:attach" | "room:join" }>,
+    message: Extract<ClientRealtimeMessage, { type: "room:attach" }>,
   ) => {
     const result = context.rooms.attach(
       message.roomCode,
@@ -381,7 +381,7 @@ export const createRealtimeHub = (
       const connection = connectionsBySocket.get(socketId);
       if (!connection || socketIdsByVisitor.get(connection.visitorId) !== socketId) return;
 
-      if (message.type === "room:attach" || message.type === "room:join") {
+      if (message.type === "room:attach") {
         attach(connection, message);
         return;
       }

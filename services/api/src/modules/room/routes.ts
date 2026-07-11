@@ -64,13 +64,13 @@ export const roomRoutes = (context: AppContext) =>
           directAddress: server?.requestIP(request)?.address,
           headers,
         }),
-        iceMode: body?.iceMode ?? "off",
+        iceMode: body.iceMode,
       });
       return bootstrapResponse(result, set, status);
     }, {
-      body: t.Optional(t.Object({
-        iceMode: t.Optional(iceModeSchema),
-      })),
+      body: t.Object({
+        iceMode: iceModeSchema,
+      }),
     })
     .post("/:code/join", ({ body, headers, params, request, server, set, status }) => {
       const result = context.roomBootstrap.joinRoom({
@@ -80,18 +80,18 @@ export const roomRoutes = (context: AppContext) =>
           directAddress: server?.requestIP(request)?.address,
           headers,
         }),
-        role: body?.role ?? "receiver",
-        iceMode: body?.iceMode ?? "off",
+        role: body.role ?? "receiver",
+        iceMode: body.iceMode,
       });
       return bootstrapResponse(result, set, status);
     }, {
-      body: t.Optional(t.Object({
+      body: t.Object({
         role: t.Optional(t.Union([
           t.Literal("sender"),
           t.Literal("receiver"),
         ])),
-        iceMode: t.Optional(iceModeSchema),
-      })),
+        iceMode: iceModeSchema,
+      }),
     })
     .get("/:code", ({ params, status }) => {
       const result = context.rooms.getRoom(params.code);
