@@ -1,34 +1,52 @@
-# React + TypeScript + Vite
+# P2P Transmission Web
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React 前端负责临时访客会话、房间加入、WebRTC 协商和点对点文本收发。服务端只转发 offer、answer 与 ICE 信令，不会收到文本正文。
 
-Currently, two official plugins are available:
+## 本地开发
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+在仓库根目录安装依赖并启动 API 与 Web：
 
-## React Compiler
+~~~bash
+bun install --frozen-lockfile
+bun run dev
+~~~
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
+- Web：<http://localhost:5713>
+- API：<http://localhost:3000>
 
-Note: This will impact Vite dev & build performances.
+也可以分别运行：
 
-## Expanding the Oxlint configuration
+~~~bash
+bun run --cwd services/api dev
+bun run --cwd apps/web dev
+~~~
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+## 环境变量
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
-```
+~~~bash
+VITE_API_URL=http://localhost:3000
+VITE_STUN_URLS=stun:stun.l.google.com:19302
+~~~
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+VITE_STUN_URLS 接受逗号分隔的 STUN URL。当前里程碑不包含 TURN，因此不能保证所有严格 NAT 或企业网络都能直连。
+
+## 文本传输验收
+
+1. 在两个相互隔离的浏览器会话中打开 Web。
+2. 会话 A 创建房间，会话 B 输入六位房间码加入。
+3. 等待页面显示“点对点已连接”。
+4. A 输入文本并发送；B 必须先看到不包含正文的接收请求。
+5. B 点击“拒绝”，确认正文不会显示。
+6. A 再次发送，B 点击“接收”。
+7. B 的主面板显示完全一致的文本，复制按钮可复制原文；A 收到送达提示。
+
+## 验证
+
+~~~bash
+bun run test
+bun run typecheck
+bun run lint
+bun run build
+~~~
+
+文件传输仍是下一阶段能力，当前界面不会模拟文件发送成功。
