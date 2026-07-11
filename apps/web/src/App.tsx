@@ -2,6 +2,8 @@ import { useCallback, useEffect, useReducer, useRef } from 'react'
 import Loading from './components/Loading'
 import RoomJoin from './components/RoomJoin'
 import TransferPanel from './components/TransferPanel'
+import ToastViewport from './components/ui/Toast'
+import { useToast } from './components/ui/useToast'
 import {
   initialRoomFlowState,
   roomFlowReducer,
@@ -16,6 +18,11 @@ import type { ParticipantRole, PublicRoom, VisitorSession } from './shared/contr
 
 function App() {
   const [state, dispatch] = useReducer(roomFlowReducer, initialRoomFlowState)
+  const {
+    toast: toastState,
+    show: showToast,
+    dismiss: dismissToast,
+  } = useToast()
   const realtimeRef = useRef<RealtimeClient | undefined>(undefined)
   const bootedRef = useRef(false)
 
@@ -35,6 +42,7 @@ function App() {
         saveVisitorSession(session)
         dispatch({ type: 'visitor:ready', session })
       } catch {
+        showToast('无法连接服务')
         dispatch({ type: 'error', message: '无法连接服务' })
       }
     }
@@ -44,7 +52,7 @@ function App() {
     return () => {
       realtimeRef.current?.close()
     }
-  }, [])
+  }, [showToast])
 
   const connectRealtime = useCallback((
     session: VisitorSession,
@@ -56,13 +64,16 @@ function App() {
     const client = createRealtimeClient({ token: session.token })
     client.subscribe(message => {
       if (message.type === 'visitor:ready') return
+      if (message.type === 'error') {
+        showToast(message.message)
+      }
       dispatch({ type: 'server:message', message })
     })
     client.connect()
     client.send({ type: 'room:join', roomCode: room.code, role })
     realtimeRef.current = client
     dispatch({ type: 'realtime:connected' })
-  }, [])
+  }, [showToast])
 
   const handleCreateRoom = useCallback(async () => {
     if (!state.session) return
@@ -74,12 +85,14 @@ function App() {
       dispatch({ type: 'room:created', room })
       connectRealtime(state.session, room, 'sender')
     } catch (error) {
+      const message = error instanceof Error ? error.message : '创建房间失败'
+      showToast(message)
       dispatch({
         type: 'error',
-        message: error instanceof Error ? error.message : '创建房间失败',
+        message,
       })
     }
-  }, [connectRealtime, state.session])
+  }, [connectRealtime, state.session, showToast])
 
   const handleJoinRoom = useCallback(async (code: string) => {
     if (!state.session) return
@@ -91,12 +104,14 @@ function App() {
       dispatch({ type: 'room:joined', room })
       connectRealtime(state.session, room, 'receiver')
     } catch (error) {
+      const message = error instanceof Error ? error.message : '加入房间失败'
+      showToast(message)
       dispatch({
         type: 'error',
-        message: error instanceof Error ? error.message : '加入房间失败',
+        message,
       })
     }
-  }, [connectRealtime, state.session])
+  }, [connectRealtime, state.session, showToast])
 
   const roomView = state.session && state.room && state.phase !== 'lobby'
     ? { session: state.session, room: state.room }
@@ -109,7 +124,6 @@ function App() {
       {!roomView && state.phase !== 'booting' && (
         <RoomJoin
           busy={state.phase === 'joining'}
-          error={state.error}
           onCreateRoom={handleCreateRoom}
           onJoinRoom={handleJoinRoom}
         />
@@ -138,6 +152,8 @@ function App() {
           />
         </div>
       )}
+
+      <ToastViewport toast={toastState} onDismiss={dismissToast} />
     </div>
   )
 }

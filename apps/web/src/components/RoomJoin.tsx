@@ -2,14 +2,12 @@ import { useMemo, useRef, useState } from 'react'
 
 type RoomJoinProps = {
   busy?: boolean
-  error?: string
   onCreateRoom(): void
   onJoinRoom(code: string): void
 }
 
 export default function RoomJoin({
   busy = false,
-  error = '',
   onCreateRoom,
   onJoinRoom,
 }: RoomJoinProps) {
@@ -70,11 +68,6 @@ export default function RoomJoin({
           />
         ))}
       </div>
-      {error && (
-        <div className="w-full mb-4 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs text-center">
-          {error}
-        </div>
-      )}
       {/* 加入房间 */}
       <button
         className={`w-full py-3 px-16 rounded-xl text-sm transition-all ${
