@@ -40,14 +40,14 @@ export default function RoomJoin() {
             type="text"
             maxLength={1}
             inputMode="numeric"
-            className="w-12 h-14 bg-transparent border border-amber-50/15 rounded-xl text-center text-amber-50 text-xl font-mono outline-none focus:border-accent transition-colors"
+            className="w-12 h-14 bg-transparent border border-amber-50/15 rounded-lg text-center text-amber-50 text-xl font-mono outline-none focus:border-accent transition-colors"
             onChange={e => handleInput(i, e)}
             onKeyDown={e => handleKeyDown(i, e)}
           />
         ))}
       </div>
       {/* 加入房间 */}
-      <button className="w-full cursor-pointer py-3 px-16 rounded-xl bg-accent text-white/90 text-sm tracking-wider hover:brightness-110 active:brightness-90 transition-all">
+      <button className="w-full cursor-pointer py-3 px-16 rounded-xl bg-accent text-white/90 text-sm hover:brightness-110 active:brightness-90 transition-all">
         加入房间
       </button>
       {/* 分割线 */}
@@ -57,7 +57,7 @@ export default function RoomJoin() {
         <div className="flex-1 h-px bg-amber-50/10" />
       </div>
       {/* 创建房间 */}
-      <button className="w-full cursor-pointer py-3 px-16 rounded-xl border border-amber-50/15 text-amber-50/50 text-sm tracking-wider hover:bg-amber-50/5 hover:text-amber-50/70 active:bg-amber-50/10 transition-all">
+      <button className="w-full cursor-pointer py-3 px-16 rounded-xl border border-amber-50/15 text-amber-50/50 text-sm hover:bg-amber-50/5 hover:text-amber-50/70 active:bg-amber-50/10 transition-all">
         创建房间
       </button>
     </div>

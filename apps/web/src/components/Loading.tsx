@@ -1,40 +1,15 @@
-import viteSvg from '../assets/vite.svg'
-
 function Loading() {
-    return (
-        <div className="w-full h-svh flex justify-center items-center fixed top-0 left-0">
-            <div className="flex items-center">
-                <div
-                    className="rounded-full w-14 h-14 border-2 border-[#2d2d2d] -ml-8 first:ml-0 flex justify-center items-center bg-[#3d3d3d] relative"
-                >
-                    <img src={viteSvg} alt="" />
-                </div>
-
-                <div className="flex items-center gap-1.5 px-5">
-                    {[0, 1, 2, 3, 4, 5].map(i => (
-                        <div
-                            key={i}
-                            className="w-2 h-2 bg-amber-50/60 rounded-full"
-                            style={{
-                                animation: `dot-wave 1.4s ease-in-out ${i * 0.2}s infinite`,
-                            }}
-                        />
-                    ))}
-                </div>
-
-                <div className="flex items-center">
-                    {Array.from({ length: 5 }).map((_, i) => (
-                        <div
-                            key={i}
-                            className="rounded-full w-14 h-14 border-2 border-[#2d2d2d] -ml-6 first:ml-0 flex justify-center items-center bg-[#3d3d3d] relative"
-                        >
-                            <img src={viteSvg} alt="" />
-                        </div>
-                    ))}
-                </div>
-            </div>
-        </div>
-    )
+  return (
+    <div className="w-full h-svh flex justify-center items-center fixed top-0 left-0">
+      <div className="flex flex-col items-center gap-4">
+        <svg className="w-8 h-8 text-accent/60 animate-spin" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+        <span className="text-amber-50/30 text-xs">连接中…</span>
+      </div>
+    </div>
+  )
 }
 
 export default Loading
