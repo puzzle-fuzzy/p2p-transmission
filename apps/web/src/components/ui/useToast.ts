@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useState } from 'react'
 
+export type ToastTone = 'error' | 'success' | 'info'
+
 export type ToastState = {
   id: number
   message: string
+  tone: ToastTone
 }
 
 export const useToast = () => {
   const [toast, setToast] = useState<ToastState | undefined>()
 
-  const show = useCallback((message: string) => {
+  const show = useCallback((message: string, tone: ToastTone = 'error') => {
     setToast({
       id: Date.now(),
       message,
+      tone,
     })
   }, [])
 

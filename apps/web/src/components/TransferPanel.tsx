@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { OverlayScrollbarsComponent } from 'overlayscrollbars-react'
+import { useId, useRef, useState } from 'react'
 import Avatar from './Avatar'
 import type { PublicRoom, PublicVisitor } from '../shared/contracts'
 
@@ -7,319 +6,218 @@ type Tab = 'text' | 'file'
 
 const MAX_CHARS = 500
 
-type FileState = 'pending' | 'transferring' | 'done' | 'error'
-
-type TransferPanelProps = {
+export type TransferPanelProps = {
   visitor: PublicVisitor
   room: PublicRoom
-  realtimeReady: boolean
+  readyPeerCount: number
+  onSendText(text: string): void | Promise<void>
 }
 
 export default function TransferPanel({
   visitor,
   room,
-  realtimeReady,
+  readyPeerCount,
+  onSendText,
 }: TransferPanelProps) {
   const [tab, setTab] = useState<Tab>('text')
   const [text, setText] = useState('')
-  const [files, setFiles] = useState<File[]>([])
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const intervalRefs = useRef<ReturnType<typeof setInterval>[]>([])
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState('')
+  const textTabRef = useRef<HTMLButtonElement>(null)
+  const fileTabRef = useRef<HTMLButtonElement>(null)
+  const tabId = useId()
+  const connectedCount = Math.max(0, Math.trunc(readyPeerCount))
+  const hasText = Boolean(text.trim())
+  const canSendText = connectedCount > 0 && hasText && !sending
 
-  const [progress, setProgress] = useState<Record<number, number>>({})
-  const [fileStates, setFileStates] = useState<Record<number, FileState>>({})
-  const [transferring, setTransferring] = useState(false)
-  const [errorBanner, setErrorBanner] = useState('')
+  const handleSendText = async () => {
+    if (!canSendText) return
 
-  // Cleanup intervals on unmount
-  useEffect(() => {
-    const intervals = intervalRefs.current
+    const textSnapshot = text
+    setSending(true)
+    setSendError('')
 
-    return () => {
-      intervals.forEach(clearInterval)
+    try {
+      await onSendText(textSnapshot)
+      setText(current => current === textSnapshot ? '' : current)
+    } catch {
+      setSendError('无法发起文本传输，请稍后重试。')
+    } finally {
+      setSending(false)
     }
-  }, [])
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selected = Array.from(e.target.files ?? [])
-    setFiles(prev => [...prev, ...selected])
-    e.target.value = ''
   }
 
-  const removeFile = useCallback((index: number) => {
-    setFiles(prev => prev.filter((_, i) => i !== index))
-    setProgress(prev => {
-      const next = { ...prev }
-      delete next[index]
-      return next
-    })
-    setFileStates(prev => {
-      const next = { ...prev }
-      delete next[index]
-      return next
-    })
-  }, [])
+  const sendButtonLabel = sending
+    ? '正在发出请求…'
+    : connectedCount === 0
+      ? '等待接收者连接'
+      : connectedCount === 1
+        ? '发送给 1 位接收者'
+        : `发送给 ${connectedCount} 位接收者`
 
-  const retryFile = useCallback((index: number) => {
-    setFileStates(prev => ({ ...prev, [index]: 'transferring' }))
-    setProgress(prev => ({ ...prev, [index]: 0 }))
-    mockTransferFile(index)
-  }, [])
-
-  const formatSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  }
-
-  const mockTransferFile = (index: number) => {
-    const interval = setInterval(() => {
-      setProgress(prev => {
-        const current = prev[index] ?? 0
-        if (current >= 100) {
-          clearInterval(interval)
-          setFileStates(prev => ({ ...prev, [index]: 'done' }))
-          return prev
-        }
-        const increment = Math.random() * 15 + 2
-        const next = Math.min(current + increment, 100)
-        // 模拟 10% 概率出错
-        if (next > 30 && next < 50 && Math.random() < 0.04) {
-          clearInterval(interval)
-          setFileStates(prev => ({ ...prev, [index]: 'error' }))
-          setErrorBanner(`文件传输失败，请重试`)
-          setTransferring(false)
-          return prev
-        }
-        return { ...prev, [index]: next }
-      })
-    }, 200 + Math.random() * 300)
-    intervalRefs.current.push(interval)
-  }
-
-  const startMockTransfer = () => {
-    if (tab === 'text' && !text.trim()) return
-    if (tab === 'file' && files.length === 0) return
-
-    setErrorBanner('')
-    setTransferring(true)
-
-    if (tab === 'text') {
-      // Mock 文本传输——在日志中可以看到效果
-      setTransferring(false)
-      return
+  const selectTab = (nextTab: Tab, focus = false) => {
+    setTab(nextTab)
+    setSendError('')
+    if (focus) {
+      const target = nextTab === 'text' ? textTabRef.current : fileTabRef.current
+      target?.focus()
     }
-
-    files.forEach((_, i) => {
-      setFileStates(prev => ({ ...prev, [i]: 'transferring' }))
-      setProgress(prev => ({ ...prev, [i]: 0 }))
-      mockTransferFile(i)
-    })
   }
 
-  const isTransferDisabled =
-    !realtimeReady || (tab === 'text' && !text.trim()) || (tab === 'file' && files.length === 0)
-  const participantCount = room.participants.length
+  const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+
+    event.preventDefault()
+    selectTab(event.key === 'ArrowLeft' || event.key === 'Home' ? 'text' : 'file', true)
+  }
 
   return (
-    <div className="w-xl flex flex-col gap-6">
-      {/* Tab 切换 */}
-      <div className="flex items-center gap-2">
-        <div className="flex gap-1">
+    <section className="native-scrollbar flex max-h-[calc(100svh-2rem)] w-[calc(100vw-2rem)] max-w-xl flex-col gap-5 overflow-y-auto py-0.5 sm:gap-6" aria-label="发送内容">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div
+          className="flex w-full rounded-xl bg-white/5 p-1 sm:w-auto"
+          role="tablist"
+          aria-label="传输类型"
+        >
           <button
-            className={`relative py-2 px-4 text-sm transition-all cursor-pointer ${
+            ref={textTabRef}
+            id={`${tabId}-text-tab`}
+            type="button"
+            role="tab"
+            aria-selected={tab === 'text'}
+            aria-controls={`${tabId}-text-panel`}
+            tabIndex={tab === 'text' ? 0 : -1}
+            className={`min-h-11 flex-1 rounded-lg px-4 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-[#2d2d2d] sm:flex-none ${
               tab === 'text'
-                ? 'text-amber-50/80'
+                ? 'bg-white/10 text-amber-50/80'
                 : 'text-amber-50/40 hover:text-amber-50/60'
             }`}
-            onClick={() => setTab('text')}
+            onClick={() => selectTab('text')}
+            onKeyDown={handleTabKeyDown}
           >
             传输文本
-            {tab === 'text' && (
-              <span className="absolute -bottom-px left-2 right-2 h-0.5 bg-amber-50/60 rounded-full" />
-            )}
           </button>
           <button
-            className={`relative py-2 px-4 text-sm transition-all cursor-pointer ${
+            ref={fileTabRef}
+            id={`${tabId}-file-tab`}
+            type="button"
+            role="tab"
+            aria-selected={tab === 'file'}
+            aria-controls={`${tabId}-file-panel`}
+            tabIndex={tab === 'file' ? 0 : -1}
+            className={`min-h-11 flex-1 rounded-lg px-4 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-[#2d2d2d] sm:flex-none ${
               tab === 'file'
-                ? 'text-amber-50/80'
+                ? 'bg-white/10 text-amber-50/80'
                 : 'text-amber-50/40 hover:text-amber-50/60'
             }`}
-            onClick={() => setTab('file')}
+            onClick={() => selectTab('file')}
+            onKeyDown={handleTabKeyDown}
           >
             传输文件
-            {tab === 'file' && (
-              <span className="absolute -bottom-px left-2 right-2 h-0.5 bg-amber-50/60 rounded-full" />
-            )}
           </button>
         </div>
 
-        <div className="ml-auto flex items-center gap-3">
-          <div className="text-right">
-            <div className="text-amber-50/40 text-xs tabular-nums">房间 {room.code}</div>
-            <div className="text-amber-50/20 text-xs">
-              {realtimeReady ? `${participantCount} 人已连接` : '等待接收者…'}
+        <div className="flex items-center justify-between gap-3 sm:justify-end">
+          <div className="min-w-0 text-left sm:text-right">
+            <div className="text-xs text-amber-50/50 tabular-nums">房间 {room.code}</div>
+            <div className="mt-0.5 text-xs text-amber-50/40">
+              {connectedCount > 0
+                ? `${connectedCount} 位接收者已连接`
+                : '等待接收者连接'}
             </div>
           </div>
-          <Avatar seed={visitor.avatarSeed} label={visitor.displayName} />
+          <Avatar seed={visitor.avatarSeed} label={visitor.displayName} className="shrink-0" />
         </div>
-        {/* <button
-          className="ml-auto p-2 text-amber-50/20 hover:text-amber-50/40 transition-colors cursor-pointer"
-          onClick={onToggleLog}
-          title="切换日志面板"
-        >
-          <span className="material-symbols-outlined leading-none" style={{ fontSize: '16px' }}>list</span>
-        </button> */}
       </div>
 
-      {/* 错误提示 */}
-      {errorBanner && (
-        <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20">
-          <span className="material-symbols-outlined leading-none text-red-400" style={{ fontSize: '16px' }}>warning</span>
-          <span className="flex-1 text-red-400 text-xs">{errorBanner}</span>
+      {sendError && (
+        <div className="flex items-center gap-2 rounded-xl border border-red-300/20 bg-red-400/5 px-4 py-2.5 text-xs text-red-200/80" role="alert">
+          <span className="material-symbols-outlined shrink-0" style={{ fontSize: '16px' }} aria-hidden="true">warning</span>
+          <span className="min-w-0 flex-1">{sendError}</span>
           <button
-            className="text-red-400/50 hover:text-red-400 cursor-pointer"
-            onClick={() => setErrorBanner('')}
+            type="button"
+            className="flex size-11 shrink-0 items-center justify-center rounded-lg text-red-200/50 transition-colors hover:text-red-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-200/70"
+            onClick={() => setSendError('')}
+            aria-label="关闭错误提示"
           >
-            <span className="material-symbols-outlined leading-none" style={{ fontSize: '14px' }}>close</span>
+            <span className="material-symbols-outlined" style={{ fontSize: '16px' }} aria-hidden="true">close</span>
           </button>
         </div>
       )}
 
-      {/* 内容区域 - 固定高度容器 */}
-      <div className="h-56">
-        {tab === 'text' && (
-          <div className="relative h-full" style={{ fontSize: 0 }}>
+      {tab === 'text' && (
+        <div
+          id={`${tabId}-text-panel`}
+          role="tabpanel"
+          aria-labelledby={`${tabId}-text-tab`}
+        >
+          <div className="relative h-52 sm:h-56" style={{ fontSize: 0 }}>
             <textarea
               placeholder="输入要传输的文本…"
               maxLength={MAX_CHARS}
               value={text}
-              onChange={e => setText(e.target.value)}
-              className="native-scrollbar w-full h-full bg-transparent border border-amber-50/15 rounded-xl p-4 pb-8 text-amber-50/80 text-sm outline-none resize-none focus:border-accent transition-colors placeholder:text-amber-50/20"
+              onChange={event => {
+                setText(event.target.value)
+                if (sendError) setSendError('')
+              }}
+              className="native-scrollbar h-full w-full resize-none rounded-xl border border-amber-50/15 bg-transparent p-4 pb-9 text-sm text-amber-50/80 outline-none transition-colors placeholder:text-amber-50/50 focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-[#2d2d2d]"
+              aria-label="要传输的文本"
             />
-            <span className="absolute bottom-4 right-4 text-amber-50/20 text-xs tabular-nums">
+            <span className="pointer-events-none absolute bottom-4 right-4 text-xs text-amber-50/40 tabular-nums">
               {text.length}/{MAX_CHARS}
             </span>
           </div>
-        )}
+        </div>
+      )}
 
-        {tab === 'file' && (
-          <div
-            className={`w-full h-full border-2 border-dashed border-amber-50/15 rounded-xl flex flex-col ${
-              files.length === 0 ? 'justify-center items-center gap-2' : 'justify-start'
-            } cursor-pointer hover:border-amber-50/30 transition-colors`}
-            onClick={() => fileInputRef.current?.click()}
-            onKeyDown={e => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault()
-                fileInputRef.current?.click()
-              }
-            }}
-            tabIndex={0}
-            role="button"
-            aria-label="选择文件"
+      {tab === 'file' && (
+        <div
+          id={`${tabId}-file-panel`}
+          role="tabpanel"
+          aria-labelledby={`${tabId}-file-tab`}
+          className="flex h-52 flex-col items-center justify-center rounded-xl border-2 border-dashed border-amber-50/15 px-5 text-center sm:h-56"
+        >
+          <span
+            className="material-symbols-outlined text-amber-50/30"
+            style={{ fontSize: '28px' }}
+            aria-hidden="true"
           >
-            {files.length === 0 ? (
-              <>
-                <span className="material-symbols-outlined text-[32px] leading-none text-amber-50/20">upload_file</span>
-                <span className="text-amber-50/20 text-sm">拖拽文件到此处或点击选择</span>
-                <span className="text-amber-50/10 text-xs">支持所有文件类型</span>
-              </>
-            ) : (
-              <div className="w-full flex flex-col h-full min-h-0" onClick={e => e.stopPropagation()}>
-                <OverlayScrollbarsComponent
-                  className="min-h-0 flex-1 p-3"
-                  options={{
-                    overflow: { x: 'hidden', y: 'scroll' },
-                    scrollbars: { autoHide: 'never', theme: 'os-theme-dark' },
-                  }}
-                  defer
-                >
-                  <div className="flex flex-col gap-2">
-                    {files.map((file, i) => (
-                      <div key={i} className="relative overflow-hidden bg-white/5 rounded-lg">
-                        {/* 背景进度条 */}
-                        <div
-                          className="absolute inset-0 transition-all duration-300 rounded-lg"
-                          style={{
-                            width: `${progress[i] ?? 0}%`,
-                            backgroundColor: fileStates[i] === 'error' ? '#ef4444' : '#5e11d1',
-                            opacity: 0.15,
-                          }}
-                        />
-                        {/* 内容 */}
-                        <div className="relative flex items-center gap-3 px-3 py-2 z-10">
-                          <span className="material-symbols-outlined leading-none text-amber-50/30" style={{ fontSize: '16px' }}>description</span>
-                          <span className="flex-1 text-amber-50/60 text-xs truncate">{file.name}</span>
-                          <span className="text-amber-50/20 text-xs shrink-0">{formatSize(file.size)}</span>
-                          {fileStates[i] === 'done' ? (
-                            <span className="material-symbols-outlined leading-none text-accent" style={{ fontSize: '16px' }}>check_circle</span>
-                          ) : fileStates[i] === 'error' ? (
-                            <button
-                              className="text-red-400 hover:text-red-300 transition-colors cursor-pointer shrink-0"
-                              onClick={() => retryFile(i)}
-                              title="重试"
-                            >
-                              <span className="material-symbols-outlined leading-none" style={{ fontSize: '16px' }}>refresh</span>
-                            </button>
-                          ) : (
-                            <button
-                              className="text-amber-50/20 hover:text-amber-50/50 transition-colors cursor-pointer shrink-0"
-                              onClick={() => removeFile(i)}
-                            >
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18L18 6M6 6l12 12" />
-                              </svg>
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </OverlayScrollbarsComponent>
-                <div
-                  className="flex items-center justify-center gap-1.5 text-amber-50/20 hover:text-amber-50/40 transition-colors cursor-pointer"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <span className="material-symbols-outlined leading-none" style={{ fontSize: '14px' }}>add</span>
-                  <span className="text-xs">添加更多文件</span>
-                </div>
-              </div>
-            )}
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={handleFileChange}
-            />
-          </div>
-        )}
-      </div>
+            upload_file
+          </span>
+          <div className="mt-3 text-sm text-amber-50/60">文件传输将在下一阶段开放</div>
+          <p className="mt-2 max-w-sm text-xs leading-5 text-amber-50/40">
+            当前里程碑先完成真实文本传输，文件分片与进度将在后续接入。
+          </p>
+        </div>
+      )}
 
-      {/* 传输按钮 */}
       <button
-        className={`w-full cursor-pointer py-3 rounded-xl text-sm transition-all flex items-center justify-center gap-2 ${
-          isTransferDisabled || transferring
-            ? 'bg-white/5 text-amber-50/20 cursor-not-allowed'
-            : 'bg-accent text-white/90 hover:brightness-110 active:brightness-90'
+        type="button"
+        className={`flex min-h-11 w-full items-center justify-center gap-2 rounded-xl px-4 text-sm transition-[filter,color,background-color] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-50/80 focus-visible:ring-offset-2 focus-visible:ring-offset-[#2d2d2d] ${
+          tab === 'file' || !canSendText
+            ? 'cursor-not-allowed bg-white/5 text-amber-50/30'
+            : 'cursor-pointer bg-accent text-white/90 hover:brightness-110 active:brightness-90'
         }`}
-        onClick={startMockTransfer}
-        disabled={isTransferDisabled || transferring}
+        disabled={tab === 'file' || !canSendText}
+        onClick={() => { void handleSendText() }}
       >
-        {transferring ? (
-          <>
-            <span className="material-symbols-outlined leading-none animate-spin" style={{ fontSize: '16px' }}>progress_activity</span>
-            传输中…
-          </>
-        ) : !realtimeReady ? (
-          '等待连接'
-        ) : tab === 'file' && files.length > 0 ? (
-          `传输 ${files.length} 个文件`
+        {tab === 'file' ? (
+          '文件传输暂未开放'
         ) : (
-          '传输'
+          <>
+            {sending && (
+              <span
+                className="material-symbols-outlined motion-safe:animate-spin"
+                style={{ fontSize: '16px' }}
+                aria-hidden="true"
+              >
+                progress_activity
+              </span>
+            )}
+            {sendButtonLabel}
+          </>
         )}
       </button>
-    </div>
+    </section>
   )
 }
