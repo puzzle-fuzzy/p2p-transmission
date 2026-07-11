@@ -15,7 +15,7 @@ export type TransferPeerFlowProps = {
   accessibleLabel: string
 }
 
-const MAX_VISIBLE_RECEIVERS = 4
+const MAX_VISIBLE_RECEIVERS = 3
 
 export default function TransferPeerFlow({
   sender,
@@ -25,7 +25,8 @@ export default function TransferPeerFlow({
 }: TransferPeerFlowProps) {
   const visibleReceivers = receivers.slice(0, MAX_VISIBLE_RECEIVERS)
   const overflow = Math.max(0, receivers.length - visibleReceivers.length)
-  const active = phase === 'requesting' || phase === 'transferring'
+  const active = phase === 'transferring'
+  const hasReceivers = visibleReceivers.length > 0
 
   return (
     <div
@@ -44,27 +45,37 @@ export default function TransferPeerFlow({
           className="shrink-0"
         />
 
-        <span className="flex shrink-0 items-center gap-1.5" aria-hidden="true">
-          <span className="transfer-peer-flow__dot size-1 rounded-full bg-accent" />
-          <span className="transfer-peer-flow__dot size-1 rounded-full bg-accent" />
-          <span className="transfer-peer-flow__dot size-1 rounded-full bg-accent" />
-        </span>
-
-        <span className="flex min-w-0 items-center pl-2">
-          {visibleReceivers.map((receiver, index) => (
-            <Avatar
-              key={receiver.id}
-              seed={receiver.avatarSeed}
-              label={receiver.displayName}
-              className={`shrink-0 ${index === 0 ? '' : '-ml-2'}`}
-            />
-          ))}
-          {overflow > 0 && (
-            <span className="-ml-2 flex size-9 shrink-0 items-center justify-center rounded-full border-2 border-[#2d2d2d] bg-white/10 text-[11px] tabular-nums text-amber-50/70">
-              +{overflow}
+        {hasReceivers && (
+          <>
+            <span className="flex w-8 shrink-0 items-center justify-center" aria-hidden="true">
+              {active ? (
+                <span className="flex items-center gap-1.5">
+                  <span className="transfer-peer-flow__dot size-1 rounded-full bg-accent" />
+                  <span className="transfer-peer-flow__dot size-1 rounded-full bg-accent" />
+                  <span className="transfer-peer-flow__dot size-1 rounded-full bg-accent" />
+                </span>
+              ) : (
+                <span className="transfer-peer-flow__line h-px w-full bg-amber-50/20" />
+              )}
             </span>
-          )}
-        </span>
+
+            <span className="flex min-w-0 items-center pl-2">
+              {visibleReceivers.map((receiver, index) => (
+                <Avatar
+                  key={receiver.id}
+                  seed={receiver.avatarSeed}
+                  label={receiver.displayName}
+                  className={`shrink-0 ${index === 0 ? '' : '-ml-2'}`}
+                />
+              ))}
+              {overflow > 0 && (
+                <span className="-ml-2 flex size-9 shrink-0 items-center justify-center rounded-full border-2 border-[#2d2d2d] bg-white/10 text-[11px] tabular-nums text-amber-50/70">
+                  +{overflow}
+                </span>
+              )}
+            </span>
+          </>
+        )}
       </div>
     </div>
   )
