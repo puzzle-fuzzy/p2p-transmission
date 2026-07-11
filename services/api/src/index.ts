@@ -1,8 +1,20 @@
-import { createApp } from "./app";
+import { startRuntime } from "./runtime";
 
-const port = Number(Bun.env.PORT ?? 3000);
-const app = createApp().listen(port);
+const runtime = startRuntime();
 
 console.log(
-  `Elysia is running at ${app.server?.hostname}:${app.server?.port}`
+  `Elysia is running at ${runtime.app.server?.hostname}:${runtime.app.server?.port}`,
 );
+
+let shuttingDown = false;
+const shutdown = () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  void runtime.stop().then(
+    () => process.exit(0),
+    () => process.exit(1),
+  );
+};
+
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);

@@ -11,11 +11,13 @@ import { createVisitorService } from "./modules/visitor/service";
 
 type HarnessOptions = {
   maxRooms?: number;
+  maxVisitors?: number;
   turnConfigured?: boolean;
 };
 
 const createTestHarness = ({
   maxRooms,
+  maxVisitors,
   turnConfigured = true,
 }: HarnessOptions = {}) => {
   let visitorIndex = 0;
@@ -38,6 +40,7 @@ const createTestHarness = ({
   };
   const visitors = createVisitorService({
     now: () => 1_000,
+    maxVisitors,
     createId: () => `vis_${String(++visitorIndex).padStart(3, "0")}`,
     createToken: () => `tok_${String(visitorIndex).padStart(3, "0")}`,
     createAvatarSeed: () => `avatar_${String(visitorIndex).padStart(3, "0")}`,
@@ -94,18 +97,42 @@ const roomRequest = (
 });
 
 describe("app routes", () => {
-  test("reports health and preserves the transitional CORS behavior", async () => {
+  test("reports health and enforces the exact configured CORS allowlist", async () => {
     const { app } = createTestHarness();
 
-    const response = await app.handle(new Request("http://api.test/health"));
+    const response = await app.handle(new Request("http://api.test/health", {
+      headers: { origin: "http://localhost:5713" },
+    }));
+    const disallowed = await app.handle(new Request("http://api.test/health", {
+      headers: { origin: "https://untrusted.example" },
+    }));
     const options = await app.handle(new Request("http://api.test/v1/visitors", {
       method: "OPTIONS",
+      headers: {
+        origin: "http://localhost:5713",
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "content-type,authorization",
+      },
     }));
 
     expect(response.status).toBe(200);
     expect(await json<{ ok: true }>(response)).toEqual({ ok: true });
-    expect(response.headers.get("access-control-allow-origin")).toBe("*");
+    expect(response.headers.get("access-control-allow-origin"))
+      .toBe("http://localhost:5713");
+    expect(response.headers.get("access-control-allow-credentials")).toBeNull();
+    expect(disallowed.headers.get("access-control-allow-origin")).toBeNull();
     expect(options.status).toBe(204);
+    expect(options.headers.get("access-control-allow-origin"))
+      .toBe("http://localhost:5713");
+    expect(options.headers.get("access-control-allow-methods"))
+      .toBe("GET, POST, OPTIONS");
+    expect(options.headers.get("access-control-allow-headers"))
+      .toBe("content-type, authorization");
+    expect([
+      response.headers.get("access-control-allow-origin"),
+      disallowed.headers.get("access-control-allow-origin"),
+      options.headers.get("access-control-allow-origin"),
+    ]).not.toContain("*");
   });
 
   test("creates visitors with public identity and token", async () => {
@@ -136,6 +163,73 @@ describe("app routes", () => {
       },
       token: "tok_001",
     });
+  });
+
+  test("sweeps, consumes exactly 30 creations per hour per IP, then creates", async () => {
+    const { app, context } = createTestHarness();
+    const calls: string[] = [];
+    const sweepForAdmission = context.maintenance.sweepForAdmission;
+    const consumeMany = context.rateLimits.consumeMany;
+    const tryCreateVisitor = context.visitors.tryCreateVisitor;
+    context.maintenance.sweepForAdmission = () => {
+      calls.push("sweep");
+      return sweepForAdmission();
+    };
+    context.rateLimits.consumeMany = checks => {
+      calls.push(`limits:${JSON.stringify(checks)}`);
+      return consumeMany(checks);
+    };
+    context.visitors.tryCreateVisitor = () => {
+      calls.push("create");
+      return tryCreateVisitor();
+    };
+
+    const response = await app.handle(new Request("http://api.test/v1/visitors", {
+      method: "POST",
+    }));
+
+    expect(response.status).toBe(200);
+    expect(calls).toEqual([
+      "sweep",
+      'limits:[{"key":"visitor:create:ip:203.0.113.10","limit":30,"windowMs":3600000}]',
+      "create",
+    ]);
+  });
+
+  test("maps visitor creation rate and state capacity failures", async () => {
+    const limitedHarness = createTestHarness();
+    for (let index = 0; index < 30; index += 1) {
+      const response = await limitedHarness.app.handle(new Request(
+        "http://api.test/v1/visitors",
+        { method: "POST" },
+      ));
+      expect(response.status).toBe(200);
+    }
+    const limited = await limitedHarness.app.handle(new Request(
+      "http://api.test/v1/visitors",
+      { method: "POST" },
+    ));
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("retry-after")).toBe("3600");
+    expect(await json<{ error: { code: string } }>(limited)).toMatchObject({
+      error: { code: "RATE_LIMITED" },
+    });
+    expect(limitedHarness.context.visitors.size()).toBe(30);
+
+    const fullHarness = createTestHarness({ maxVisitors: 1 });
+    expect((await fullHarness.app.handle(new Request(
+      "http://api.test/v1/visitors",
+      { method: "POST" },
+    ))).status).toBe(200);
+    const full = await fullHarness.app.handle(new Request(
+      "http://api.test/v1/visitors",
+      { method: "POST" },
+    ));
+    expect(full.status).toBe(503);
+    expect(await json<{ error: { code: string } }>(full)).toMatchObject({
+      error: { code: "CAPACITY_EXCEEDED" },
+    });
+    expect(fullHarness.context.visitors.size()).toBe(1);
   });
 
   test("maps missing iceMode to off and defaults join role to receiver", async () => {

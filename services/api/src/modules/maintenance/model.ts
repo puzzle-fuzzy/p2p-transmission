@@ -4,8 +4,13 @@ export type MaintenanceEvent =
   | RoomTransition
   | { type: "visitor:expired"; visitorId: string };
 
+export type MaintenanceListener = (events: readonly MaintenanceEvent[]) => void;
+
 export type MaintenanceService = {
   sweepForAdmission(): MaintenanceEvent[];
   sweepRooms(): MaintenanceEvent[];
   sweepVisitorsAndRateKeys(): MaintenanceEvent[];
+  subscribe(listener: MaintenanceListener): () => void;
+  start(): void;
+  stop(): void;
 };
