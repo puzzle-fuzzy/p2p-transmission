@@ -1,52 +1,65 @@
 # P2P Transmission Web
 
-React 前端负责临时访客会话、房间加入、WebRTC 协商和点对点文本收发。服务端只转发 offer、answer 与 ICE 信令，不会收到文本正文。
+React 前端负责临时访客、房间会话、WebRTC 协商，以及点对点文本和文件传输。
+HTTP/WebSocket 服务只处理房间与信令；文本正文和文件二进制只通过 WebRTC
+DataChannel 传输。一次文件批次最多 10 个文件、总计 100 MiB。
 
 ## 本地开发
 
-在仓库根目录安装依赖并启动 API 与 Web：
+在仓库根目录安装依赖并同时启动 API 与 Web：
 
-~~~bash
+```bash
 bun install --frozen-lockfile
 bun run dev
-~~~
+```
 
 - Web：<http://localhost:5713>
 - API：<http://localhost:3000>
 
 也可以分别运行：
 
-~~~bash
+```bash
 bun run --cwd services/api dev
 bun run --cwd apps/web dev
-~~~
+```
 
-## 环境变量
+复制 `.env.example` 为未跟踪的 `.env` 后再调整本地配置。Vite 环境变量会进入前端
+构建产物，任何情况下都不要把 `TURN_SHARED_SECRET` 放在 Web 环境中。
 
-~~~bash
-VITE_API_URL=http://localhost:3000
-VITE_STUN_URLS=stun:stun.l.google.com:19302
-~~~
+## ICE/TURN 模式
 
-VITE_STUN_URLS 接受逗号分隔的 STUN URL。当前里程碑不包含 TURN，因此不能保证所有严格 NAT 或企业网络都能直连。
+`VITE_TURN_MODE` 支持：
 
-## 文本传输验收
+- `off`：只使用 `VITE_STUN_URLS`，适合本地开发，但严格 NAT/企业网络可能无法直连。
+- `api`：推荐的生产模式。创建/加入房间时由 API 原子返回短期 TURN 凭据。
+- `static`：仅供受控开发或私有环境使用，需要同时配置 `VITE_TURN_URLS`、
+  `VITE_TURN_USERNAME` 和 `VITE_TURN_CREDENTIAL`；这些值会进入浏览器构建。
 
-1. 在两个相互隔离的浏览器会话中打开 Web。
-2. 会话 A 创建房间，会话 B 输入六位房间码加入。
-3. 等待页面显示“点对点已连接”。
-4. A 输入文本并发送；B 必须先看到不包含正文的接收请求。
-5. B 点击“拒绝”，确认正文不会显示。
-6. A 再次发送，B 点击“接收”。
-7. B 的主面板显示完全一致的文本，复制按钮可复制原文；A 收到送达提示。
+`VITE_ICE_TRANSPORT_POLICY` 默认为 `all`。设置为 `relay` 会强制只走 TURN，主要用于
+部署验收；没有可用 TURN 时连接会按预期失败。
+
+生产配置示例：
+
+```dotenv
+VITE_API_URL=https://api.example.com
+VITE_TURN_MODE=api
+VITE_STUN_URLS=stun:stun.example.com:3478
+VITE_ICE_TRANSPORT_POLICY=all
+```
+
+## TURN 中继验收
+
+公网 coturn 就绪后，用 `VITE_TURN_MODE=api` 和
+`VITE_ICE_TRANSPORT_POLICY=relay` 构建 Web，在两个隔离浏览器会话中创建/加入房间，
+确认可以传输精确文本与文件。先验证 UDP；再阻断客户端 UDP，确认
+`turns:...transport=tcp` 的 TLS/TCP 回退。最后检查 API 日志和前端产物均不包含
+`TURN_SHARED_SECRET`。本地单元测试不能替代这项公网路径验收。
 
 ## 验证
 
-~~~bash
+```bash
 bun run test
 bun run typecheck
 bun run lint
 bun run build
-~~~
-
-文件传输仍是下一阶段能力，当前界面不会模拟文件发送成功。
+```

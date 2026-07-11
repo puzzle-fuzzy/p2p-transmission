@@ -1,0 +1,30 @@
+name: p2p-transmission-turn
+
+services:
+  coturn:
+    image: coturn/coturn:4.14.0-r0
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - -c
+      - /etc/coturn/turnserver.conf
+    volumes:
+      - type: bind
+        source: ./.local/turnserver.conf
+        target: /etc/coturn/turnserver.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./.local/tls/fullchain.pem
+        target: /run/coturn/tls/fullchain.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./.local/tls/privkey.pem
+        target: /run/coturn/tls/privkey.pem
+        read_only: true
+        bind:
+          create_host_path: false
+    stop_grace_period: 10s

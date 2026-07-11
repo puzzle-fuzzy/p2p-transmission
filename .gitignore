@@ -2,3 +2,12 @@ node_modules
 dist
 .turbo
 *.tsbuildinfo
+
+# Local environment and TURN deployment secrets
+**/.env
+**/.env.*
+!**/.env.example
+deploy/coturn/.local/
+deploy/coturn/turnserver.conf
+deploy/coturn/**/*.pem
+deploy/coturn/**/*.key
