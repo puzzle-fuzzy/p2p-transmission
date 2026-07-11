@@ -16,6 +16,22 @@ type ErrorResponse = {
   error?: ApiError
 }
 
+export class ApiClientError extends Error {
+  readonly code: string
+  readonly status: number
+
+  constructor(
+    message: string,
+    code: string,
+    status: number,
+  ) {
+    super(message)
+    this.name = 'ApiClientError'
+    this.code = code
+    this.status = status
+  }
+}
+
 const resolveOptions = (options: ApiClientOptions = {}) => ({
   fetcher: options.fetch ?? fetch,
   apiBaseUrl: (options.apiBaseUrl ?? getApiBaseUrl()).replace(/\/+$/, ''),
@@ -39,7 +55,11 @@ const request = async <T>(
 
   if (!response.ok) {
     const errorBody = await readJson<ErrorResponse>(response).catch(() => undefined)
-    throw new Error(errorBody?.error?.message ?? '请求失败')
+    throw new ApiClientError(
+      errorBody?.error?.message ?? '请求失败',
+      errorBody?.error?.code ?? 'UNKNOWN_API_ERROR',
+      response.status,
+    )
   }
 
   return readJson<T>(response)

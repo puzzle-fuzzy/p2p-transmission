@@ -1,5 +1,11 @@
 import { describe, expect, test, vi } from 'vitest'
-import { createRoom, createVisitor, getRoom, joinRoom } from './api-client'
+import {
+  ApiClientError,
+  createRoom,
+  createVisitor,
+  getRoom,
+  joinRoom,
+} from './api-client'
 
 describe('api-client', () => {
   test('creates a visitor from POST /v1/visitors', async () => {
@@ -72,5 +78,27 @@ describe('api-client', () => {
       fetch: fetchMock,
       apiBaseUrl: 'http://api.test',
     })).rejects.toThrow('房间不存在或已过期')
+  })
+
+  test('preserves API error code and response status', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      error: {
+        code: 'VISITOR_NOT_FOUND',
+        message: '访客身份已失效',
+      },
+    }), { status: 401 }))
+
+    const request = createRoom('stale-token', {
+      fetch: fetchMock,
+      apiBaseUrl: 'http://api.test',
+    })
+
+    await expect(request).rejects.toBeInstanceOf(ApiClientError)
+    await expect(request).rejects.toMatchObject({
+      name: 'ApiClientError',
+      message: '访客身份已失效',
+      code: 'VISITOR_NOT_FOUND',
+      status: 401,
+    })
   })
 })

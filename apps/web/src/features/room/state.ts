@@ -12,6 +12,7 @@ export type RoomFlowState = {
   session?: VisitorSession
   room?: PublicRoom
   role?: ParticipantRole
+  readyPeerCount: number
   error: string
 }
 
@@ -21,16 +22,19 @@ export type RoomFlowAction =
   | { type: 'room:created'; room: PublicRoom }
   | { type: 'room:joined'; room: PublicRoom }
   | { type: 'realtime:connected' }
+  | { type: 'realtime:disconnected' }
+  | { type: 'peer:ready-count'; count: number }
   | { type: 'server:message'; message: ServerRealtimeMessage }
   | { type: 'error'; message: string }
 
 export const initialRoomFlowState: RoomFlowState = {
   phase: 'booting',
+  readyPeerCount: 0,
   error: '',
 }
 
-const readyPhaseFor = (room: PublicRoom): RoomPhase =>
-  room.participants.length >= 2 ? 'ready' : 'connecting'
+const readyPhaseFor = (readyPeerCount: number): RoomPhase =>
+  readyPeerCount > 0 ? 'ready' : 'connecting'
 
 const removeParticipant = (room: PublicRoom, visitorId: string): PublicRoom => ({
   ...room,
@@ -47,6 +51,9 @@ export const roomFlowReducer = (
       ...state,
       phase: 'lobby',
       session: action.session,
+      room: undefined,
+      role: undefined,
+      readyPeerCount: 0,
       error: '',
     }
   }
@@ -55,6 +62,7 @@ export const roomFlowReducer = (
     return {
       ...state,
       phase: 'joining',
+      readyPeerCount: 0,
       error: '',
     }
   }
@@ -65,6 +73,7 @@ export const roomFlowReducer = (
       phase: 'room',
       room: action.room,
       role: 'sender',
+      readyPeerCount: 0,
       error: '',
     }
   }
@@ -75,6 +84,7 @@ export const roomFlowReducer = (
       phase: 'room',
       room: action.room,
       role: 'receiver',
+      readyPeerCount: 0,
       error: '',
     }
   }
@@ -83,6 +93,26 @@ export const roomFlowReducer = (
     return {
       ...state,
       phase: 'connecting',
+      readyPeerCount: 0,
+      error: '',
+    }
+  }
+
+  if (action.type === 'realtime:disconnected') {
+    return {
+      ...state,
+      phase: state.room ? 'connecting' : state.phase,
+      readyPeerCount: 0,
+    }
+  }
+
+  if (action.type === 'peer:ready-count') {
+    const readyPeerCount = Math.max(0, Math.trunc(action.count))
+
+    return {
+      ...state,
+      phase: readyPhaseFor(readyPeerCount),
+      readyPeerCount,
       error: '',
     }
   }
@@ -100,7 +130,6 @@ export const roomFlowReducer = (
   if (message.type === 'room:participants') {
     return {
       ...state,
-      phase: readyPhaseFor(message.room),
       room: message.room,
       error: '',
     }
@@ -111,7 +140,6 @@ export const roomFlowReducer = (
 
     return {
       ...state,
-      phase: readyPhaseFor(room),
       room,
       error: '',
     }

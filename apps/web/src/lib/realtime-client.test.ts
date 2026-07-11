@@ -1,6 +1,10 @@
-import { describe, expect, test } from 'vitest'
-import { createRealtimeClient, type WebSocketLike } from './realtime-client'
-import type { ServerRealtimeMessage } from '../shared/contracts'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import {
+  createRealtimeClient,
+  type RealtimeStatus,
+  type WebSocketLike,
+} from './realtime-client'
+import type { ClientRealtimeMessage, ServerRealtimeMessage } from '../shared/contracts'
 
 class FakeWebSocket implements WebSocketLike {
   static instances: FakeWebSocket[] = []
@@ -11,6 +15,7 @@ class FakeWebSocket implements WebSocketLike {
   onclose: ((event: CloseEvent) => void) | null = null
   sent: string[] = []
   url: string
+  closeCalls = 0
 
   constructor(url: string) {
     this.url = url
@@ -22,7 +27,8 @@ class FakeWebSocket implements WebSocketLike {
   }
 
   close() {
-    this.onclose?.(new CloseEvent('close'))
+    this.closeCalls += 1
+    this.emitClose()
   }
 
   open() {
@@ -37,9 +43,18 @@ class FakeWebSocket implements WebSocketLike {
   emitRaw(data: string) {
     this.onmessage?.({ data } as MessageEvent<string>)
   }
+
+  emitClose() {
+    this.readyState = 3
+    this.onclose?.({} as CloseEvent)
+  }
 }
 
 describe('realtime-client', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   test('connects with realtime token URL', () => {
     FakeWebSocket.instances = []
     const client = createRealtimeClient({
@@ -162,5 +177,127 @@ describe('realtime-client', () => {
       code: 'CLIENT_PARSE_ERROR',
       message: '无法解析实时消息',
     }])
+  })
+
+  test('reports the current status and socket lifecycle', () => {
+    FakeWebSocket.instances = []
+    const statuses: RealtimeStatus[] = []
+    const client = createRealtimeClient({
+      token: 'tok_1',
+      WebSocketCtor: FakeWebSocket,
+      realtimeUrl: token => `ws://api.test/v1/realtime?token=${token}`,
+    })
+
+    client.subscribeStatus(status => statuses.push(status))
+    client.connect()
+    FakeWebSocket.instances[0]?.open()
+
+    expect(statuses).toEqual(['idle', 'connecting', 'open'])
+  })
+
+  test('reconnects an unexpectedly closed socket with bounded exponential delays', () => {
+    vi.useFakeTimers()
+    FakeWebSocket.instances = []
+    const statuses: RealtimeStatus[] = []
+    const client = createRealtimeClient({
+      token: 'tok_1',
+      WebSocketCtor: FakeWebSocket,
+      realtimeUrl: token => `ws://api.test/v1/realtime?token=${token}`,
+    })
+
+    client.subscribeStatus(status => statuses.push(status))
+    client.connect()
+    FakeWebSocket.instances[0]?.open()
+    FakeWebSocket.instances[0]?.emitClose()
+
+    expect(statuses.at(-1)).toBe('reconnecting')
+    vi.advanceTimersByTime(499)
+    expect(FakeWebSocket.instances).toHaveLength(1)
+    vi.advanceTimersByTime(1)
+    expect(FakeWebSocket.instances).toHaveLength(2)
+
+    FakeWebSocket.instances[1]?.emitClose()
+    vi.advanceTimersByTime(999)
+    expect(FakeWebSocket.instances).toHaveLength(2)
+    vi.advanceTimersByTime(1)
+    expect(FakeWebSocket.instances).toHaveLength(3)
+
+    FakeWebSocket.instances[2]?.emitClose()
+    vi.advanceTimersByTime(2_000)
+    expect(FakeWebSocket.instances).toHaveLength(4)
+
+    FakeWebSocket.instances[3]?.emitClose()
+    vi.runAllTimers()
+
+    expect(FakeWebSocket.instances).toHaveLength(4)
+    expect(statuses.at(-1)).toBe('closed')
+  })
+
+  test('explicit close clears handlers and never reconnects', () => {
+    vi.useFakeTimers()
+    FakeWebSocket.instances = []
+    const statuses: RealtimeStatus[] = []
+    const messages: ServerRealtimeMessage[] = []
+    const client = createRealtimeClient({
+      token: 'tok_1',
+      WebSocketCtor: FakeWebSocket,
+      realtimeUrl: token => `ws://api.test/v1/realtime?token=${token}`,
+    })
+
+    client.subscribe(message => messages.push(message))
+    client.subscribeStatus(status => statuses.push(status))
+    client.connect()
+    const socket = FakeWebSocket.instances[0]
+    socket?.open()
+
+    client.close()
+    socket?.emitMessage({ type: 'error', code: 'LATE', message: 'late' })
+    vi.runAllTimers()
+
+    expect(socket?.closeCalls).toBe(1)
+    expect(FakeWebSocket.instances).toHaveLength(1)
+    expect(statuses.at(-1)).toBe('closed')
+    expect(messages).toEqual([])
+  })
+
+  test('emits open before flushing queued signals so the room rejoins first', () => {
+    vi.useFakeTimers()
+    FakeWebSocket.instances = []
+    const client = createRealtimeClient({
+      token: 'tok_1',
+      WebSocketCtor: FakeWebSocket,
+      realtimeUrl: token => `ws://api.test/v1/realtime?token=${token}`,
+    })
+    let openCount = 0
+
+    client.subscribeStatus(status => {
+      if (status !== 'open') return
+
+      openCount += 1
+      if (openCount === 2) {
+        client.send({ type: 'room:join', roomCode: '123456', role: 'sender' })
+      }
+    })
+    client.connect()
+    FakeWebSocket.instances[0]?.open()
+    FakeWebSocket.instances[0]?.emitClose()
+
+    const queuedSignal = {
+      type: 'signal:ice',
+      roomCode: '123456',
+      to: 'vis_2',
+      peerSessionId: 'peer_1',
+      candidate: null,
+    } as ClientRealtimeMessage
+    client.send(queuedSignal)
+
+    vi.advanceTimersByTime(500)
+    const reconnectedSocket = FakeWebSocket.instances[1]
+    reconnectedSocket?.open()
+
+    expect(reconnectedSocket?.sent).toEqual([
+      JSON.stringify({ type: 'room:join', roomCode: '123456', role: 'sender' }),
+      JSON.stringify(queuedSignal),
+    ])
   })
 })

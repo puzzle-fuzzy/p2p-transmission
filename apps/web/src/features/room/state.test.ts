@@ -41,13 +41,21 @@ const receiver = {
 
 describe('room flow reducer', () => {
   test('visitor ready moves booting to lobby', () => {
-    const state = roomFlowReducer(initialRoomFlowState, {
+    const state = roomFlowReducer({
+      ...initialRoomFlowState,
+      room,
+      role: 'sender',
+      readyPeerCount: 1,
+    }, {
       type: 'visitor:ready',
       session: visitorSession,
     })
 
     expect(state.phase).toBe('lobby')
     expect(state.session).toEqual(visitorSession)
+    expect(state.room).toBeUndefined()
+    expect(state.role).toBeUndefined()
+    expect(state.readyPeerCount).toBe(0)
   })
 
   test('room created stores sender room state', () => {
@@ -83,7 +91,7 @@ describe('room flow reducer', () => {
     expect(state.phase).toBe('connecting')
   })
 
-  test('participants message marks ready when at least two participants exist', () => {
+  test('participants update membership without implying DataChannel readiness', () => {
     const updatedRoom: PublicRoom = {
       ...room,
       receivers: ['vis_2'],
@@ -108,11 +116,47 @@ describe('room flow reducer', () => {
       message: { type: 'room:participants', room: updatedRoom },
     })
 
-    expect(state.phase).toBe('ready')
+    expect(state.phase).toBe('connecting')
     expect(state.room?.participants).toHaveLength(2)
+    expect(state.readyPeerCount).toBe(0)
   })
 
-  test('participant left removes participant and returns to connecting when alone', () => {
+  test('peer readiness controls the ready phase independently of membership', () => {
+    const readyState = roomFlowReducer({
+      ...initialRoomFlowState,
+      phase: 'connecting',
+      room,
+      role: 'sender',
+      session: visitorSession,
+    }, { type: 'peer:ready-count', count: 1 })
+
+    expect(readyState.phase).toBe('ready')
+    expect(readyState.readyPeerCount).toBe(1)
+
+    const connectingState = roomFlowReducer(readyState, {
+      type: 'peer:ready-count',
+      count: 0,
+    })
+
+    expect(connectingState.phase).toBe('connecting')
+    expect(connectingState.readyPeerCount).toBe(0)
+  })
+
+  test('realtime disconnect clears peer readiness', () => {
+    const state = roomFlowReducer({
+      ...initialRoomFlowState,
+      phase: 'ready',
+      room,
+      role: 'sender',
+      session: visitorSession,
+      readyPeerCount: 1,
+    }, { type: 'realtime:disconnected' })
+
+    expect(state.phase).toBe('connecting')
+    expect(state.readyPeerCount).toBe(0)
+  })
+
+  test('participant left updates membership without guessing peer readiness', () => {
     const stateWithParticipants: RoomFlowState = {
       ...initialRoomFlowState,
       phase: 'ready',
@@ -132,6 +176,7 @@ describe('room flow reducer', () => {
         ],
       },
       error: '',
+      readyPeerCount: 1,
     }
 
     const state = roomFlowReducer(stateWithParticipants, {
@@ -139,7 +184,8 @@ describe('room flow reducer', () => {
       message: { type: 'participant:left', roomCode: '123456', visitorId: 'vis_2' },
     })
 
-    expect(state.phase).toBe('connecting')
+    expect(state.phase).toBe('ready')
+    expect(state.readyPeerCount).toBe(1)
     expect(state.room?.participants).toHaveLength(1)
     expect(state.room?.receivers).toEqual([])
   })
