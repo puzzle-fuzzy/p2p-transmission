@@ -1,0 +1,270 @@
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import type { PublicVisitor } from '../shared/contracts'
+import Avatar from './Avatar'
+
+export type IncomingFileRequestItem = {
+  fileId: string
+  name: string
+  byteLength: number
+}
+
+export type DownloadableReceivedFile = IncomingFileRequestItem & {
+  url: string
+}
+
+export type IncomingFileRequestDialogState =
+  | { status: 'pending' }
+  | { status: 'receiving'; progress: number }
+  | { status: 'received'; files: readonly DownloadableReceivedFile[] }
+  | { status: 'error'; message?: string }
+
+export type IncomingFileRequestDialogProps = {
+  sender: PublicVisitor
+  files: readonly IncomingFileRequestItem[]
+  state: IncomingFileRequestDialogState
+  onAccept(): void
+  onReject(): void
+  onClose(): void
+}
+
+const formatByteLength = (byteLength: number) => {
+  if (byteLength < 1024) return `${byteLength} B`
+  if (byteLength < 1024 * 1024) return `${(byteLength / 1024).toFixed(1)} KB`
+
+  return `${(byteLength / (1024 * 1024)).toFixed(1)} MB`
+}
+
+const clampProgress = (progress: number) => {
+  if (!Number.isFinite(progress)) return 0
+  return Math.min(100, Math.max(0, progress))
+}
+
+export default function IncomingFileRequestDialog({
+  sender,
+  files,
+  state,
+  onAccept,
+  onReject,
+  onClose,
+}: IncomingFileRequestDialogProps) {
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const rejectButtonRef = useRef<HTMLButtonElement>(null)
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
+  const decisionMadeRef = useRef(false)
+  const closingRef = useRef(false)
+  const [decisionMade, setDecisionMade] = useState(false)
+  const titleId = useId()
+  const descriptionId = useId()
+  const requestKey = useMemo(
+    () => `${sender.id}\u0000${files.map(file => file.fileId).join('\u0000')}`,
+    [files, sender.id],
+  )
+  const totalBytes = files.reduce((total, file) => total + file.byteLength, 0)
+  const progress = state.status === 'receiving'
+    ? clampProgress(state.progress)
+    : state.status === 'received'
+      ? 100
+      : 0
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (!dialog) return undefined
+
+    decisionMadeRef.current = false
+    closingRef.current = false
+    setDecisionMade(false)
+    if (!dialog.open) dialog.showModal()
+
+    return () => {
+      if (dialog.open) dialog.close()
+    }
+  }, [requestKey])
+
+  useEffect(() => {
+    if (state.status === 'pending') {
+      rejectButtonRef.current?.focus()
+      return
+    }
+
+    if (state.status === 'received' || state.status === 'error') {
+      closeButtonRef.current?.focus()
+      return
+    }
+
+    dialogRef.current?.focus()
+  }, [state.status])
+
+  const rejectOnce = () => {
+    if (state.status !== 'pending' || decisionMadeRef.current) return
+
+    decisionMadeRef.current = true
+    setDecisionMade(true)
+    dialogRef.current?.close()
+    onReject()
+  }
+
+  const acceptOnce = () => {
+    if (state.status !== 'pending' || decisionMadeRef.current) return
+
+    decisionMadeRef.current = true
+    setDecisionMade(true)
+    onAccept()
+  }
+
+  const closeOnce = () => {
+    if (closingRef.current) return
+
+    closingRef.current = true
+    dialogRef.current?.close()
+    onClose()
+  }
+
+  const pendingActionsDisabled = state.status !== 'pending' || decisionMade
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="incoming-transfer-dialog m-auto max-h-[calc(100svh-2rem)] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-xl border border-amber-50/15 bg-[#373737] p-0 text-amber-50/80 backdrop:bg-black/60"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+      tabIndex={-1}
+      onCancel={event => {
+        event.preventDefault()
+        if (state.status === 'pending') rejectOnce()
+        if (state.status === 'received' || state.status === 'error') closeOnce()
+      }}
+    >
+      <div className="p-5 sm:p-6">
+        <div className="flex min-w-0 items-center gap-3">
+          <Avatar
+            seed={sender.avatarSeed}
+            label={sender.displayName}
+            className="shrink-0"
+          />
+          <div className="min-w-0 flex-1">
+            <h2 id={titleId} className="text-sm font-normal text-amber-50/80">
+              收到文件
+            </h2>
+            <p id={descriptionId} className="mt-1 truncate text-xs text-amber-50/50">
+              来自 {sender.displayName} · {files.length} 个文件 · {formatByteLength(totalBytes)}
+            </p>
+          </div>
+        </div>
+
+        {state.status !== 'received' && (
+          <ul className="native-scrollbar mt-5 max-h-52 space-y-2 overflow-y-auto" aria-label="待接收文件">
+            {files.map(file => (
+              <li
+                key={file.fileId}
+                className="flex min-w-0 items-center gap-3 rounded-lg bg-white/5 px-3 py-2.5"
+              >
+                <span
+                  className="material-symbols-outlined shrink-0 text-amber-50/40"
+                  style={{ fontSize: '18px' }}
+                  aria-hidden="true"
+                >
+                  description
+                </span>
+                <span className="min-w-0 flex-1 truncate text-sm text-amber-50/70">
+                  {file.name}
+                </span>
+                <span className="shrink-0 text-xs tabular-nums text-amber-50/40">
+                  {formatByteLength(file.byteLength)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {state.status === 'receiving' && (
+          <div className="mt-5" aria-label="接收进度">
+            <div className="flex items-center justify-between text-xs text-amber-50/50">
+              <span>正在接收</span>
+              <span className="tabular-nums">{Math.round(progress)}%</span>
+            </div>
+            <div
+              className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(progress)}
+            >
+              <div
+                className="transfer-dialog-progress h-full origin-left rounded-full bg-accent"
+                style={{ transform: `scaleX(${progress / 100})` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {state.status === 'received' && (
+          <div className="mt-5">
+            <p className="text-xs text-amber-50/50">文件已接收，可分别保存到本机。</p>
+            <ul className="mt-3 space-y-2" aria-label="已接收文件">
+              {state.files.map(file => (
+                <li
+                  key={file.fileId}
+                  className="flex min-w-0 items-center gap-3 rounded-lg bg-white/5 px-3 py-2"
+                >
+                  <span className="min-w-0 flex-1 truncate text-sm text-amber-50/70">
+                    {file.name}
+                  </span>
+                  <a
+                    className="flex min-h-11 shrink-0 items-center rounded-lg border border-amber-50/15 px-3 text-xs text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
+                    href={file.url}
+                    download={file.name}
+                  >
+                    保存
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {state.status === 'error' && (
+          <div className="mt-5 rounded-lg border border-amber-50/15 bg-white/5 px-4 py-3">
+            <p className="text-sm text-amber-50/70">文件接收未完成</p>
+            <p className="mt-1 text-xs leading-5 text-amber-50/50">
+              {state.message ?? '连接已中断，请让发送者重新发送。'}
+            </p>
+          </div>
+        )}
+
+        {(state.status === 'pending' || state.status === 'receiving') && (
+          <div className="mt-5 grid grid-cols-2 gap-2">
+            <button
+              ref={rejectButtonRef}
+              type="button"
+              className="min-h-11 rounded-xl border border-amber-50/15 px-4 text-sm tracking-[0.05em] text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none disabled:cursor-not-allowed disabled:text-amber-50/20"
+              disabled={pendingActionsDisabled}
+              onClick={rejectOnce}
+            >
+              拒绝
+            </button>
+            <button
+              type="button"
+              className="min-h-11 rounded-xl border border-accent bg-accent px-4 text-sm tracking-[0.05em] text-white/90 transition-[filter,border-color] hover:brightness-110 active:brightness-90 focus-visible:border-amber-50/80 focus-visible:outline-none disabled:cursor-not-allowed disabled:brightness-75"
+              disabled={pendingActionsDisabled}
+              onClick={acceptOnce}
+            >
+              接收
+            </button>
+          </div>
+        )}
+
+        {(state.status === 'received' || state.status === 'error') && (
+          <button
+            ref={closeButtonRef}
+            type="button"
+            className="mt-5 min-h-11 w-full rounded-xl border border-accent bg-accent px-4 text-sm tracking-[0.05em] text-white/90 transition-[filter,border-color] hover:brightness-110 active:brightness-90 focus-visible:border-amber-50/80 focus-visible:outline-none"
+            onClick={closeOnce}
+          >
+            关闭
+          </button>
+        )}
+      </div>
+    </dialog>
+  )
+}
