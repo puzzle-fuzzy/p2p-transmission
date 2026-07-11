@@ -5,6 +5,7 @@ import type { ServerRealtimeMessage } from '../shared/contracts'
 class FakeWebSocket implements WebSocketLike {
   static instances: FakeWebSocket[] = []
 
+  readyState = 0
   onmessage: ((event: MessageEvent<string>) => void) | null = null
   onopen: ((event: Event) => void) | null = null
   onclose: ((event: CloseEvent) => void) | null = null
@@ -22,6 +23,11 @@ class FakeWebSocket implements WebSocketLike {
 
   close() {
     this.onclose?.(new CloseEvent('close'))
+  }
+
+  open() {
+    this.readyState = 1
+    this.onopen?.(new Event('open'))
   }
 
   emitMessage(message: unknown) {
@@ -56,7 +62,27 @@ describe('realtime-client', () => {
     })
 
     client.connect()
+    FakeWebSocket.instances[0]?.open()
     client.send({ type: 'room:join', roomCode: '123456', role: 'sender' })
+
+    expect(FakeWebSocket.instances[0]?.sent).toEqual([
+      JSON.stringify({ type: 'room:join', roomCode: '123456', role: 'sender' }),
+    ])
+  })
+
+  test('queues messages until socket opens', () => {
+    FakeWebSocket.instances = []
+    const client = createRealtimeClient({
+      token: 'tok_1',
+      WebSocketCtor: FakeWebSocket,
+      realtimeUrl: token => `ws://api.test/v1/realtime?token=${token}`,
+    })
+
+    client.connect()
+    client.send({ type: 'room:join', roomCode: '123456', role: 'sender' })
+    expect(FakeWebSocket.instances[0]?.sent).toEqual([])
+
+    FakeWebSocket.instances[0]?.open()
 
     expect(FakeWebSocket.instances[0]?.sent).toEqual([
       JSON.stringify({ type: 'room:join', roomCode: '123456', role: 'sender' }),

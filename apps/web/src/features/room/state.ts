@@ -17,6 +17,7 @@ export type RoomFlowState = {
 
 export type RoomFlowAction =
   | { type: 'visitor:ready'; session: VisitorSession }
+  | { type: 'room:joining' }
   | { type: 'room:created'; room: PublicRoom }
   | { type: 'room:joined'; room: PublicRoom }
   | { type: 'realtime:connected' }
@@ -46,6 +47,14 @@ export const roomFlowReducer = (
       ...state,
       phase: 'lobby',
       session: action.session,
+      error: '',
+    }
+  }
+
+  if (action.type === 'room:joining') {
+    return {
+      ...state,
+      phase: 'joining',
       error: '',
     }
   }

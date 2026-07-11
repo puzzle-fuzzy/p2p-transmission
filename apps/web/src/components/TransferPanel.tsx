@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { OverlayScrollbarsComponent } from 'overlayscrollbars-react'
 import Avatar from './Avatar'
+import type { PublicRoom, PublicVisitor } from '../shared/contracts'
 
 type Tab = 'text' | 'file'
 
@@ -8,7 +9,17 @@ const MAX_CHARS = 500
 
 type FileState = 'pending' | 'transferring' | 'done' | 'error'
 
-export default function TransferPanel() {
+type TransferPanelProps = {
+  visitor: PublicVisitor
+  room: PublicRoom
+  realtimeReady: boolean
+}
+
+export default function TransferPanel({
+  visitor,
+  room,
+  realtimeReady,
+}: TransferPanelProps) {
   const [tab, setTab] = useState<Tab>('text')
   const [text, setText] = useState('')
   const [files, setFiles] = useState<File[]>([])
@@ -107,7 +118,8 @@ export default function TransferPanel() {
   }
 
   const isTransferDisabled =
-    (tab === 'text' && !text.trim()) || (tab === 'file' && files.length === 0)
+    !realtimeReady || (tab === 'text' && !text.trim()) || (tab === 'file' && files.length === 0)
+  const participantCount = room.participants.length
 
   return (
     <div className="w-xl flex flex-col gap-6">
@@ -142,8 +154,14 @@ export default function TransferPanel() {
           </button>
         </div>
 
-        <div className="ml-auto p-2 text-amber-50/20 hover:text-amber-50/40 transition-colors cursor-pointer">
-          <Avatar />
+        <div className="ml-auto flex items-center gap-3">
+          <div className="text-right">
+            <div className="text-amber-50/40 text-xs tabular-nums">房间 {room.code}</div>
+            <div className="text-amber-50/20 text-xs">
+              {realtimeReady ? `${participantCount} 人已连接` : '等待接收者…'}
+            </div>
+          </div>
+          <Avatar seed={visitor.avatarSeed} label={visitor.displayName} />
         </div>
         {/* <button
           className="ml-auto p-2 text-amber-50/20 hover:text-amber-50/40 transition-colors cursor-pointer"
@@ -294,6 +312,8 @@ export default function TransferPanel() {
             <span className="material-symbols-outlined leading-none animate-spin" style={{ fontSize: '16px' }}>progress_activity</span>
             传输中…
           </>
+        ) : !realtimeReady ? (
+          '等待连接'
         ) : tab === 'file' && files.length > 0 ? (
           `传输 ${files.length} 个文件`
         ) : (

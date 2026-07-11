@@ -1,16 +1,38 @@
-import { useRef } from 'react'
+import { useMemo, useRef, useState } from 'react'
 
-export default function RoomJoin() {
+type RoomJoinProps = {
+  busy?: boolean
+  error?: string
+  onCreateRoom(): void
+  onJoinRoom(code: string): void
+}
+
+export default function RoomJoin({
+  busy = false,
+  error = '',
+  onCreateRoom,
+  onJoinRoom,
+}: RoomJoinProps) {
+  const [digits, setDigits] = useState(Array.from({ length: 6 }, () => ''))
   const inputRefs = useRef<(HTMLInputElement | null)[]>([])
+  const code = useMemo(() => digits.join(''), [digits])
 
   const handleInput = (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.value && index < 5) {
+    const value = e.target.value.replace(/\D/g, '').slice(-1)
+
+    setDigits(prev => {
+      const next = [...prev]
+      next[index] = value
+      return next
+    })
+
+    if (value && index < 5) {
       inputRefs.current[index + 1]?.focus()
     }
   }
 
   const handleKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Backspace' && !e.currentTarget.value && index > 0) {
+    if (e.key === 'Backspace' && !digits[index] && index > 0) {
       inputRefs.current[index - 1]?.focus()
     }
   }
@@ -19,11 +41,12 @@ export default function RoomJoin() {
     e.preventDefault()
     const text = e.clipboardData.getData('text')
     const chars = text.replace(/\D/g, '').split('').slice(0, 6)
-    chars.forEach((char, i) => {
-      const input = inputRefs.current[i]
-      if (input) {
-        input.value = char
-      }
+    setDigits(prev => {
+      const next = [...prev]
+      chars.forEach((char, i) => {
+        next[i] = char
+      })
+      return next
     })
     const nextIndex = Math.min(chars.length, 5)
     inputRefs.current[nextIndex]?.focus()
@@ -40,15 +63,29 @@ export default function RoomJoin() {
             type="text"
             maxLength={1}
             inputMode="numeric"
+            value={digits[i]}
             className="w-12 h-14 bg-transparent border border-amber-50/15 rounded-lg text-center text-amber-50 text-xl font-mono outline-none focus:border-accent transition-colors"
             onChange={e => handleInput(i, e)}
             onKeyDown={e => handleKeyDown(i, e)}
           />
         ))}
       </div>
+      {error && (
+        <div className="w-full mb-4 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs text-center">
+          {error}
+        </div>
+      )}
       {/* 加入房间 */}
-      <button className="w-full cursor-pointer py-3 px-16 rounded-xl bg-accent text-white/90 text-sm hover:brightness-110 active:brightness-90 transition-all">
-        加入房间
+      <button
+        className={`w-full py-3 px-16 rounded-xl text-sm transition-all ${
+          busy || code.length !== 6
+            ? 'bg-white/5 text-amber-50/20 cursor-not-allowed'
+            : 'bg-accent text-white/90 hover:brightness-110 active:brightness-90 cursor-pointer'
+        }`}
+        disabled={busy || code.length !== 6}
+        onClick={() => onJoinRoom(code)}
+      >
+        {busy ? '连接中…' : '加入房间'}
       </button>
       {/* 分割线 */}
       <div className="w-full flex items-center gap-3 my-5">
@@ -57,7 +94,15 @@ export default function RoomJoin() {
         <div className="flex-1 h-px bg-amber-50/10" />
       </div>
       {/* 创建房间 */}
-      <button className="w-full cursor-pointer py-3 px-16 rounded-xl border border-amber-50/15 text-amber-50/50 text-sm hover:bg-amber-50/5 hover:text-amber-50/70 active:bg-amber-50/10 transition-all">
+      <button
+        className={`w-full py-3 px-16 rounded-xl border border-amber-50/15 text-sm transition-all ${
+          busy
+            ? 'text-amber-50/20 cursor-not-allowed'
+            : 'text-amber-50/50 hover:bg-amber-50/5 hover:text-amber-50/70 active:bg-amber-50/10 cursor-pointer'
+        }`}
+        disabled={busy}
+        onClick={onCreateRoom}
+      >
         创建房间
       </button>
     </div>

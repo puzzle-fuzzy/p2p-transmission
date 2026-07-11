@@ -1,51 +1,143 @@
+import { useCallback, useEffect, useReducer, useRef } from 'react'
+import Loading from './components/Loading'
+import RoomJoin from './components/RoomJoin'
 import TransferPanel from './components/TransferPanel'
+import {
+  initialRoomFlowState,
+  roomFlowReducer,
+} from './features/room/state'
+import { createRoom, createVisitor, joinRoom } from './lib/api-client'
+import { createRealtimeClient, type RealtimeClient } from './lib/realtime-client'
+import {
+  loadVisitorSession,
+  saveVisitorSession,
+} from './lib/visitor-session'
+import type { ParticipantRole, PublicRoom, VisitorSession } from './shared/contracts'
 
 function App() {
+  const [state, dispatch] = useReducer(roomFlowReducer, initialRoomFlowState)
+  const realtimeRef = useRef<RealtimeClient | undefined>(undefined)
+  const bootedRef = useRef(false)
+
+  useEffect(() => {
+    if (bootedRef.current) return
+    bootedRef.current = true
+
+    const boot = async () => {
+      try {
+        const existingSession = loadVisitorSession()
+        if (existingSession) {
+          dispatch({ type: 'visitor:ready', session: existingSession })
+          return
+        }
+
+        const session = await createVisitor()
+        saveVisitorSession(session)
+        dispatch({ type: 'visitor:ready', session })
+      } catch {
+        dispatch({ type: 'error', message: '无法连接服务' })
+      }
+    }
+
+    void boot()
+
+    return () => {
+      realtimeRef.current?.close()
+    }
+  }, [])
+
+  const connectRealtime = useCallback((
+    session: VisitorSession,
+    room: PublicRoom,
+    role: ParticipantRole,
+  ) => {
+    realtimeRef.current?.close()
+
+    const client = createRealtimeClient({ token: session.token })
+    client.subscribe(message => {
+      if (message.type === 'visitor:ready') return
+      dispatch({ type: 'server:message', message })
+    })
+    client.connect()
+    client.send({ type: 'room:join', roomCode: room.code, role })
+    realtimeRef.current = client
+    dispatch({ type: 'realtime:connected' })
+  }, [])
+
+  const handleCreateRoom = useCallback(async () => {
+    if (!state.session) return
+
+    dispatch({ type: 'room:joining' })
+
+    try {
+      const room = await createRoom(state.session.token)
+      dispatch({ type: 'room:created', room })
+      connectRealtime(state.session, room, 'sender')
+    } catch (error) {
+      dispatch({
+        type: 'error',
+        message: error instanceof Error ? error.message : '创建房间失败',
+      })
+    }
+  }, [connectRealtime, state.session])
+
+  const handleJoinRoom = useCallback(async (code: string) => {
+    if (!state.session) return
+
+    dispatch({ type: 'room:joining' })
+
+    try {
+      const room = await joinRoom(code, state.session.token, 'receiver')
+      dispatch({ type: 'room:joined', room })
+      connectRealtime(state.session, room, 'receiver')
+    } catch (error) {
+      dispatch({
+        type: 'error',
+        message: error instanceof Error ? error.message : '加入房间失败',
+      })
+    }
+  }, [connectRealtime, state.session])
+
+  const roomView = state.session && state.room && state.phase !== 'lobby'
+    ? { session: state.session, room: state.room }
+    : undefined
+
   return (
     <div className="h-svh bg-[#2d2d2d] flex justify-center items-center">
-      <div className="flex gap-8">
-        <TransferPanel />
-        {/* <div className="w-px bg-amber-50/10 transition-opacity duration-250 ease-out" style={{ opacity: logVisible ? 1 : 0 }} />
-        <div
-          className="overflow-hidden transition-[max-width,min-width] duration-250 ease-out"
-          style={{
-            maxWidth: logVisible ? 320 : 0,
-            minWidth: logVisible ? 320 : 0,
-          }}
-        >
-          <div
-            className="flex flex-col gap-3 pt-1"
-            style={{
-              width: 320,
-              opacity: logVisible ? 1 : 0,
-              transform: logVisible ? 'translateX(0)' : 'translateX(-24px)',
-              transition: 'opacity 0.25s ease-out, transform 0.25s ease-out',
-              pointerEvents: logVisible ? 'auto' : 'none',
-            }}
-          >
-            <span className="text-amber-50/30 text-xs whitespace-nowrap">传输日志</span>
-            <div className="flex flex-col gap-2.5">
-              {logs.map((log, i) => (
-                <div key={i} className="flex gap-2 text-xs items-end overflow-hidden">
-                  <span className="text-amber-50/15 tabular-nums shrink-0">{log.time}</span>
-                  <span className={log.type === 'error' ? 'text-red-400' : 'text-amber-50/50'}>{log.text}</span>
-                  {log.type === 'error' && (
-                    <div className='w-4 h-4 flex justify-center items-center'>
-                      <span className="material-symbols-outlined leading-none text-red-400/60" style={{ fontSize: '12px' }}>error</span>
-                    </div>
-                  )}
-                  {log.text.endsWith('…') && !log.type && (
-                    <div className='w-4 h-4 flex justify-center items-center'>
-                      <span className="material-symbols-outlined leading-none text-amber-50/50 animate-spin" style={{ fontSize: '12px' }}>progress_activity</span>
-                    </div>
-                  )}
-                </div>
-              ))}
+      {state.phase === 'booting' && <Loading />}
+
+      {!roomView && state.phase !== 'booting' && (
+        <RoomJoin
+          busy={state.phase === 'joining'}
+          error={state.error}
+          onCreateRoom={handleCreateRoom}
+          onJoinRoom={handleJoinRoom}
+        />
+      )}
+
+      {roomView && (
+        <div className="flex flex-col gap-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-amber-50/30 text-xs">房间码</div>
+              <div className="text-amber-50/80 text-xl font-mono tracking-[0.2em] tabular-nums">
+                {roomView.room.code}
+              </div>
+            </div>
+            <div className="text-right text-xs">
+              <div className="text-amber-50/40">{state.role === 'sender' ? '发送者' : '接收者'}</div>
+              <div className="text-amber-50/20">
+                {state.phase === 'ready' ? '已连接' : '等待连接'}
+              </div>
             </div>
           </div>
-      </div> */}
-
-      </div>
+          <TransferPanel
+            visitor={roomView.session.visitor}
+            room={roomView.room}
+            realtimeReady={state.phase === 'ready'}
+          />
+        </div>
+      )}
     </div>
   )
 }

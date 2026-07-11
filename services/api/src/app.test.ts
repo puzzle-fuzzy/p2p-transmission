@@ -34,6 +34,19 @@ describe("app routes", () => {
     expect(body).toEqual({ ok: true });
   });
 
+  test("adds CORS headers for browser clients", async () => {
+    const app = createTestApp();
+
+    const response = await app.handle(new Request("http://api.test/health"));
+    const options = await app.handle(new Request("http://api.test/v1/visitors", {
+      method: "OPTIONS",
+    }));
+
+    expect(response.headers.get("access-control-allow-origin")).toBe("*");
+    expect(options.status).toBe(204);
+    expect(options.headers.get("access-control-allow-methods")).toContain("POST");
+  });
+
   test("creates visitors with public identity and token", async () => {
     const app = createTestApp();
 

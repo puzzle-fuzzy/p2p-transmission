@@ -2,6 +2,7 @@ import { getRealtimeUrl } from './config'
 import type { ClientRealtimeMessage, ServerRealtimeMessage } from '../shared/contracts'
 
 export type WebSocketLike = {
+  readyState: number
   onmessage: ((event: MessageEvent<string>) => void) | null
   onopen: ((event: Event) => void) | null
   onclose: ((event: CloseEvent) => void) | null
@@ -36,6 +37,7 @@ export const createRealtimeClient = ({
   realtimeUrl = getRealtimeUrl,
 }: RealtimeClientOptions): RealtimeClient => {
   const listeners = new Set<(message: ServerRealtimeMessage) => void>()
+  const pendingMessages: ClientRealtimeMessage[] = []
   let socket: WebSocketLike | undefined
 
   const emit = (message: ServerRealtimeMessage) => {
@@ -47,6 +49,11 @@ export const createRealtimeClient = ({
   return {
     connect() {
       socket = new WebSocketCtor(realtimeUrl(token))
+      socket.onopen = () => {
+        for (const message of pendingMessages.splice(0)) {
+          socket?.send(JSON.stringify(message))
+        }
+      }
       socket.onmessage = event => {
         try {
           emit(JSON.parse(event.data) as ServerRealtimeMessage)
@@ -56,7 +63,12 @@ export const createRealtimeClient = ({
       }
     },
     send(message) {
-      socket?.send(JSON.stringify(message))
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify(message))
+        return
+      }
+
+      pendingMessages.push(message)
     },
     close() {
       socket?.close()
