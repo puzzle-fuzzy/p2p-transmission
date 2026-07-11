@@ -233,12 +233,20 @@ describe('TransferPanel', () => {
     const { rerender } = render(<TransferPanel {...initialProps} />)
 
     await user.click(screen.getByRole('tab', { name: '传输文件' }))
+    const selectedRow = screen.getByTestId('file-transfer-row-file-progress')
+    const selectedClassName = selectedRow.className
+    expect(screen.getByRole('button', { name: '移除 progress.bin' })).not.toBeNull()
+
     rerender(
       <TransferPanel
         {...initialProps}
         activity={createActiveFileTransfer(selection.fileId)}
       />,
     )
+
+    const transferringRow = screen.getByTestId('file-transfer-row-file-progress')
+    expect(transferringRow.className).toBe(selectedClassName)
+    expect(screen.queryByRole('button', { name: '移除 progress.bin' })).toBeNull()
 
     const progress = screen.getByRole('progressbar', {
       name: 'progress.bin 传输进度',
@@ -254,6 +262,7 @@ describe('TransferPanel', () => {
 
     const dropZone = screen.getByRole('button', { name: '选择要传输的文件' })
     expect(dropZone.getAttribute('aria-disabled')).toBe('true')
+    expect(dropZone.className).not.toContain('opacity-60')
     fireEvent.drop(dropZone, {
       dataTransfer: { files: [new File(['late'], 'late.bin')] },
     })

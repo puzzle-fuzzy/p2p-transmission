@@ -7,6 +7,7 @@ import {
   type OutgoingActivity,
 } from '../features/transfer/ui-state'
 import Avatar from './Avatar'
+import FileTransferRow from './FileTransferRow'
 import TransferPeerFlow from './TransferPeerFlow'
 
 type Tab = 'text' | 'file'
@@ -24,22 +25,6 @@ export type TransferPanelProps = {
   onSendText(text: string): Promise<void>
   onSendFiles(): Promise<void>
   onCancel(): void
-}
-
-const formatSize = (bytes: number) => {
-  if (bytes < 1024) return `${String(bytes)} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
-}
-
-const fileStateLabel = (
-  state: 'queued' | 'transferring' | 'completed' | 'error',
-  progress: number,
-) => {
-  if (state === 'completed') return '已完成'
-  if (state === 'error') return '传输失败'
-  if (state === 'transferring') return `${String(Math.round(progress * 100))}%`
-  return '等待传输'
 }
 
 const terminalErrorProgress = (
@@ -286,7 +271,7 @@ export default function TransferPanel({
             aria-disabled={locked}
             className={`flex min-h-52 flex-col rounded-xl border-2 border-dashed px-3 py-3 transition-colors focus-visible:border-accent focus-visible:outline-none sm:min-h-56 ${
               dragActive ? 'border-accent' : 'border-amber-50/15'
-            } ${locked ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:border-amber-50/30'}`}
+            } ${locked ? 'cursor-default' : 'cursor-pointer hover:border-amber-50/30'}`}
             onClick={event => {
               if (event.target === fileInputRef.current || locked) return
               fileInputRef.current?.click()
@@ -329,37 +314,27 @@ export default function TransferPanel({
                     : 0
                   const state = presentation?.state ?? 'queued'
                   return (
-                    <div key={selection.fileId} className="relative overflow-hidden rounded-lg bg-white/5">
-                      <div
-                        className="absolute inset-y-0 left-0 bg-accent/15 transition-[width] duration-150"
-                        style={{ width: `${String(Math.round(progress * 100))}%` }}
-                        role="progressbar"
-                        aria-label={`${selection.file.name} 传输进度`}
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        aria-valuenow={Math.round(progress * 100)}
-                        aria-valuetext={fileStateLabel(state, progress)}
-                      />
-                      <div className="relative z-10 flex min-h-11 items-center gap-3 px-3 py-2">
-                        <span className="material-symbols-outlined shrink-0 text-amber-50/40" style={{ fontSize: '16px' }} aria-hidden="true">description</span>
-                        <span className="min-w-0 flex-1 truncate text-xs text-amber-50/75" title={selection.file.name}>{selection.file.name}</span>
-                        <span className="shrink-0 text-xs text-amber-50/50">{formatSize(selection.file.size)}</span>
-                        <span className="w-16 shrink-0 text-right text-xs text-amber-50/60">{fileStateLabel(state, progress)}</span>
-                        {!locked && (
-                          <button
-                            type="button"
-                            className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-transparent text-amber-50/50 transition-colors hover:text-amber-50 focus-visible:border-accent focus-visible:outline-none"
-                            onClick={event => {
-                              event.stopPropagation()
-                              onFileRemoved(selection.fileId)
-                            }}
-                            aria-label={`移除 ${selection.file.name}`}
-                          >
-                            <span className="material-symbols-outlined" style={{ fontSize: '16px' }} aria-hidden="true">close</span>
-                          </button>
-                        )}
-                      </div>
-                    </div>
+                    <FileTransferRow
+                      key={selection.fileId}
+                      fileId={selection.fileId}
+                      name={selection.file.name}
+                      byteLength={selection.file.size}
+                      progress={progress}
+                      state={state}
+                      action={!locked ? (
+                        <button
+                          type="button"
+                          className="flex size-11 shrink-0 items-center justify-center rounded-full text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50 focus-visible:bg-white/5 focus-visible:text-amber-50 focus-visible:outline-none"
+                          onClick={event => {
+                            event.stopPropagation()
+                            onFileRemoved(selection.fileId)
+                          }}
+                          aria-label={`移除 ${selection.file.name}`}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: '16px' }} aria-hidden="true">close</span>
+                        </button>
+                      ) : undefined}
+                    />
                   )
                 })}
                 {!locked && (
