@@ -153,7 +153,7 @@ Receivers do not see an editable sender composer. They see a compact status pane
 
 ### Receive confirmation dialog
 
-The new `ReceiveTextDialog` uses the native `dialog` top layer and behaves as a real accessible modal:
+The new `IncomingTextRequestDialog` uses the native `dialog` top layer and behaves as a real accessible modal:
 
 - a full-viewport translucent charcoal scrim;
 - a flat `#2d2d2d` panel with a faint warm-white border and 12px radius;
