@@ -17,14 +17,33 @@ export type {
   SignalServerMessage,
 } from './realtime'
 export {
+  DEFAULT_FILE_CHUNK_BYTES,
   encodeTransferMessage,
+  FILE_CHUNK_HEADER_BYTES,
+  MAX_CONTROL_FRAME_BYTES,
+  MAX_FILE_BATCH_BYTES,
+  MAX_FILE_COUNT,
+  MAX_FILE_NAME_BYTES,
+  MAX_FILE_NAME_CHARACTERS,
+  MAX_MIME_TYPE_BYTES,
+  MAX_MIME_TYPE_CHARACTERS,
   MAX_TEXT_CHARACTERS,
-  MAX_TRANSFER_FRAME_BYTES,
   MAX_TRANSFER_ID_LENGTH,
   parseTransferMessage,
+  sanitizeFileName,
   textByteLength,
+  TRANSFER_PROTOCOL_VERSION,
 } from './transfer'
 export type {
+  FileDescriptor,
   TransferParseResult,
   TransferProtocolMessage,
 } from './transfer'
+export {
+  encodeFileChunkFrame,
+  parseFileChunkFrame,
+} from './file-chunk'
+export type {
+  FileChunkFrame,
+  FileChunkParseResult,
+} from './file-chunk'
