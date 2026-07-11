@@ -7,11 +7,11 @@ export type RoomCodeCopyButtonProps = {
 
 type CopyStatus = 'idle' | 'copying' | 'copied' | 'error'
 
-const statusContent: Record<CopyStatus, { icon: string; announcement: string }> = {
-  idle: { icon: 'content_copy', announcement: '' },
-  copying: { icon: 'progress_activity', announcement: '正在复制房间码' },
-  copied: { icon: 'check', announcement: '房间码已复制' },
-  error: { icon: 'error', announcement: '无法复制房间码' },
+const statusAnnouncement: Record<CopyStatus, string> = {
+  idle: '',
+  copying: '正在复制房间码',
+  copied: '房间码已复制',
+  error: '无法复制房间码',
 }
 
 export default function RoomCodeCopyButton({ code, onCopy }: RoomCodeCopyButtonProps) {
@@ -42,28 +42,26 @@ export default function RoomCodeCopyButton({ code, onCopy }: RoomCodeCopyButtonP
     }
   }
 
-  const content = statusContent[status]
-
   return (
     <>
       <button
         type="button"
-        className="flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-amber-50/15 text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:text-amber-50/80 focus-visible:outline-none disabled:cursor-wait disabled:text-amber-50/20"
+        className="flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center rounded-full text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:bg-white/5 focus-visible:text-amber-50/80 focus-visible:outline-none disabled:cursor-wait disabled:bg-transparent disabled:text-amber-50/20"
         aria-label="复制房间码"
         data-status={status}
         disabled={status === 'copying'}
         onClick={() => { void handleCopy() }}
       >
         <span
-          className={`material-symbols-outlined ${status === 'copying' ? 'motion-safe:animate-spin' : ''}`}
+          className="material-symbols-outlined"
           style={{ fontSize: '17px' }}
           aria-hidden="true"
         >
-          {content.icon}
+          content_copy
         </span>
       </button>
       <span className="sr-only" aria-live="polite" aria-atomic="true">
-        {content.announcement}
+        {statusAnnouncement[status]}
       </span>
     </>
   )
