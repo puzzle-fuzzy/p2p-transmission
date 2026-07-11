@@ -28,8 +28,15 @@ describe('FileTransferRow', () => {
     const progress = screen.getByRole('progressbar', {
       name: '设计稿.png 传输进度',
     })
+    const content = screen.getByTestId('file-transfer-content-file-1')
+    const actionSlot = screen.getByTestId('file-transfer-action-file-1')
 
     expect(row.className).toContain('bg-white/5')
+    expect(content.className).toContain('min-h-11')
+    expect(content.className).toContain('pr-14')
+    expect(actionSlot.className).toContain('absolute')
+    expect(actionSlot.className).toContain('inset-y-0')
+    expect(actionSlot.className).toContain('right-0')
     expect(progress.className).toContain('bg-accent/15')
     expect(progress.className).toContain('motion-safe:transition-[width]')
     expect(progress.className).toContain('motion-safe:duration-150')
@@ -48,6 +55,9 @@ describe('FileTransferRow', () => {
     expect(progress.getAttribute('aria-valuenow')).toBe('0')
     expect(progress.getAttribute('aria-valuetext')).toBe('等待传输')
     expect(screen.queryByRole('button', { name: '移除' })).toBeNull()
+    expect(screen.queryByTestId('file-transfer-action-file-1')).toBeNull()
+    expect(screen.getByTestId('file-transfer-content-file-1').className)
+      .toContain('pr-3')
   })
 
   test('clamps and rounds progress while completed and error labels remain explicit', () => {

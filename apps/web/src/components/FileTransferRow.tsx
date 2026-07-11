@@ -56,7 +56,12 @@ export default function FileTransferRow({
         aria-valuenow={percentage}
         aria-valuetext={label}
       />
-      <div className="relative z-10 flex min-h-11 items-center gap-3 px-3 py-2">
+      <div
+        data-testid={`file-transfer-content-${fileId}`}
+        className={`relative z-10 flex min-h-11 items-center gap-3 py-2 pl-3 ${
+          action ? 'pr-14' : 'pr-3'
+        }`}
+      >
         <span
           className="material-symbols-outlined shrink-0 text-amber-50/40"
           style={{ fontSize: '16px' }}
@@ -76,8 +81,15 @@ export default function FileTransferRow({
         <span className="w-16 shrink-0 text-right text-xs tabular-nums text-amber-50/60">
           {label}
         </span>
-        {action}
       </div>
+      {action && (
+        <div
+          data-testid={`file-transfer-action-${fileId}`}
+          className="absolute inset-y-0 right-0 z-20 flex items-center"
+        >
+          {action}
+        </div>
+      )}
     </div>
   )
 }
