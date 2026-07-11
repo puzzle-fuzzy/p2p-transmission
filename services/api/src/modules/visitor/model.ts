@@ -14,4 +14,15 @@ export type VisitorServiceOptions = {
   createId?: () => string;
   createToken?: () => string;
   createAvatarSeed?: () => string;
+  maxVisitors?: number;
+  idleTtlMs?: number;
 };
+
+export type VisitorCapacityError = {
+  code: "CAPACITY_EXCEEDED";
+  message: string;
+};
+
+export type VisitorResult =
+  | { ok: true; visitor: Visitor }
+  | { ok: false; error: VisitorCapacityError };
