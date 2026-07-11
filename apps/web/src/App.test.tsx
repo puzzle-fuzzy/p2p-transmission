@@ -499,6 +499,41 @@ describe('App transfer integration', () => {
     )
   })
 
+  test('closes the receiver room when the sender leaves terminally', async () => {
+    await enterRoom('receiver')
+    emit({
+      type: 'transfer:file-requested',
+      peerId: sender.id,
+      transferId: 'file-before-sender-left',
+      files: [{
+        fileId: 'file-before-sender-left',
+        streamId: 9,
+        name: '未完成.txt',
+        mimeType: 'text/plain',
+        byteLength: 1,
+        lastModified: 1,
+        chunkSize: 1024,
+        chunkCount: 1,
+      }],
+    })
+    expect(screen.getByRole('dialog', { name: '收到文件' })).toBeTruthy()
+
+    act(() => realtime.emitMessage({
+      type: 'participant:left',
+      roomCode: room.code,
+      visitorId: sender.id,
+    }))
+
+    expect(realtime.close).toHaveBeenCalledTimes(1)
+    expect(peerSession.close).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog', { name: '收到文件' })).toBeNull()
+    expect(screen.getByRole('button', { name: '创建测试房间' })).toBeTruthy()
+    expect(boundary.showToast).toHaveBeenCalledWith(
+      '发送者已离开，房间已关闭',
+      'info',
+    )
+  })
+
   test('commits five exact text bodies before one ACK each and discards overflow once', async () => {
     const user = await enterRoom('receiver')
 

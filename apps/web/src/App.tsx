@@ -677,6 +677,17 @@ function App() {
 
       if (message.type === 'participant:left') {
         const currentRoom = roomRef.current
+        if (
+          role === 'receiver'
+          && currentRoom?.code === message.roomCode
+          && currentRoom.senderId === message.visitorId
+        ) {
+          ++operationGenerationRef.current
+          disposeRoomResources()
+          dispatch({ type: 'visitor:ready', session })
+          showToast('发送者已离开，房间已关闭', 'info')
+          return
+        }
         if (currentRoom?.code === message.roomCode) {
           const nextRoom = removeParticipant(currentRoom, message.visitorId)
           roomRef.current = nextRoom
