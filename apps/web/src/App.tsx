@@ -19,6 +19,7 @@ import ReceiverPanel, {
 } from './components/ReceiverPanel'
 import RoomCodeCopyButton from './components/RoomCodeCopyButton'
 import RoomJoin from './components/RoomJoin'
+import ShareDialog from './components/ShareDialog'
 import TransferPanel from './components/TransferPanel'
 import ToastViewport from './components/ui/Toast'
 import { useToast } from './components/ui/useToast'
@@ -167,6 +168,7 @@ function App() {
     status: 'waiting',
   })
   const [fileSpeedData, setFileSpeedData] = useState<Record<string, { speed: number; eta: number | undefined }>>({})
+  const [shareDialogRoomCode, setShareDialogRoomCode] = useState<string>()
   const {
     toast: toastState,
     show: showToast,
@@ -1266,11 +1268,20 @@ function App() {
             <div className="flex items-center justify-between gap-4">
               <div>
                 <div className="text-xs text-amber-50/50">房间码</div>
-                <div className="mt-1">
+                <div className="mt-1 flex items-center gap-2">
                   <RoomCodeCopyButton
                     code={roomView.room.code}
                     onCopy={handleCopyRoomCode}
                   />
+                  <button
+                    type="button"
+                    className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-transparent text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
+                    onClick={() => setShareDialogRoomCode(roomView.room.code)}
+                    aria-label="分享房间"
+                    title="分享房间"
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: '17px' }} aria-hidden="true">qr_code_scanner</span>
+                  </button>
                 </div>
               </div>
               <div className="flex items-center gap-2 text-right text-xs">
@@ -1346,6 +1357,15 @@ function App() {
       )}
 
       <ToastViewport toast={toastState} onDismiss={dismissToast} />
+
+      {shareDialogRoomCode && (
+        <ShareDialog
+          roomCode={shareDialogRoomCode}
+          roomUrl={`${window.location.origin}/?room=${shareDialogRoomCode}`}
+          onCopy={handleCopyRoomCode}
+          onClose={() => setShareDialogRoomCode(undefined)}
+        />
+      )}
     </div>
   )
 }
