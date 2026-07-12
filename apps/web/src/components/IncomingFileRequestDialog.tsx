@@ -242,7 +242,7 @@ export default function IncomingFileRequestDialog({
             <button
               ref={rejectButtonRef}
               type="button"
-              className="min-h-11 rounded-xl border border-amber-50/15 px-4 text-sm tracking-[0.05em] text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none disabled:cursor-not-allowed disabled:text-amber-50/20"
+              className="min-h-11 rounded-xl border border-amber-50/15 px-4 text-sm tracking-wider text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none disabled:cursor-not-allowed disabled:text-amber-50/20"
               disabled={decisionMade}
               onClick={rejectOnce}
             >
@@ -250,7 +250,7 @@ export default function IncomingFileRequestDialog({
             </button>
             <button
               type="button"
-              className="min-h-11 rounded-xl border border-accent bg-accent px-4 text-sm tracking-[0.05em] text-white/90 transition-[filter,border-color] hover:brightness-110 active:brightness-90 focus-visible:border-amber-50/80 focus-visible:outline-none disabled:cursor-not-allowed disabled:brightness-75"
+              className="min-h-11 rounded-xl border border-accent bg-accent px-4 text-sm tracking-wider text-white/90 transition-[filter,border-color] hover:brightness-110 active:brightness-90 focus-visible:border-amber-50/80 focus-visible:outline-none disabled:cursor-not-allowed disabled:brightness-75"
               disabled={decisionMade}
               onClick={acceptOnce}
             >
@@ -263,7 +263,7 @@ export default function IncomingFileRequestDialog({
           <button
             ref={cancelButtonRef}
             type="button"
-            className="mt-5 min-h-11 w-full rounded-xl border border-amber-50/15 px-4 text-sm tracking-[0.05em] text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
+            className="mt-5 min-h-11 w-full rounded-xl border border-amber-50/15 px-4 text-sm tracking-wider text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
             onClick={cancelOnce}
           >
             取消接收
@@ -275,7 +275,7 @@ export default function IncomingFileRequestDialog({
             <button
               ref={closeButtonRef}
               type="button"
-              className="min-h-11 rounded-xl border border-amber-50/15 px-4 text-sm tracking-[0.05em] text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
+              className="min-h-11 rounded-xl border border-amber-50/15 px-4 text-sm tracking-wider text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
               onClick={closeOnce}
             >
               关闭
@@ -283,7 +283,7 @@ export default function IncomingFileRequestDialog({
             <button
               ref={downloadAllButtonRef}
               type="button"
-              className="min-h-11 rounded-xl border border-accent bg-accent px-4 text-sm tracking-[0.05em] text-white/90 transition-[filter,border-color] hover:brightness-110 active:brightness-90 focus-visible:border-amber-50/80 focus-visible:outline-none"
+              className="min-h-11 rounded-xl border border-accent bg-accent px-4 text-sm tracking-wider text-white/90 transition-[filter,border-color] hover:brightness-110 active:brightness-90 focus-visible:border-amber-50/80 focus-visible:outline-none"
               onClick={downloadAll}
             >
               一键下载
@@ -295,7 +295,7 @@ export default function IncomingFileRequestDialog({
           <button
             ref={closeButtonRef}
             type="button"
-            className="mt-5 min-h-11 w-full rounded-xl border border-amber-50/15 px-4 text-sm tracking-[0.05em] text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
+            className="mt-5 min-h-11 w-full rounded-xl border border-amber-50/15 px-4 text-sm tracking-wider text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
             onClick={closeOnce}
           >
             关闭

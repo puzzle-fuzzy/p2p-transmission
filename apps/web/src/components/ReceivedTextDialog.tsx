@@ -85,7 +85,7 @@ export default function ReceivedTextDialog({
 
         <div
           id={bodyId}
-          className="native-scrollbar mt-5 max-h-[min(45svh,20rem)] min-h-32 overflow-y-auto whitespace-pre-wrap rounded-lg border border-amber-50/15 bg-white/5 p-4 text-sm leading-6 text-amber-50/80 [overflow-wrap:anywhere]"
+          className="native-scrollbar mt-5 max-h-[min(45svh,20rem)] min-h-32 overflow-y-auto whitespace-pre-wrap rounded-lg border border-amber-50/15 bg-white/5 p-4 text-sm leading-6 text-amber-50/80 wrap-anywhere"
           tabIndex={0}
         >
           {text}
@@ -94,7 +94,7 @@ export default function ReceivedTextDialog({
         <div className="mt-5 grid grid-cols-2 gap-2">
           <button
             type="button"
-            className="min-h-11 rounded-xl border border-amber-50/15 px-4 text-sm tracking-[0.05em] text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none disabled:cursor-wait disabled:text-amber-50/20"
+            className="min-h-11 rounded-xl border border-amber-50/15 px-4 text-sm tracking-wider text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none disabled:cursor-wait disabled:text-amber-50/20"
             disabled={copyStatus === 'copying'}
             onClick={onCopy}
           >
@@ -103,7 +103,7 @@ export default function ReceivedTextDialog({
           <button
             ref={closeButtonRef}
             type="button"
-            className="min-h-11 rounded-xl border border-accent bg-accent px-4 text-sm tracking-[0.05em] text-white/90 transition-[filter,border-color] hover:brightness-110 active:brightness-90 focus-visible:border-amber-50/80 focus-visible:outline-none"
+            className="min-h-11 rounded-xl border border-accent bg-accent px-4 text-sm tracking-wider text-white/90 transition-[filter,border-color] hover:brightness-110 active:brightness-90 focus-visible:border-amber-50/80 focus-visible:outline-none"
             onClick={closeOnce}
           >
             关闭

@@ -42,7 +42,7 @@ export default function TransferPeerFlow({
         <Avatar
           seed={sender.avatarSeed}
           label={sender.displayName}
-          className="shrink-0 max-sm:!size-8"
+          className="shrink-0 max-sm:size-8!"
         />
 
         {hasReceivers && (
@@ -65,11 +65,11 @@ export default function TransferPeerFlow({
                   key={receiver.id}
                   seed={receiver.avatarSeed}
                   label={receiver.displayName}
-                  className={`shrink-0 max-sm:!size-8 ${index === 0 ? '' : '-ml-2'}`}
+                  className={`shrink-0 max-sm:size-8! ${index === 0 ? '' : '-ml-2'}`}
                 />
               ))}
               {overflow > 0 && (
-                <span className="-ml-2 flex size-9 shrink-0 items-center justify-center rounded-full border-2 border-[#2d2d2d] bg-white/10 text-[11px] tabular-nums text-amber-50/70 max-sm:!size-8">
+                <span className="-ml-2 flex size-9 shrink-0 items-center justify-center rounded-full border-2 border-[#2d2d2d] bg-white/10 text-[11px] tabular-nums text-amber-50/70 max-sm:size-8!">
                   +{overflow}
                 </span>
               )}
