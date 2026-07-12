@@ -82,7 +82,7 @@ describe("room service prepared mutations", () => {
     });
   });
 
-  test("keeps join plans immutable to the live map and rejects a stale revision", () => {
+  test("keeps join plans immutable and commits compatible concurrent receiver joins", () => {
     const services = createServices();
     const sender = services.visitors.createVisitor();
     const receiverOne = services.visitors.createVisitor();
@@ -104,12 +104,12 @@ describe("room service prepared mutations", () => {
       room: { receivers: [receiverOne.id] },
     });
     expect(services.rooms.commit(stale.plan)).toMatchObject({
-      ok: false,
-      error: { code: "INVALID_STATE" },
+      ok: true,
+      room: { receivers: [receiverOne.id, receiverTwo.id] },
     });
     expect(services.rooms.getRoom(room.code)).toMatchObject({
       ok: true,
-      room: { receivers: [receiverOne.id] },
+      room: { receivers: [receiverOne.id, receiverTwo.id] },
     });
   });
 

@@ -1,13 +1,32 @@
 import type { VisitorSession } from '../shared/contracts'
 
 const VISITOR_SESSION_KEY = 'p2p.visitorSession'
+const VISITOR_TAB_NAME_PREFIX = 'p2p-transmission:'
 
 export type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 
 const getDefaultStorage = (): StorageLike | undefined => {
   if (typeof window === 'undefined') return undefined
 
-  return window.localStorage
+  return window.sessionStorage
+}
+
+const createBrowserId = () => {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID()
+  }
+
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+}
+
+const getDefaultSessionKey = () => {
+  if (typeof window === 'undefined') return VISITOR_SESSION_KEY
+
+  if (!window.name.startsWith(VISITOR_TAB_NAME_PREFIX)) {
+    window.name = `${VISITOR_TAB_NAME_PREFIX}${createBrowserId()}`
+  }
+
+  return `${VISITOR_SESSION_KEY}:${window.name}`
 }
 
 const isVisitorSession = (value: unknown): value is VisitorSession => {
@@ -25,9 +44,11 @@ const isVisitorSession = (value: unknown): value is VisitorSession => {
 }
 
 export const loadVisitorSession = (
-  storage: StorageLike | undefined = getDefaultStorage(),
+  storage?: StorageLike,
 ): VisitorSession | undefined => {
-  const raw = storage?.getItem(VISITOR_SESSION_KEY)
+  const resolvedStorage = storage ?? getDefaultStorage()
+  const key = storage ? VISITOR_SESSION_KEY : getDefaultSessionKey()
+  const raw = resolvedStorage?.getItem(key)
 
   if (!raw) return undefined
 
@@ -42,13 +63,17 @@ export const loadVisitorSession = (
 
 export const saveVisitorSession = (
   session: VisitorSession,
-  storage: StorageLike | undefined = getDefaultStorage(),
+  storage?: StorageLike,
 ) => {
-  storage?.setItem(VISITOR_SESSION_KEY, JSON.stringify(session))
+  const resolvedStorage = storage ?? getDefaultStorage()
+  const key = storage ? VISITOR_SESSION_KEY : getDefaultSessionKey()
+  resolvedStorage?.setItem(key, JSON.stringify(session))
 }
 
 export const clearVisitorSession = (
-  storage: StorageLike | undefined = getDefaultStorage(),
+  storage?: StorageLike,
 ) => {
-  storage?.removeItem(VISITOR_SESSION_KEY)
+  const resolvedStorage = storage ?? getDefaultStorage()
+  const key = storage ? VISITOR_SESSION_KEY : getDefaultSessionKey()
+  resolvedStorage?.removeItem(key)
 }

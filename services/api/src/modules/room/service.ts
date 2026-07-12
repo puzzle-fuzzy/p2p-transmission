@@ -348,7 +348,6 @@ export const createRoomService = (options: RoomServiceOptions): RoomService => {
     const room = rooms.get(mutation.code);
     if (!room) return failure(roomNotFound);
     if (room.expiresAt <= currentTime()) return failure(roomExpired);
-    if (room.revision !== mutation.revision) return failure(invalidState);
     const policyError = validateJoin(room, mutation.visitorId, mutation.role);
     if (policyError) return failure(policyError);
     const existing = room.participants.get(mutation.visitorId);

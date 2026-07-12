@@ -880,9 +880,15 @@ function App() {
     dispatch({ type: 'room:joining' })
 
     try {
+      const joinSession = await createVisitor()
+      if (operationGenerationRef.current !== operationGeneration) return
+      saveVisitorSession(joinSession)
+      if (joinSession.token !== state.session.token) {
+        dispatch({ type: 'visitor:ready', session: joinSession })
+      }
       const iceMode = getClientIceMode()
       const result = await runWithFreshSession(
-        state.session,
+        joinSession,
         activeSession => joinRoom(
           code,
           activeSession.token,
@@ -1114,6 +1120,39 @@ function App() {
     setReceiverPanelState({ status: 'waiting' })
   }, [replaceIncomingFile, revokeObjectUrl])
 
+  const handleLeaveRoom = useCallback(() => {
+    const session = state.session
+    const room = roomRef.current
+    if (!session || !room) return
+
+    const activity = transferUiStateRef.current.activity
+    if (activity) {
+      peerSessionRef.current?.cancelTransfer(activity.transferId)
+    }
+
+    const activeIncomingFile = incomingFileRef.current
+    if (activeIncomingFile?.state.status === 'pending') {
+      peerSessionRef.current?.rejectFiles(
+        activeIncomingFile.peerId,
+        activeIncomingFile.transferId,
+      )
+    } else if (activeIncomingFile?.state.status === 'receiving') {
+      peerSessionRef.current?.cancelTransfer(activeIncomingFile.transferId)
+    }
+
+    realtimeRef.current?.send({
+      type: 'room:leave',
+      roomCode: room.code,
+    })
+    ++operationGenerationRef.current
+    disposeRoomResources()
+    dispatch({ type: 'visitor:ready', session })
+    showToast(
+      state.role === 'sender' ? '房间已关闭' : '已退出房间',
+      'info',
+    )
+  }, [disposeRoomResources, showToast, state.role, state.session])
+
   const handleCopyRoomCode = useCallback(async (code: string) => {
     try {
       if (!navigator.clipboard) throw new Error('clipboard unavailable')
@@ -1159,13 +1198,26 @@ function App() {
                   />
                 </div>
               </div>
-              <div className="text-right text-xs">
-                <div className="text-amber-50/50">
-                  {state.role === 'sender' ? '发送者' : '接收者'}
+              <div className="flex items-center gap-2 text-right text-xs">
+                <div>
+                  <div className="text-amber-50/50">
+                    {state.role === 'sender' ? '发送者' : '接收者'}
+                  </div>
+                  <div className="mt-0.5 text-amber-50/60">
+                    {state.readyPeerIds.length > 0 ? '点对点已连接' : '正在建立点对点连接'}
+                  </div>
                 </div>
-                <div className="mt-0.5 text-amber-50/60">
-                  {state.readyPeerIds.length > 0 ? '点对点已连接' : '正在建立点对点连接'}
-                </div>
+                {state.role === 'receiver' && (
+                  <button
+                    type="button"
+                    className="flex size-9 shrink-0 items-center justify-center rounded-full border border-transparent text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
+                    onClick={handleLeaveRoom}
+                    aria-label="退出房间"
+                    title="退出房间"
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: '17px' }} aria-hidden="true">logout</span>
+                  </button>
+                )}
               </div>
             </div>
 

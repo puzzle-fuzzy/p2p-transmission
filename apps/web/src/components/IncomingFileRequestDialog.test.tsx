@@ -156,8 +156,12 @@ describe('IncomingFileRequestDialog', () => {
     expect(actions.onClose).not.toHaveBeenCalled()
   })
 
-  test('renders completed shared rows with native downloads and closes with Escape', () => {
+  test('renders completed shared rows with item and batch downloads', async () => {
+    const user = userEvent.setup()
     const actions = callbacks()
+    const clickDownload = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => undefined)
     render(
       <IncomingFileRequestDialog
         sender={sender}
@@ -195,7 +199,16 @@ describe('IncomingFileRequestDialog', () => {
     const secondDownload = screen.getByRole('link', { name: '下载 说明.txt' })
     expect(secondDownload.getAttribute('href')).toBe('blob:file-2')
     expect(secondDownload.getAttribute('download')).toBe('说明.txt')
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: '关闭' }))
+    const downloadAll = screen.getByRole('button', { name: '一键下载' })
+    expect(downloadAll.parentElement?.className)
+      .toContain('grid-cols-[minmax(0,1fr)_minmax(0,2fr)]')
+    expect(document.activeElement).toBe(downloadAll)
+    expect(screen.getByRole('button', { name: '关闭' }).className)
+      .toContain('border-amber-50/15')
+
+    await user.click(downloadAll)
+    expect(clickDownload).toHaveBeenCalledTimes(2)
+    clickDownload.mockRestore()
 
     fireEvent(
       screen.getByRole('dialog'),

@@ -48,6 +48,7 @@ export default function IncomingFileRequestDialog({
   const dialogRef = useRef<HTMLDialogElement>(null)
   const rejectButtonRef = useRef<HTMLButtonElement>(null)
   const cancelButtonRef = useRef<HTMLButtonElement>(null)
+  const downloadAllButtonRef = useRef<HTMLButtonElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const decisionMadeRef = useRef(false)
   const closingRef = useRef(false)
@@ -85,6 +86,11 @@ export default function IncomingFileRequestDialog({
       return
     }
 
+    if (state.status === 'received') {
+      downloadAllButtonRef.current?.focus()
+      return
+    }
+
     closeButtonRef.current?.focus()
   }, [state.status])
 
@@ -119,6 +125,21 @@ export default function IncomingFileRequestDialog({
     closingRef.current = true
     dialogRef.current?.close()
     onClose()
+  }
+
+  const downloadAll = () => {
+    if (state.status !== 'received') return
+
+    for (const file of state.files) {
+      const link = document.createElement('a')
+      link.href = file.url
+      link.download = file.name
+      link.rel = 'noopener'
+      link.style.display = 'none'
+      document.body.append(link)
+      link.click()
+      link.remove()
+    }
   }
 
   const listedFiles = state.status === 'received' ? state.files : files
@@ -249,7 +270,28 @@ export default function IncomingFileRequestDialog({
           </button>
         )}
 
-        {(state.status === 'received' || state.status === 'error') && (
+        {state.status === 'received' && (
+          <div className="mt-5 grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2">
+            <button
+              ref={closeButtonRef}
+              type="button"
+              className="min-h-11 rounded-xl border border-amber-50/15 px-4 text-sm tracking-[0.05em] text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
+              onClick={closeOnce}
+            >
+              关闭
+            </button>
+            <button
+              ref={downloadAllButtonRef}
+              type="button"
+              className="min-h-11 rounded-xl border border-accent bg-accent px-4 text-sm tracking-[0.05em] text-white/90 transition-[filter,border-color] hover:brightness-110 active:brightness-90 focus-visible:border-amber-50/80 focus-visible:outline-none"
+              onClick={downloadAll}
+            >
+              一键下载
+            </button>
+          </div>
+        )}
+
+        {state.status === 'error' && (
           <button
             ref={closeButtonRef}
             type="button"

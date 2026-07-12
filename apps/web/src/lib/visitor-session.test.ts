@@ -1,4 +1,6 @@
-import { describe, expect, test } from 'vitest'
+// @vitest-environment jsdom
+
+import { beforeEach, describe, expect, test } from 'vitest'
 import {
   clearVisitorSession,
   loadVisitorSession,
@@ -33,6 +35,12 @@ const session: VisitorSession = {
 }
 
 describe('visitor-session', () => {
+  beforeEach(() => {
+    window.name = ''
+    window.localStorage.clear()
+    window.sessionStorage.clear()
+  })
+
   test('saves and loads a visitor session', () => {
     const storage = createMemoryStorage()
 
@@ -47,6 +55,27 @@ describe('visitor-session', () => {
     expect(loadVisitorSession(storage)).toBeUndefined()
     storage.setItem('p2p.visitorSession', '{bad json')
     expect(loadVisitorSession(storage)).toBeUndefined()
+  })
+
+  test('uses tab-scoped storage by default so same-browser receivers do not share identity', () => {
+    window.localStorage.setItem('p2p.visitorSession', JSON.stringify({
+      ...session,
+      token: 'tok_local',
+    }))
+
+    expect(loadVisitorSession()).toBeUndefined()
+
+    saveVisitorSession(session)
+
+    const firstTabName = window.name
+    const firstKey = `p2p.visitorSession:${firstTabName}`
+    expect(window.localStorage.getItem('p2p.visitorSession')).toContain('tok_local')
+    expect(window.sessionStorage.getItem(firstKey)).toContain('tok_1')
+    expect(loadVisitorSession()).toEqual(session)
+
+    window.name = ''
+    expect(loadVisitorSession()).toBeUndefined()
+    expect(window.name).not.toBe(firstTabName)
   })
 
   test('clears saved visitor session', () => {

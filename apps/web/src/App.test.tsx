@@ -336,9 +336,9 @@ const enterRoom = async (role: 'sender' | 'receiver') => {
     configurable: true,
     value: { writeText: clipboardWrite },
   })
-  boundary.loadVisitorSession.mockReturnValue(sessionFor(
-    role === 'sender' ? sender : receiver,
-  ))
+  const activeVisitor = role === 'sender' ? sender : receiver
+  boundary.loadVisitorSession.mockReturnValue(sessionFor(activeVisitor))
+  boundary.createVisitor.mockResolvedValue(sessionFor(activeVisitor))
   const rendered = render(<App />)
   unmountApp = rendered.unmount
 
@@ -515,6 +515,25 @@ describe('App transfer integration', () => {
     }))
   })
 
+  test('mints a fresh visitor identity before joining as a receiver', async () => {
+    boundary.loadVisitorSession.mockReturnValue(sessionFor(sender))
+    boundary.createVisitor.mockResolvedValueOnce(sessionFor(receiver))
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: '加入测试房间' }))
+    await waitFor(() => expect(boundary.createRealtimeClient).toHaveBeenCalledTimes(1))
+
+    expect(boundary.createVisitor).toHaveBeenCalledTimes(1)
+    expect(boundary.saveVisitorSession).toHaveBeenCalledWith(sessionFor(receiver))
+    expect(boundary.joinRoom).toHaveBeenCalledWith(
+      '012345',
+      'token-receiver',
+      'receiver',
+      'off',
+    )
+  })
+
   test('passes only ready room receivers to the transfer panel', async () => {
     const receiverTwo = visitor('receiver-2', '接收者二号')
     const roomWithTwoReceivers: PublicRoom = {
@@ -561,6 +580,38 @@ describe('App transfer integration', () => {
       '房间连接已失效，请重新加入',
       'info',
     )
+  })
+
+  test('lets a receiver leave the current room and return to join another one', async () => {
+    const user = await enterRoom('receiver')
+    emit({
+      type: 'transfer:file-requested',
+      peerId: sender.id,
+      transferId: 'files-before-leave',
+      files: [{
+        fileId: 'file-before-leave',
+        streamId: 19,
+        name: '离开前.txt',
+        mimeType: 'text/plain',
+        byteLength: 1,
+        lastModified: 1,
+        chunkSize: 1024,
+        chunkCount: 1,
+      }],
+    })
+
+    await user.click(screen.getByRole('button', { name: '退出房间' }))
+
+    expect(peerSession.rejectFiles).toHaveBeenCalledWith(sender.id, 'files-before-leave')
+    expect(realtime.send).toHaveBeenLastCalledWith({
+      type: 'room:leave',
+      roomCode: room.code,
+    })
+    expect(realtime.close).toHaveBeenCalledTimes(1)
+    expect(peerSession.close).toHaveBeenCalledTimes(1)
+    expect(boundary.showToast).toHaveBeenCalledWith('已退出房间', 'info')
+    expect(screen.queryByTestId('receiver-panel')).toBeNull()
+    expect(screen.getByRole('button', { name: '加入测试房间' })).toBeTruthy()
   })
 
   test('closes the receiver room when the sender leaves terminally', async () => {

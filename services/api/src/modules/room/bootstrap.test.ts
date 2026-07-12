@@ -346,7 +346,7 @@ describe("room bootstrap orchestration", () => {
     });
   });
 
-  test("a stale commit returns INVALID_STATE without adding the prepared receiver", () => {
+  test("a receiver join survives sender attach during TURN credential issuance", () => {
     let visitorIndex = 0;
     const visitors = createVisitorService({
       now: () => 1_000,
@@ -391,10 +391,21 @@ describe("room bootstrap orchestration", () => {
       clientIp: "203.0.113.8",
       role: "receiver",
       iceMode: "api",
-    })).toMatchObject({ ok: false, error: { code: "INVALID_STATE" } });
+    })).toMatchObject({
+      ok: true,
+      bootstrap: {
+        room: {
+          receivers: [receiver.id],
+          participants: [
+            { visitor: { id: sender.id }, role: "sender", status: "online" },
+            { visitor: { id: receiver.id }, role: "receiver", status: "connecting" },
+          ],
+        },
+      },
+    });
     expect(rooms.getRoom(created.room.code)).toMatchObject({
       ok: true,
-      room: { receivers: [] },
+      room: { receivers: [receiver.id] },
     });
   });
 });
