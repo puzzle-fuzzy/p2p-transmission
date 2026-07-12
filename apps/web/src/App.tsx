@@ -83,6 +83,10 @@ import {
   saveRoomSession,
 } from './lib/room-session'
 import {
+  sendNotification,
+  setupNotificationPermissionPrompt,
+} from './lib/notifications'
+import {
   clearVisitorSession,
   loadVisitorSession,
   saveVisitorSession,
@@ -428,6 +432,7 @@ function App() {
   useEffect(() => {
     const bootGeneration = operationGenerationRef.current
     const boot = async () => {
+      setupNotificationPermissionPrompt()
       try {
         const existingSession = loadVisitorSession()
         if (existingSession) {
@@ -635,6 +640,11 @@ function App() {
             sender,
           }, 5)
           replaceIncomingTexts(planned.queue)
+          sendNotification({
+            title: '收到文本',
+            body: `来自 ${sender.displayName}：${event.text.slice(0, 60)}${event.text.length > 60 ? '…' : ''}`,
+            tag: `text-${event.transferId}`,
+          })
           if (planned.disposition === 'acknowledge') {
             peerSession.acknowledgeText(event.peerId, event.transferId)
           } else {
@@ -654,6 +664,7 @@ function App() {
             return
           }
 
+          const fileNames = event.files.map(f => f.name)
           replaceIncomingFile({
             peerId: event.peerId,
             transferId: event.transferId,
@@ -664,6 +675,11 @@ function App() {
               byteLength: file.byteLength,
             })),
             state: { status: 'pending' },
+          })
+          sendNotification({
+            title: '收到文件请求',
+            body: `来自 ${sender.displayName}：${fileNames.length > 1 ? `${fileNames[0]} 等 ${String(fileNames.length)} 个文件` : fileNames[0]}`,
+            tag: `file-${event.transferId}`,
           })
           return
         }
@@ -712,6 +728,11 @@ function App() {
             })
             setReceiverPanelState({ status: 'waiting' })
             showToast('文件接收完成', 'success')
+            sendNotification({
+              title: '文件接收完成',
+              body: `来自 ${current.sender.displayName} 的 ${String(event.files.length)} 个文件已就绪`,
+              tag: `file-received-${event.transferId}`,
+            })
           } catch {
             for (const url of createdUrls) revokeObjectUrl(url)
             failIncomingFile(event.peerId, event.transferId, '文件下载准备失败，请让发送者重新发送。')
