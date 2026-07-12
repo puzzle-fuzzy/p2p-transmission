@@ -69,7 +69,7 @@ export default function TransferPeerFlow({
                 />
               ))}
               {overflow > 0 && (
-                <span className="-ml-2 flex size-9 shrink-0 items-center justify-center rounded-full border-2 border-[#2d2d2d] bg-white/10 text-[11px] tabular-nums text-amber-50/70 max-sm:size-8!">
+                <span className="-ml-2 flex size-9 shrink-0 items-center justify-center rounded-full border-2 border-surface bg-white/10 text-[11px] tabular-nums text-amber-50/70 max-sm:size-8!">
                   +{overflow}
                 </span>
               )}

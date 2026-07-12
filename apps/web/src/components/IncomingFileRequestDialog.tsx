@@ -154,7 +154,7 @@ export default function IncomingFileRequestDialog({
   return (
     <dialog
       ref={dialogRef}
-      className="incoming-transfer-dialog m-auto max-h-[calc(100svh-2rem)] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-xl border border-amber-50/15 bg-[#373737] p-0 text-amber-50/80 backdrop:bg-black/60"
+      className="incoming-transfer-dialog m-auto max-h-[calc(100svh-2rem)] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-xl border border-amber-50/15 bg-surface-elevated p-0 text-amber-50/80 backdrop:bg-black/60"
       aria-modal="true"
       aria-labelledby={titleId}
       aria-describedby={descriptionId}

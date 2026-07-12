@@ -90,7 +90,7 @@ export default function ShareDialog({
   return (
     <dialog
       ref={dialogRef}
-      className="incoming-transfer-dialog m-auto max-h-[calc(100svh-2rem)] w-[calc(100%-2rem)] max-w-sm overflow-y-auto rounded-xl border border-amber-50/15 bg-[#373737] p-0 text-amber-50/80 backdrop:bg-black/60"
+      className="incoming-transfer-dialog m-auto max-h-[calc(100svh-2rem)] w-[calc(100%-2rem)] max-w-sm overflow-y-auto rounded-xl border border-amber-50/15 bg-surface-elevated p-0 text-amber-50/80 backdrop:bg-black/60"
       aria-modal="true"
       aria-labelledby={titleId}
       onCancel={event => {
@@ -108,7 +108,7 @@ export default function ShareDialog({
 
         <div className="mt-5 flex flex-col items-center gap-4">
           {/* QR Code */}
-          <div className="flex size-[196px] items-center justify-center rounded-xl bg-[#2d2d2d]">
+          <div className="flex size-49 items-center justify-center rounded-xl bg-surface">
             {qrStatus === 'generating' && (
               <span className="text-xs text-amber-50/50">生成二维码中…</span>
             )}

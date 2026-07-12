@@ -1273,7 +1273,7 @@ function App() {
   const connectedReceivers = roomReceivers.filter(receiver => readyPeerIdSet.has(receiver.id))
 
   return (
-    <div className="min-h-svh bg-[#2d2d2d] px-4 py-6 text-amber-50 sm:flex sm:items-center sm:justify-center">
+    <div className="min-h-svh bg-surface px-4 py-6 text-amber-50 sm:flex sm:items-center sm:justify-center">
       <main className="mx-auto flex min-h-[calc(100svh-3rem)] w-full items-center justify-center sm:min-h-0">
         {state.phase === 'booting' && <Loading />}
 
