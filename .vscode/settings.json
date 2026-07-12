@@ -1,0 +1,8 @@
+{
+  // 抑制 VSCode 内置 CSS 校验器对 Tailwind v4 特有 at-rules 的误报
+  "css.lint.unknownAtRules": "ignore",
+  // 确保 .css 文件中的 @tailwind 指令被正确识别
+  "files.associations": {
+    "*.css": "tailwindcss"
+  }
+}
