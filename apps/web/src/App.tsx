@@ -70,6 +70,11 @@ import {
   type RealtimeClient,
 } from './lib/realtime-client'
 import {
+  clearRoomSession,
+  loadRoomSession,
+  saveRoomSession,
+} from './lib/room-session'
+import {
   clearVisitorSession,
   loadVisitorSession,
   saveVisitorSession,
@@ -182,6 +187,7 @@ function App() {
   const peerRetryCountsRef = useRef(new Map<string, number>())
   const peerRetryTimersRef = useRef(new Set<ReturnType<typeof setTimeout>>())
   const visitorBootstrapPromiseRef = useRef<Promise<VisitorSession> | undefined>(undefined)
+  const roomRecoveryAttemptedRef = useRef(false)
 
   const replaceFileSelections = useCallback((selections: FileSelection[]) => {
     fileSelectionsRef.current = selections
@@ -377,6 +383,7 @@ function App() {
     realtime?.close()
     disposePeerSession()
     roomRef.current = undefined
+    clearRoomSession()
     resetTransferPresentation({ type: 'room:reset' })
   }, [disposePeerSession, disposeRoomLifecycle, resetTransferPresentation])
 
@@ -422,6 +429,29 @@ function App() {
     invalidatePendingOperations,
     showToast,
   ])
+
+  useEffect(() => {
+    if (state.phase !== 'lobby' || !state.session) return
+    if (roomRecoveryAttemptedRef.current) return
+    roomRecoveryAttemptedRef.current = true
+
+    const roomSession = loadRoomSession()
+    if (!roomSession) return
+
+    if (Date.now() > roomSession.expiresAt) {
+      clearRoomSession()
+      showToast('上次的房间已到期，请创建或加入新房间', 'info')
+      return
+    }
+
+    if (roomSession.role === 'receiver') {
+      showToast('检测到上次加入的房间，正在重新连接…', 'info')
+      const code = roomSession.roomCode
+      // Clear before joining to prevent loops
+      clearRoomSession()
+      handleJoinRoom(code)
+    }
+  }, [state.phase, state.session, handleJoinRoom, showToast])
 
   const connectRealtime = useCallback((
     session: VisitorSession,
@@ -858,6 +888,11 @@ function App() {
       const rtcConfiguration = resolveBootstrapRtcConfiguration(iceMode, result.value)
       assertBootstrapMembership(result.value, result.session.visitor.id, 'sender')
       roomRef.current = result.value.room
+      saveRoomSession({
+        roomCode: result.value.room.code,
+        role: 'sender',
+        expiresAt: result.value.room.expiresAt,
+      })
       dispatch({ type: 'room:created', room: result.value.room })
       connectRealtime(
         result.session,
@@ -905,6 +940,11 @@ function App() {
       const rtcConfiguration = resolveBootstrapRtcConfiguration(iceMode, result.value)
       assertBootstrapMembership(result.value, result.session.visitor.id, 'receiver')
       roomRef.current = result.value.room
+      saveRoomSession({
+        roomCode: result.value.room.code,
+        role: 'receiver',
+        expiresAt: result.value.room.expiresAt,
+      })
       dispatch({ type: 'room:joined', room: result.value.room })
       connectRealtime(
         result.session,
