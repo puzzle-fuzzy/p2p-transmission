@@ -441,8 +441,8 @@ function App() {
         dispatch({ type: 'visitor:ready', session })
       } catch {
         if (operationGenerationRef.current !== bootGeneration) return
-        showToast('无法连接服务')
-        dispatch({ type: 'error', message: '无法连接服务' })
+        showToast('连接服务器失败，请检查网络后重试')
+        dispatch({ type: 'error', message: '连接服务器失败' })
       }
     }
 
@@ -516,7 +516,7 @@ function App() {
         ++operationGenerationRef.current
         disposeRoomResources()
         dispatch({ type: 'visitor:ready', session })
-        showToast('房间已到期，请重新创建或加入', 'info')
+        showToast('房间已到期，请重新创建或加入新房间', 'info')
       },
     })
     roomLifecycleRef.current = lifecycle
@@ -589,7 +589,7 @@ function App() {
               failIncomingFile(
                 currentFile.peerId,
                 currentFile.transferId,
-                '发送者已离开，文件传输已取消。',
+                '发送者离开了页面，文件传输已中断。请让对方重新发送。',
               )
             }
           }
@@ -646,7 +646,7 @@ function App() {
           if (!sender || incomingFileRef.current) {
             peerSession.rejectFiles(event.peerId, event.transferId)
             if (incomingFileRef.current) {
-              showToast('已有文件请求正在处理，新的请求已拒绝', 'info')
+              showToast('正在处理当前文件请求，新的请求暂不接收', 'info')
             }
             return
           }
@@ -711,7 +711,7 @@ function App() {
             showToast('文件接收完成', 'success')
           } catch {
             for (const url of createdUrls) revokeObjectUrl(url)
-            failIncomingFile(event.peerId, event.transferId, '无法准备文件下载，请重新接收。')
+            failIncomingFile(event.peerId, event.transferId, '文件下载准备失败，请让发送者重新发送。')
           }
           return
         }
@@ -766,7 +766,7 @@ function App() {
           ++operationGenerationRef.current
           disposeRoomResources()
           dispatch({ type: 'visitor:ready', session })
-          showToast('发送者已离开，房间已关闭', 'info')
+          showToast('发送者已退出，房间自动关闭', 'info')
           return
         }
         if (currentRoom?.code === message.roomCode) {
@@ -789,7 +789,7 @@ function App() {
         showToast(
           message.code === 'ROOM_MEMBERSHIP_REQUIRED'
             ? '房间连接已失效，请重新加入'
-            : '房间已过期，请重新创建或加入',
+            : '房间已到期，请重新创建或加入',
           'info',
         )
         return
@@ -804,12 +804,12 @@ function App() {
             if (operationGenerationRef.current !== recoveryGeneration) return
             saveVisitorSession(freshSession)
             dispatch({ type: 'visitor:ready', session: freshSession })
-            showToast('访客会话已刷新，请重新加入房间', 'info')
+            showToast('身份信息已更新，请重新加入房间', 'info')
           })
           .catch(() => {
             if (operationGenerationRef.current !== recoveryGeneration) return
             dispatch({ type: 'visitor:ready', session })
-            showToast('无法恢复访客会话，请稍后重试')
+            showToast('身份信息恢复失败，请刷新页面重试')
           })
         return
       }
@@ -848,8 +848,8 @@ function App() {
         dispatch({ type: 'visitor:ready', session })
         showToast(
           hasOpened
-            ? '连接已中断，请重新创建或加入房间'
-            : '无法建立实时连接，请稍后重试',
+            ? '网络连接断开，请重新创建或加入房间继续传输'
+            : '无法建立连接，请稍后刷新页面重试',
         )
       }
     })
@@ -1143,11 +1143,11 @@ function App() {
     if (!accepted) {
       replaceIncomingFile({
         ...current,
-        state: { status: 'error', message: '连接已中断，无法接收这些文件。' },
+        state: { status: 'error', message: '连接已断开，请退出后重新加入房间接收文件。' },
       })
       setReceiverPanelState({
         status: 'error',
-        message: '连接已中断，无法接收这些文件。',
+        message: '连接已断开，请退出后重新加入房间接收文件。',
       })
       return
     }

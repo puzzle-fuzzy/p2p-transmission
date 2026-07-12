@@ -237,7 +237,7 @@ export default function IncomingFileRequestDialog({
           <div className="mt-5 rounded-lg border border-amber-50/15 bg-white/5 px-4 py-3">
             <p className="text-sm text-amber-50/70">文件接收未完成</p>
             <p className="mt-1 text-xs leading-5 text-amber-50/50">
-              {state.message ?? '连接已中断，请让发送者重新发送。'}
+              {state.message ?? '连接已断开，请让发送者重新发送文件。'}
             </p>
           </div>
         )}
