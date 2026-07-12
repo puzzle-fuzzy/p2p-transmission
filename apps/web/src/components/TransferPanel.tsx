@@ -17,6 +17,7 @@ export type TransferPanelProps = {
   activity?: OutgoingActivity
   files: FileSelection[]
   selectionError: string
+  fileSpeedData?: Record<string, { speed: number; eta: number | undefined }>
   onFilesAdded(files: readonly File[]): void
   onFileRemoved(fileId: string): void
   onSendText(text: string): Promise<void>
@@ -46,6 +47,7 @@ export default function TransferPanel({
   activity,
   files,
   selectionError,
+  fileSpeedData,
   onFilesAdded,
   onFileRemoved,
   onSendText,
@@ -307,6 +309,7 @@ export default function TransferPanel({
                         : aggregateFileProgress(activity, selection.fileId)
                       : 0
                     const state = presentation?.state ?? 'queued'
+                    const speedInfo = fileSpeedData?.[selection.fileId]
                     return (
                       <FileTransferRow
                         key={selection.fileId}
@@ -315,6 +318,8 @@ export default function TransferPanel({
                         byteLength={selection.file.size}
                         progress={progress}
                         state={state}
+                        speedBytesPerSecond={speedInfo?.speed}
+                        etaSeconds={speedInfo?.eta}
                         action={!locked ? (
                           <button
                             type="button"

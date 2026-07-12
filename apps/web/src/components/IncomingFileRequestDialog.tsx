@@ -23,6 +23,7 @@ export type IncomingFileRequestDialogProps = {
   sender: PublicVisitor
   files: readonly IncomingFileRequestItem[]
   state: IncomingFileRequestDialogState
+  fileSpeedData?: Record<string, { speed: number; eta: number | undefined }>
   onAccept(): void
   onReject(): void
   onCancel(): void
@@ -40,6 +41,7 @@ export default function IncomingFileRequestDialog({
   sender,
   files,
   state,
+  fileSpeedData,
   onAccept,
   onReject,
   onCancel,
@@ -204,6 +206,7 @@ export default function IncomingFileRequestDialog({
                   : 'queued'
             const downloadable = downloadableFiles.get(file.fileId)
 
+            const speedInfo = fileSpeedData?.[file.fileId]
             return (
               <li key={file.fileId}>
                 <FileTransferRow
@@ -212,6 +215,8 @@ export default function IncomingFileRequestDialog({
                   byteLength={file.byteLength}
                   progress={progress}
                   state={fileState}
+                  speedBytesPerSecond={speedInfo?.speed}
+                  etaSeconds={speedInfo?.eta}
                   action={downloadable ? (
                     <a
                       href={downloadable.url}

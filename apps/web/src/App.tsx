@@ -45,6 +45,12 @@ import {
   type ProgressFrameScheduler,
 } from './features/transfer/progress-frame'
 import {
+  createSpeedTracker,
+  formatEta as formatSpeedEta,
+  formatSpeed,
+  type SpeedTracker,
+} from './features/transfer/transfer-speed-tracker'
+import {
   createActivity,
   initialTransferUiState,
   planIncomingText,
@@ -160,6 +166,7 @@ function App() {
   const [receiverPanelState, setReceiverPanelState] = useState<ReceiverPanelState>({
     status: 'waiting',
   })
+  const [fileSpeedData, setFileSpeedData] = useState<Record<string, { speed: number; eta: number | undefined }>>({})
   const {
     toast: toastState,
     show: showToast,
@@ -188,6 +195,7 @@ function App() {
   const peerRetryTimersRef = useRef(new Set<ReturnType<typeof setTimeout>>())
   const visitorBootstrapPromiseRef = useRef<Promise<VisitorSession> | undefined>(undefined)
   const roomRecoveryAttemptedRef = useRef(false)
+  const speedTrackerRef = useRef<SpeedTracker>(createSpeedTracker())
 
   const replaceFileSelections = useCallback((selections: FileSelection[]) => {
     fileSelectionsRef.current = selections
@@ -236,11 +244,16 @@ function App() {
 
   const flushProgressEvents = useCallback((events: readonly FileProgressEvent[]) => {
     let nextTransferState = transferUiStateRef.current
+    const tracker = speedTrackerRef.current
     for (const event of events) {
       nextTransferState = transferUiReducer(nextTransferState, {
         type: 'peer-session:event',
         event,
       })
+      // Track speed for outgoing file transfers
+      if (event.direction === 'sending') {
+        tracker.record(event.fileId, event.fileBytes, event.fileTotalBytes)
+      }
     }
     if (nextTransferState !== transferUiStateRef.current) {
       transferUiStateRef.current = nextTransferState
@@ -264,6 +277,9 @@ function App() {
         continue
       }
 
+      // Track speed for incoming files
+      tracker.record(event.fileId, event.fileBytes, event.fileTotalBytes)
+
       const ratio = event.fileTotalBytes <= 0
         ? 1
         : event.fileBytes / event.fileTotalBytes
@@ -282,6 +298,23 @@ function App() {
         ...current,
         state: { status: 'receiving', progressByFileId },
       })
+    }
+
+    // Update speed/ETA data for file progress display
+    const newSpeedData: Record<string, { speed: number; eta: number | undefined }> = {}
+    for (const event of events) {
+      const speed = tracker.getSpeed(event.fileId)
+      if (speed > 0) {
+        const file = current?.files.find(f => f.fileId === event.fileId)
+        const totalBytes = file?.byteLength ?? event.fileTotalBytes
+        newSpeedData[event.fileId] = {
+          speed,
+          eta: tracker.getEta(event.fileId, totalBytes),
+        }
+      }
+    }
+    if (Object.keys(newSpeedData).length > 0) {
+      setFileSpeedData(prev => ({ ...prev, ...newSpeedData }))
     }
   }, [replaceIncomingFile])
 
@@ -343,6 +376,8 @@ function App() {
     setSelectionError('')
     setTextCopyStatus('idle')
     setReceiverPanelState({ status: 'waiting' })
+    setFileSpeedData({})
+    speedTrackerRef.current.clear()
     applyTransferAction(action)
   }, [
     applyTransferAction,
@@ -1268,6 +1303,7 @@ function App() {
                 activity={transferUiState.activity}
                 files={fileSelections}
                 selectionError={selectionError}
+                fileSpeedData={fileSpeedData}
                 onFilesAdded={handleFilesAdded}
                 onFileRemoved={handleFileRemoved}
                 onSendText={handleSendText}
@@ -1301,6 +1337,7 @@ function App() {
           sender={incomingFile.sender}
           files={incomingFile.files}
           state={incomingFile.state}
+          fileSpeedData={fileSpeedData}
           onAccept={handleAcceptFiles}
           onReject={handleRejectFiles}
           onCancel={handleCancelFiles}

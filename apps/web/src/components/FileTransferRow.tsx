@@ -8,6 +8,8 @@ export type FileTransferRowProps = {
   byteLength: number
   progress: number
   state: FileTransferRowState
+  speedBytesPerSecond?: number
+  etaSeconds?: number
   action?: ReactNode
 }
 
@@ -16,16 +18,38 @@ const clampProgress = (progress: number) => {
   return Math.min(1, Math.max(0, progress))
 }
 
+const KiB = 1024
+const MiB = 1024 * KiB
+
 const formatSize = (bytes: number) => {
-  if (bytes < 1024) return `${String(bytes)} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
+  if (bytes < KiB) return `${String(bytes)} B`
+  if (bytes < MiB) return `${(bytes / KiB).toFixed(1)} KiB`
+  return `${(bytes / MiB).toFixed(1)} MiB`
 }
 
-const stateLabel = (state: FileTransferRowState, progress: number) => {
+const formatSpeed = (bytesPerSecond: number): string => {
+  if (bytesPerSecond < KiB) return `${Math.round(bytesPerSecond)} B/s`
+  if (bytesPerSecond < MiB) return `${(bytesPerSecond / KiB).toFixed(1)} KiB/s`
+  return `${(bytesPerSecond / MiB).toFixed(1)} MiB/s`
+}
+
+const formatEta = (seconds: number | undefined): string => {
+  if (seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) return ''
+  if (seconds < 60) return `${Math.ceil(seconds)}s`
+  if (seconds < 3600) {
+    const m = Math.floor(seconds / 60)
+    const s = Math.ceil(seconds % 60)
+    return `${m}m${s}s`
+  }
+  const h = Math.floor(seconds / 3600)
+  return `${h}h${Math.floor((seconds % 3600) / 60)}m`
+}
+
+const stateLabel = (state: FileTransferRowState, progress: number, speed?: number) => {
   if (state === 'completed') return '已完成'
   if (state === 'error') return '传输失败'
   if (state === 'transferring') return `${String(Math.round(progress * 100))}%`
+  if (state === 'queued' && speed !== undefined && speed > 0) return ''
   return '等待传输'
 }
 
@@ -35,11 +59,14 @@ export default function FileTransferRow({
   byteLength,
   progress,
   state,
+  speedBytesPerSecond,
+  etaSeconds,
   action,
 }: FileTransferRowProps) {
   const normalized = state === 'completed' ? 1 : clampProgress(progress)
   const percentage = Math.round(normalized * 100)
-  const label = stateLabel(state, normalized)
+  const showSpeed = state === 'transferring' && speedBytesPerSecond !== undefined && speedBytesPerSecond > 0
+  const label = stateLabel(state, normalized, speedBytesPerSecond)
 
   return (
     <div
@@ -78,8 +105,16 @@ export default function FileTransferRow({
         <span className="shrink-0 text-xs tabular-nums text-amber-50/50">
           {formatSize(byteLength)}
         </span>
-        <span className="w-16 shrink-0 text-right text-xs tabular-nums text-amber-50/60">
-          {label}
+        <span className="flex shrink-0 flex-col items-end gap-0.5">
+          <span className="text-xs tabular-nums text-amber-50/60">
+            {label}
+          </span>
+          {showSpeed && (
+            <span className="text-[10px] tabular-nums text-amber-50/40">
+              {formatSpeed(speedBytesPerSecond!)}
+              {etaSeconds !== undefined && etaSeconds > 0 && ` · ${formatEta(etaSeconds)}`}
+            </span>
+          )}
         </span>
       </div>
       {action && (
