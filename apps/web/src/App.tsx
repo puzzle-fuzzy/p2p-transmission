@@ -18,6 +18,7 @@ import ReceiverPanel, {
   type ReceiverPanelState,
 } from './components/ReceiverPanel'
 import RoomCodeCopyButton from './components/RoomCodeCopyButton'
+import RoomExpiryCountdown from './components/RoomExpiryCountdown'
 import RoomJoin from './components/RoomJoin'
 import ShareDialog from './components/ShareDialog'
 import TransferPanel from './components/TransferPanel'
@@ -1267,7 +1268,12 @@ function App() {
           <div className="flex w-[calc(100vw-2rem)] max-w-xl flex-col gap-5">
             <div className="flex items-center justify-between gap-4">
               <div>
-                <div className="text-xs text-amber-50/50">房间码</div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-amber-50/50">房间码</span>
+                  <RoomExpiryCountdown
+                    expiresAt={roomView.room.expiresAt}
+                  />
+                </div>
                 <div className="mt-1 flex items-center gap-2">
                   <RoomCodeCopyButton
                     code={roomView.room.code}
