@@ -1236,7 +1236,9 @@ function App() {
               />
             ) : (
               <ReceiverPanel
+                visitor={roomView.session.visitor}
                 sender={receiverSender}
+                receivers={roomReceivers}
                 state={receiverPanelState}
               />
             )}

@@ -140,8 +140,25 @@ vi.mock('./components/TransferPanel', () => ({
 }))
 
 vi.mock('./components/ReceiverPanel', () => ({
-  default: ({ state }: { state: { status: string } }) => (
-    <div data-testid="receiver-panel">{state.status}</div>
+  default: ({
+    visitor,
+    sender,
+    receivers,
+    state,
+  }: {
+    visitor: PublicVisitor
+    sender?: PublicVisitor
+    receivers: PublicVisitor[]
+    state: { status: string }
+  }) => (
+    <div
+      data-testid="receiver-panel"
+      data-visitor-id={visitor.id}
+      data-sender-id={sender?.id ?? ''}
+      data-receiver-ids={receivers.map(receiver => receiver.id).join(',')}
+    >
+      {state.status}
+    </div>
   ),
 }))
 
@@ -554,6 +571,15 @@ describe('App transfer integration', () => {
     await enterRoom('sender')
 
     expect(screen.getByTestId('transfer-panel').dataset.receiverIds).toBe(receiver.id)
+  })
+
+  test('passes receiver identity and room peers to the receiver panel', async () => {
+    await enterRoom('receiver')
+
+    const panel = screen.getByTestId('receiver-panel')
+    expect(panel.dataset.visitorId).toBe(receiver.id)
+    expect(panel.dataset.senderId).toBe(sender.id)
+    expect(panel.dataset.receiverIds).toBe(receiver.id)
   })
 
   test('returns to a clean lobby when attached membership is no longer valid', async () => {
