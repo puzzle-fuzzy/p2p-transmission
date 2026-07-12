@@ -103,6 +103,13 @@ export default function RoomJoin({
       >
         创建房间
       </button>
+
+      {/* 隐私声明 */}
+      <div className="mt-6 text-center text-xs leading-5 text-amber-50/40">
+        数据通过端到端加密直接在设备间传输，不会存储在任何服务器上。
+        <br />
+        文件传输结束即从内存清除，不留缓存。
+      </div>
     </div>
   )
 }

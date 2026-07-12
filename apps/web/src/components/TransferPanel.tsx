@@ -293,7 +293,7 @@ export default function TransferPanel({
               <div className="flex flex-1 flex-col items-center justify-center px-5 text-center">
                 <span className="material-symbols-outlined text-amber-50/30" style={{ fontSize: '28px' }} aria-hidden="true">upload_file</span>
                 <div className="mt-3 text-sm text-amber-50/70">拖拽文件到这里，或点击选择</div>
-                <p className="mt-2 text-xs leading-5 text-amber-50/50">一次最多 10 个文件，总计不超过 100 MiB</p>
+                <p className="mt-2 text-xs leading-5 text-amber-50/50">一次最多 50 个文件，总计不超过 500 MiB</p>
               </div>
             ) : (
               <div className="flex flex-1 flex-col gap-2" onClick={event => event.stopPropagation()}>

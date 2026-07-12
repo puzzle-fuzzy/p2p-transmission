@@ -112,9 +112,9 @@ describe('transfer protocol v2', () => {
     for (const message of messages) expectProtocolMessage(message)
   })
 
-  test('accepts ten files totaling exactly 100 MiB', () => {
-    const size = MAX_FILE_BATCH_BYTES / 10
-    const files = Array.from({ length: 10 }, (_, index) => descriptor({
+  test('accepts up to MAX_FILE_COUNT files totaling exactly MAX_FILE_BATCH_BYTES', () => {
+    const size = MAX_FILE_BATCH_BYTES / MAX_FILE_COUNT
+    const files = Array.from({ length: MAX_FILE_COUNT }, (_, index) => descriptor({
       fileId: `file_${index + 1}`,
       streamId: index + 1,
       name: `${index + 1}.bin`,

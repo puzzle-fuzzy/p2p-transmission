@@ -50,7 +50,7 @@ export const addFileSelections = (
     return {
       ok: false,
       code: 'FILE_BATCH_SIZE_LIMIT',
-      message: '文件总大小不能超过 100 MiB',
+      message: '文件总大小不能超过 500 MiB',
     }
   }
 
