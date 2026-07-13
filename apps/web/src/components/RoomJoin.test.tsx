@@ -9,67 +9,109 @@ import RoomJoin from './RoomJoin'
 const roomCodeInputs = () => Array.from({ length: 6 }, (_, index) =>
   screen.getByRole('textbox', { name: `房间码第 ${String(index + 1)} 位` }) as HTMLInputElement)
 
-describe('RoomJoin', () => {
-  test('prefills a shared room code and waits for explicit confirmation', async () => {
-    const user = userEvent.setup()
-    const onJoinRoom = vi.fn()
+const renderRoomJoin = (overrides: Partial<React.ComponentProps<typeof RoomJoin>> = {}) => {
+  const props: React.ComponentProps<typeof RoomJoin> = {
+    mode: 'manual',
+    onCodeEdited: vi.fn(),
+    onCreateRoom: vi.fn(),
+    onSubmit: vi.fn(),
+    ...overrides,
+  }
 
-    render(
-      <RoomJoin
-        initialCode="123456"
-        onCreateRoom={vi.fn()}
-        onJoinRoom={onJoinRoom}
-      />,
-    )
+  render(<RoomJoin {...props} />)
+  return props
+}
+
+describe('RoomJoin', () => {
+  test('prefills an invitation but waits for explicit confirmation', async () => {
+    const user = userEvent.setup()
+    const props = renderRoomJoin({ initialCode: '123456', mode: 'invite' })
 
     expect(roomCodeInputs().map(input => input.value)).toEqual(['1', '2', '3', '4', '5', '6'])
-    expect(onJoinRoom).not.toHaveBeenCalled()
+    expect(screen.getByText('已读取邀请链接，确认后加入房间')).not.toBeNull()
+    expect(props.onSubmit).not.toHaveBeenCalled()
 
     await user.click(screen.getByRole('button', { name: '加入房间' }))
 
-    expect(onJoinRoom).toHaveBeenCalledTimes(1)
-    expect(onJoinRoom).toHaveBeenCalledWith('123456')
+    expect(props.onSubmit).toHaveBeenCalledTimes(1)
+    expect(props.onSubmit).toHaveBeenCalledWith('123456')
   })
 
-  test('starts with six empty inputs without a shared room code', () => {
-    render(<RoomJoin onCreateRoom={vi.fn()} onJoinRoom={vi.fn()} />)
+  test('labels a code-only join as an approval request', () => {
+    renderRoomJoin({ initialCode: '123456', mode: 'manual' })
 
-    expect(roomCodeInputs().map(input => input.value)).toEqual(['', '', '', '', '', ''])
-    expect(screen.getByRole('button', { name: '加入房间' }).hasAttribute('disabled')).toBe(true)
+    expect(screen.queryByText('已读取邀请链接，确认后加入房间')).toBeNull()
+    expect(screen.getByRole('button', { name: '请求加入' })).not.toBeNull()
   })
 
-  test('does not prefill an invalid initial code', () => {
-    render(
-      <RoomJoin
-        initialCode="１２３４５６"
-        onCreateRoom={vi.fn()}
-        onJoinRoom={vi.fn()}
-      />,
-    )
-
-    expect(roomCodeInputs().map(input => input.value)).toEqual(['', '', '', '', '', ''])
-  })
-
-  test('replaces a prefilled code completely when a shorter code is pasted', () => {
-    render(
-      <RoomJoin
-        initialCode="123456"
-        onCreateRoom={vi.fn()}
-        onJoinRoom={vi.fn()}
-      />,
-    )
+  test('reports typing, deleting, and pasting so invitation authority can be discarded', async () => {
+    const user = userEvent.setup()
+    const props = renderRoomJoin({ initialCode: '123456', mode: 'invite' })
     const inputs = roomCodeInputs()
 
+    await user.clear(inputs[0]!)
+    await user.type(inputs[0]!, '9')
     fireEvent.paste(inputs[0]!, {
       clipboardData: { getData: () => '789' },
     })
 
+    expect(props.onCodeEdited).toHaveBeenCalledTimes(3)
     expect(inputs.map(input => input.value)).toEqual(['7', '8', '9', '', '', ''])
     expect(screen.getByRole('button', { name: '加入房间' }).hasAttribute('disabled')).toBe(true)
   })
 
-  test('uses accurate, readable privacy copy', () => {
-    render(<RoomJoin onCreateRoom={vi.fn()} onJoinRoom={vi.fn()} />)
+  test('uses mode-specific busy copy and disables both actions', () => {
+    const { unmount } = render(
+      <RoomJoin
+        busy
+        initialCode="123456"
+        mode="invite"
+        onCodeEdited={vi.fn()}
+        onCreateRoom={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    )
+
+    expect((screen.getByRole('button', { name: '连接中…' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: '创建房间' }) as HTMLButtonElement).disabled).toBe(true)
+
+    unmount()
+    renderRoomJoin({ busy: true, initialCode: '123456', mode: 'manual' })
+
+    expect((screen.getByRole('button', { name: '申请中…' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  test('renders an accessible error beside the room-code input', () => {
+    renderRoomJoin({ error: '邀请链接无效或已过期', mode: 'invite' })
+
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toBe('邀请链接无效或已过期')
+    for (const input of roomCodeInputs()) {
+      expect(input.getAttribute('aria-describedby')).toBe(alert.id)
+      expect(input.getAttribute('aria-invalid')).toBe('true')
+    }
+  })
+
+  test('starts empty and rejects invalid initial codes', () => {
+    const { unmount } = render(
+      <RoomJoin
+        mode="manual"
+        onCodeEdited={vi.fn()}
+        onCreateRoom={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    )
+
+    expect(roomCodeInputs().map(input => input.value)).toEqual(['', '', '', '', '', ''])
+    expect(screen.getByRole('button', { name: '请求加入' }).hasAttribute('disabled')).toBe(true)
+
+    unmount()
+    renderRoomJoin({ initialCode: '１２３４５６' })
+    expect(roomCodeInputs().map(input => input.value)).toEqual(['', '', '', '', '', ''])
+  })
+
+  test('keeps the existing privacy copy readable', () => {
+    renderRoomJoin()
 
     const privacy = screen.getByText(
       '文件和文本正文通过加密的 WebRTC 通道传输，优先尝试设备直连，必要时经加密中继转发；应用服务器只协调连接，不保存传输内容。接收完成的文件会暂存在当前页面中，关闭结果或退出房间后释放。',

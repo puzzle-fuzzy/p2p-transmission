@@ -32,6 +32,35 @@ const deferredAction = () => {
 describe('ShareDialog', () => {
   beforeEach(() => setNativeShare(undefined))
 
+  test('uses one opaque invitation URL without rendering its capability', async () => {
+    const user = userEvent.setup()
+    const onCopy = vi.fn(async () => undefined)
+    const inviteToken = `inv_${'a'.repeat(43)}`
+    const roomUrl = `https://example.com/transfer#room=123456&invite=${inviteToken}`
+    render(
+      <ShareDialog
+        roomCode="123456"
+        roomUrl={roomUrl}
+        onCopy={onCopy}
+        onClose={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('扫描二维码或打开房间链接加入；房间码仅用于核对。')).not.toBeNull()
+    expect(screen.getByText('此链接包含加入权限，请只发送给可信接收者。')).not.toBeNull()
+    expect(document.body.textContent).not.toContain(inviteToken)
+    expect(document.body.textContent).not.toContain(roomUrl)
+    await waitFor(() => expect(qrCode.toCanvas).toHaveBeenCalledWith(
+      expect.any(HTMLCanvasElement),
+      roomUrl,
+      expect.any(Object),
+    ))
+
+    await user.click(screen.getByRole('button', { name: '复制房间链接' }))
+
+    expect(onCopy).toHaveBeenCalledWith(roomUrl)
+  })
+
   test('reports a room-code copy only after it succeeds', async () => {
     const user = userEvent.setup()
     const pendingCopy = deferredAction()
@@ -50,6 +79,8 @@ describe('ShareDialog', () => {
     expect(onCopy).toHaveBeenCalledWith('123456')
     const pendingButton = screen.getByRole('button', { name: '正在复制房间码' }) as HTMLButtonElement
     expect(pendingButton.disabled).toBe(true)
+    expect(pendingButton.className).toContain('size-11')
+    expect(pendingButton.className).toContain('rounded-full')
     await user.click(pendingButton)
     expect(onCopy).toHaveBeenCalledTimes(1)
 

@@ -192,7 +192,7 @@ export default function ShareDialog({
           分享房间
         </h2>
         <p className="mt-1 text-xs text-amber-50/50">
-          让对方扫描二维码或输入房间码加入
+          扫描二维码或打开房间链接加入；房间码仅用于核对。
         </p>
 
         <div className="mt-5 flex flex-col items-center gap-4">
@@ -219,7 +219,7 @@ export default function ShareDialog({
             </span>
             <button
               type="button"
-              className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-transparent text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none disabled:cursor-wait disabled:text-amber-50/30"
+              className="flex size-11 shrink-0 items-center justify-center rounded-full border border-transparent text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none disabled:cursor-wait disabled:text-amber-50/30"
               disabled={codeCopyStatus === 'copying'}
               onClick={() => { void handleCopyCode() }}
               aria-label={codeCopyLabel}
@@ -229,6 +229,10 @@ export default function ShareDialog({
               </span>
             </button>
           </div>
+
+          <p className="w-full text-center text-xs leading-5 text-amber-50/50">
+            此链接包含加入权限，请只发送给可信接收者。
+          </p>
 
           {/* Share / copy link */}
           <button
