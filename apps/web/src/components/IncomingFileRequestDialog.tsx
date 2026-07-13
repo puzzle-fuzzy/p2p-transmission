@@ -222,7 +222,7 @@ export default function IncomingFileRequestDialog({
                       href={downloadable.url}
                       download={downloadable.name}
                       aria-label={`下载 ${downloadable.name}`}
-                      className="flex size-11 shrink-0 items-center justify-center text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:bg-white/5 focus-visible:text-amber-50/80 focus-visible:outline-none"
+                      className="flex size-11 shrink-0 items-center justify-center rounded-full text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:bg-white/5 focus-visible:text-amber-50/80 focus-visible:outline-none"
                     >
                       <span className="material-symbols-outlined" style={{ fontSize: '17px' }} aria-hidden="true">download</span>
                     </a>

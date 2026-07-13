@@ -42,7 +42,7 @@ describe('TransferPeerFlow', () => {
     expect(screen.queryByTitle('Receiver 4')).toBeNull()
     const overflow = screen.getByText('+3')
     expect(overflow.textContent).toBe('+3')
-    expect(overflow.className).toContain('max-sm:!size-8')
+    expect(overflow.className).toContain('max-sm:size-8!')
   })
 
   test('renders only the sender when no receiver is connected', () => {
@@ -81,8 +81,8 @@ describe('TransferPeerFlow', () => {
     expect(requestingLine).not.toBeNull()
     expect(requestingLine?.parentElement?.className).toContain('w-5')
     expect(requestingLine?.parentElement?.className).toContain('sm:w-8')
-    expect(screen.getByTitle('Sender').className).toContain('max-sm:!size-8')
-    expect(screen.getByTitle('Receiver').className).toContain('max-sm:!size-8')
+    expect(screen.getByTitle('Sender').className).toContain('max-sm:size-8!')
+    expect(screen.getByTitle('Receiver').className).toContain('max-sm:size-8!')
     expect(status.querySelectorAll('.transfer-peer-flow__dot')).toHaveLength(0)
 
     rerender(

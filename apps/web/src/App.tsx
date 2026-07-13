@@ -32,6 +32,7 @@ import {
   createRoomSessionLifecycle,
   type RoomSessionLifecycle,
 } from './features/room/session-lifecycle'
+import { parseRoomCodeFromSearch } from './features/room/room-invite'
 import {
   addFileSelections,
   removeFileSelection,
@@ -48,8 +49,6 @@ import {
 } from './features/transfer/progress-frame'
 import {
   createSpeedTracker,
-  formatEta as formatSpeedEta,
-  formatSpeed,
   type SpeedTracker,
 } from './features/transfer/transfer-speed-tracker'
 import {
@@ -116,6 +115,45 @@ type FileProgressEvent = Extract<
   { type: 'transfer:file-progress' }
 >
 
+type FileSpeedData = Record<string, { speed: number; eta: number | undefined }>
+
+const speedSampleKey = (
+  direction: FileProgressEvent['direction'],
+  transferId: string,
+  peerId: string,
+  fileId: string,
+) => [direction, transferId, peerId, fileId].join('\u0000')
+
+const outgoingFileSpeedData = (
+  activity: OutgoingActivity,
+  tracker: SpeedTracker,
+): FileSpeedData => {
+  if (activity.kind !== 'file' || isTerminalActivity(activity)) return {}
+
+  return Object.fromEntries(Object.keys(activity.files).flatMap(fileId => {
+    const file = activity.files[fileId]
+    if (!file) return []
+    const samples = activity.peerIds.flatMap(peerId => {
+      const activityPeer = activity.peers[peerId]
+      const filePeer = file.peers[peerId]
+      if (!activityPeer?.accepted || activityPeer.outcome || !filePeer || filePeer.outcome) {
+        return []
+      }
+      const key = speedSampleKey('sending', activity.transferId, peerId, fileId)
+      const speed = tracker.getSpeed(key)
+      if (speed <= 0) return []
+      return [{ speed, eta: tracker.getEta(key) }]
+    })
+    if (samples.length === 0) return []
+    const finiteEtas = samples.flatMap(sample =>
+      sample.eta !== undefined && Number.isFinite(sample.eta) ? [sample.eta] : [])
+    return [[fileId, {
+      speed: Math.min(...samples.map(sample => sample.speed)),
+      eta: finiteEtas.length > 0 ? Math.max(...finiteEtas) : undefined,
+    }]]
+  }))
+}
+
 const senderFromRoom = (room?: PublicRoom) =>
   room?.participants.find(participant => participant.role === 'sender')?.visitor
 
@@ -172,7 +210,7 @@ function App() {
   const [receiverPanelState, setReceiverPanelState] = useState<ReceiverPanelState>({
     status: 'waiting',
   })
-  const [fileSpeedData, setFileSpeedData] = useState<Record<string, { speed: number; eta: number | undefined }>>({})
+  const [fileSpeedData, setFileSpeedData] = useState<FileSpeedData>({})
   const [shareDialogRoomCode, setShareDialogRoomCode] = useState<string>()
   const {
     toast: toastState,
@@ -223,6 +261,20 @@ function App() {
     setIncomingFile(file)
   }, [])
 
+  const clearFileSpeedPresentation = useCallback(() => {
+    speedTrackerRef.current.clear()
+    setFileSpeedData({})
+  }, [])
+
+  const syncOutgoingFileSpeedPresentation = useCallback((activity?: OutgoingActivity) => {
+    if (!activity || activity.kind !== 'file' || isTerminalActivity(activity)) {
+      progressSchedulerRef.current?.clear()
+      clearFileSpeedPresentation()
+      return
+    }
+    setFileSpeedData(outgoingFileSpeedData(activity, speedTrackerRef.current))
+  }, [clearFileSpeedPresentation])
+
   const applyTransferAction = useCallback((action: TransferUiAction) => {
     const next = transferUiReducer(transferUiStateRef.current, action)
     transferUiStateRef.current = next
@@ -257,10 +309,11 @@ function App() {
         type: 'peer-session:event',
         event,
       })
-      // Track speed for outgoing file transfers
-      if (event.direction === 'sending') {
-        tracker.record(event.fileId, event.fileBytes, event.fileTotalBytes)
-      }
+      tracker.record(
+        speedSampleKey(event.direction, event.transferId, event.peerId, event.fileId),
+        event.fileBytes,
+        event.fileTotalBytes,
+      )
     }
     if (nextTransferState !== transferUiStateRef.current) {
       transferUiStateRef.current = nextTransferState
@@ -268,60 +321,59 @@ function App() {
     }
 
     const current = incomingFileRef.current
-    if (!current || current.state.status !== 'receiving') return
+    if (current?.state.status === 'receiving') {
+      const progressByFileId = { ...current.state.progressByFileId }
+      const knownFileIds = new Set(current.files.map(file => file.fileId))
+      let changed = false
 
-    const progressByFileId = { ...current.state.progressByFileId }
-    const knownFileIds = new Set(current.files.map(file => file.fileId))
-    let changed = false
-
-    for (const event of events) {
-      if (
-        event.direction !== 'receiving'
-        || event.peerId !== current.peerId
-        || event.transferId !== current.transferId
-        || !knownFileIds.has(event.fileId)
-      ) {
-        continue
-      }
-
-      // Track speed for incoming files
-      tracker.record(event.fileId, event.fileBytes, event.fileTotalBytes)
-
-      const ratio = event.fileTotalBytes <= 0
-        ? 1
-        : event.fileBytes / event.fileTotalBytes
-      const next = Number.isFinite(ratio)
-        ? Math.min(1, Math.max(0, ratio))
-        : 0
-      const previous = progressByFileId[event.fileId] ?? 0
-      if (next <= previous) continue
-
-      progressByFileId[event.fileId] = next
-      changed = true
-    }
-
-    if (changed) {
-      replaceIncomingFile({
-        ...current,
-        state: { status: 'receiving', progressByFileId },
-      })
-    }
-
-    // Update speed/ETA data for file progress display
-    const newSpeedData: Record<string, { speed: number; eta: number | undefined }> = {}
-    for (const event of events) {
-      const speed = tracker.getSpeed(event.fileId)
-      if (speed > 0) {
-        const file = current?.files.find(f => f.fileId === event.fileId)
-        const totalBytes = file?.byteLength ?? event.fileTotalBytes
-        newSpeedData[event.fileId] = {
-          speed,
-          eta: tracker.getEta(event.fileId, totalBytes),
+      for (const event of events) {
+        if (
+          event.direction !== 'receiving'
+          || event.peerId !== current.peerId
+          || event.transferId !== current.transferId
+          || !knownFileIds.has(event.fileId)
+        ) {
+          continue
         }
+
+        const ratio = event.fileTotalBytes <= 0
+          ? 1
+          : event.fileBytes / event.fileTotalBytes
+        const next = Number.isFinite(ratio)
+          ? Math.min(1, Math.max(0, ratio))
+          : 0
+        const previous = progressByFileId[event.fileId] ?? 0
+        if (next <= previous) continue
+
+        progressByFileId[event.fileId] = next
+        changed = true
+      }
+
+      if (changed) {
+        replaceIncomingFile({
+          ...current,
+          state: { status: 'receiving', progressByFileId },
+        })
       }
     }
-    if (Object.keys(newSpeedData).length > 0) {
-      setFileSpeedData(prev => ({ ...prev, ...newSpeedData }))
+
+    const activity = nextTransferState.activity
+    if (current?.state.status === 'receiving') {
+      const nextSpeedData = Object.fromEntries(current.files.flatMap(file => {
+        const key = speedSampleKey(
+          'receiving',
+          current.transferId,
+          current.peerId,
+          file.fileId,
+        )
+        const speed = tracker.getSpeed(key)
+        return speed > 0
+          ? [[file.fileId, { speed, eta: tracker.getEta(key) }]]
+          : []
+      }))
+      setFileSpeedData(nextSpeedData)
+    } else if (activity?.kind === 'file') {
+      setFileSpeedData(outgoingFileSpeedData(activity, tracker))
     }
   }, [replaceIncomingFile])
 
@@ -383,11 +435,11 @@ function App() {
     setSelectionError('')
     setTextCopyStatus('idle')
     setReceiverPanelState({ status: 'waiting' })
-    setFileSpeedData({})
-    speedTrackerRef.current.clear()
+    clearFileSpeedPresentation()
     applyTransferAction(action)
   }, [
     applyTransferAction,
+    clearFileSpeedPresentation,
     clearTerminalHold,
     replaceFileSelections,
     replaceIncomingFile,
@@ -473,29 +525,6 @@ function App() {
     showToast,
   ])
 
-  useEffect(() => {
-    if (state.phase !== 'lobby' || !state.session) return
-    if (roomRecoveryAttemptedRef.current) return
-    roomRecoveryAttemptedRef.current = true
-
-    const roomSession = loadRoomSession()
-    if (!roomSession) return
-
-    if (Date.now() > roomSession.expiresAt) {
-      clearRoomSession()
-      showToast('上次的房间已到期，请创建或加入新房间', 'info')
-      return
-    }
-
-    if (roomSession.role === 'receiver') {
-      showToast('检测到上次加入的房间，正在重新连接…', 'info')
-      const code = roomSession.roomCode
-      // Clear before joining to prevent loops
-      clearRoomSession()
-      handleJoinRoom(code)
-    }
-  }, [state.phase, state.session, handleJoinRoom, showToast])
-
   const connectRealtime = useCallback((
     session: VisitorSession,
     bootstrap: RoomSessionBootstrap,
@@ -556,8 +585,12 @@ function App() {
           pendingOutgoingEventsRef.current.push(event)
           return
         }
+        const previousActivity = transferUiStateRef.current.activity
         const next = applyTransferAction({ type: 'peer-session:event', event })
         armTerminalHold(next.activity)
+        if (previousActivity?.kind === 'file' || next.activity?.kind === 'file') {
+          syncOutgoingFileSpeedPresentation(next.activity)
+        }
       }
 
       const failIncomingFile = (peerId: string, transferId: string, message?: string) => {
@@ -571,6 +604,7 @@ function App() {
           return
         }
         progressSchedulerRef.current?.clear()
+        clearFileSpeedPresentation()
         replaceIncomingFile({
           ...current,
           state: { status: 'error', message },
@@ -590,7 +624,7 @@ function App() {
             peerRetryCountsRef.current.delete(event.peerId)
           }
           if (event.state === 'closed') {
-            progressSchedulerRef.current?.clear()
+            if (role === 'receiver') progressSchedulerRef.current?.clear()
             applyOutgoingEvent(event)
             const currentFile = incomingFileRef.current
             if (currentFile?.peerId === event.peerId) {
@@ -665,6 +699,7 @@ function App() {
           }
 
           const fileNames = event.files.map(f => f.name)
+          clearFileSpeedPresentation()
           replaceIncomingFile({
             peerId: event.peerId,
             transferId: event.transferId,
@@ -722,6 +757,7 @@ function App() {
               }
             })
             progressSchedulerRef.current?.clear()
+            clearFileSpeedPresentation()
             replaceIncomingFile({
               ...current,
               state: { status: 'received', files },
@@ -741,7 +777,10 @@ function App() {
         }
 
         if (event.type === 'transfer:terminal') {
-          progressSchedulerRef.current?.clear()
+          if (role === 'receiver') {
+            progressSchedulerRef.current?.clear()
+            clearFileSpeedPresentation()
+          }
           applyOutgoingEvent(event)
           if (event.outcome !== 'completed') {
             failIncomingFile(event.peerId, event.transferId)
@@ -884,6 +923,7 @@ function App() {
   }, [
     applyTransferAction,
     armTerminalHold,
+    clearFileSpeedPresentation,
     disposePeerSession,
     disposeRoomResources,
     getProgressScheduler,
@@ -892,6 +932,7 @@ function App() {
     resetTransferPresentation,
     revokeObjectUrl,
     showToast,
+    syncOutgoingFileSpeedPresentation,
   ])
 
   const runWithFreshSession = useCallback(async <T,>(
@@ -947,11 +988,6 @@ function App() {
       const rtcConfiguration = resolveBootstrapRtcConfiguration(iceMode, result.value)
       assertBootstrapMembership(result.value, result.session.visitor.id, 'sender')
       roomRef.current = result.value.room
-      saveRoomSession({
-        roomCode: result.value.room.code,
-        role: 'sender',
-        expiresAt: result.value.room.expiresAt,
-      })
       dispatch({ type: 'room:created', room: result.value.room })
       connectRealtime(
         result.session,
@@ -968,17 +1004,23 @@ function App() {
     }
   }, [connectRealtime, runWithFreshSession, showToast, state.session])
 
-  const handleJoinRoom = useCallback(async (code: string) => {
+  const joinReceiverRoom = useCallback(async (
+    code: string,
+    reuseCurrentSession: boolean,
+  ) => {
     if (!state.session) return
     const operationGeneration = ++operationGenerationRef.current
     dispatch({ type: 'room:joining' })
 
     try {
-      const joinSession = await createVisitor()
-      if (operationGenerationRef.current !== operationGeneration) return
-      saveVisitorSession(joinSession)
-      if (joinSession.token !== state.session.token) {
-        dispatch({ type: 'visitor:ready', session: joinSession })
+      let joinSession = state.session
+      if (!reuseCurrentSession) {
+        joinSession = await createVisitor()
+        if (operationGenerationRef.current !== operationGeneration) return
+        saveVisitorSession(joinSession)
+        if (joinSession.token !== state.session.token) {
+          dispatch({ type: 'visitor:ready', session: joinSession })
+        }
       }
       const iceMode = getClientIceMode()
       const result = await runWithFreshSession(
@@ -993,17 +1035,12 @@ function App() {
       )
       if (!result) return
       if (operationGenerationRef.current !== operationGeneration) return
-      if (result.session.token !== state.session.token) {
+      if (result.session.token !== joinSession.token) {
         dispatch({ type: 'visitor:ready', session: result.session })
       }
       const rtcConfiguration = resolveBootstrapRtcConfiguration(iceMode, result.value)
       assertBootstrapMembership(result.value, result.session.visitor.id, 'receiver')
       roomRef.current = result.value.room
-      saveRoomSession({
-        roomCode: result.value.room.code,
-        role: 'receiver',
-        expiresAt: result.value.room.expiresAt,
-      })
       dispatch({ type: 'room:joined', room: result.value.room })
       connectRealtime(
         result.session,
@@ -1012,6 +1049,11 @@ function App() {
         rtcConfiguration,
         operationGeneration,
       )
+      saveRoomSession({
+        roomCode: result.value.room.code,
+        role: 'receiver',
+        expiresAt: result.value.room.expiresAt,
+      })
     } catch (error) {
       if (operationGenerationRef.current !== operationGeneration) return
       const message = error instanceof Error ? error.message : '加入房间失败'
@@ -1019,6 +1061,29 @@ function App() {
       dispatch({ type: 'error', message })
     }
   }, [connectRealtime, runWithFreshSession, showToast, state.session])
+
+  const handleJoinRoom = useCallback(
+    (code: string) => joinReceiverRoom(code, false),
+    [joinReceiverRoom],
+  )
+
+  useEffect(() => {
+    if (state.phase !== 'lobby' || !state.session) return
+    if (roomRecoveryAttemptedRef.current) return
+    roomRecoveryAttemptedRef.current = true
+
+    const roomSession = loadRoomSession()
+    if (!roomSession) return
+
+    if (Date.now() >= roomSession.expiresAt) {
+      clearRoomSession()
+      showToast('上次的房间已到期，请创建或加入新房间', 'info')
+      return
+    }
+
+    showToast('检测到上次加入的房间，正在重新连接…', 'info')
+    void joinReceiverRoom(roomSession.roomCode, true)
+  }, [state.phase, state.session, joinReceiverRoom, showToast])
 
   const startActivity = useCallback((activity: OutgoingActivity) => {
     clearTerminalHold()
@@ -1089,6 +1154,7 @@ function App() {
     if (!peerSession) throw new Error('点对点连接尚未就绪')
     const selections = fileSelectionsRef.current
     if (selections.length === 0) throw new Error('请先选择文件')
+    clearFileSpeedPresentation()
     outgoingOfferInFlightRef.current = true
     pendingOutgoingEventsRef.current = []
     let result: ReturnType<PeerSession['offerFiles']>
@@ -1114,15 +1180,18 @@ function App() {
         : `已向 ${String(result.peerCount)} 位接收者发送文件请求`,
       'info',
     )
-  }, [showToast, startActivity])
+  }, [clearFileSpeedPresentation, showToast, startActivity])
 
   const handleCancelTransfer = useCallback(() => {
     const activity = transferUiStateRef.current.activity
     if (!activity) return
     if (!peerSessionRef.current?.cancelTransfer(activity.transferId)) {
       showToast('无法取消当前传输')
+      return
     }
-  }, [showToast])
+    progressSchedulerRef.current?.clear()
+    clearFileSpeedPresentation()
+  }, [clearFileSpeedPresentation, showToast])
 
   const handleCloseText = useCallback(() => {
     if (incomingTextsRef.current.length === 0) return
@@ -1165,6 +1234,7 @@ function App() {
       current.transferId,
     )
     if (!accepted) {
+      clearFileSpeedPresentation()
       replaceIncomingFile({
         ...current,
         state: { status: 'error', message: '连接已断开，请退出后重新加入房间接收文件。' },
@@ -1188,26 +1258,28 @@ function App() {
       },
     })
     setReceiverPanelState({ status: 'receiving' })
-  }, [replaceIncomingFile])
+  }, [clearFileSpeedPresentation, replaceIncomingFile])
 
   const handleRejectFiles = useCallback(() => {
     const current = incomingFileRef.current
     if (!current || current.state.status !== 'pending') return
     const { peerId, transferId } = current
+    clearFileSpeedPresentation()
     replaceIncomingFile()
     setReceiverPanelState({ status: 'waiting' })
     peerSessionRef.current?.rejectFiles(peerId, transferId)
-  }, [replaceIncomingFile])
+  }, [clearFileSpeedPresentation, replaceIncomingFile])
 
   const handleCancelFiles = useCallback(() => {
     const current = incomingFileRef.current
     if (!current || current.state.status !== 'receiving') return
     const { transferId } = current
     progressSchedulerRef.current?.clear()
+    clearFileSpeedPresentation()
     replaceIncomingFile()
     setReceiverPanelState({ status: 'waiting' })
     peerSessionRef.current?.cancelTransfer(transferId)
-  }, [replaceIncomingFile])
+  }, [clearFileSpeedPresentation, replaceIncomingFile])
 
   const handleCloseFiles = useCallback(() => {
     const current = incomingFileRef.current
@@ -1215,9 +1287,10 @@ function App() {
     if (current.state.status === 'received') {
       for (const file of current.state.files) revokeObjectUrl(file.url)
     }
+    clearFileSpeedPresentation()
     replaceIncomingFile()
     setReceiverPanelState({ status: 'waiting' })
-  }, [replaceIncomingFile, revokeObjectUrl])
+  }, [clearFileSpeedPresentation, replaceIncomingFile, revokeObjectUrl])
 
   const handleLeaveRoom = useCallback(() => {
     const session = state.session
@@ -1252,14 +1325,15 @@ function App() {
     )
   }, [disposeRoomResources, showToast, state.role, state.session])
 
-  const handleCopyRoomCode = useCallback(async (code: string) => {
+  const handleCopyRoomCode = useCallback(async (value: string) => {
+    const isRoomCode = /^[0-9]{6}$/u.test(value)
     try {
       if (!navigator.clipboard) throw new Error('clipboard unavailable')
-      await navigator.clipboard.writeText(code)
-      showToast('房间码已复制', 'success')
+      await navigator.clipboard.writeText(value)
+      showToast(isRoomCode ? '房间码已复制' : '房间链接已复制', 'success')
     } catch {
-      showToast('无法复制房间码，请手动复制')
-      throw new Error('room code copy failed')
+      showToast(isRoomCode ? '无法复制房间码，请手动复制' : '无法复制房间链接，请手动复制')
+      throw new Error('room share copy failed')
     }
   }, [showToast])
 
@@ -1280,6 +1354,7 @@ function App() {
         {!roomView && state.phase !== 'booting' && (
           <RoomJoin
             busy={state.phase === 'joining'}
+            initialCode={parseRoomCodeFromSearch(window.location.search)}
             onCreateRoom={handleCreateRoom}
             onJoinRoom={handleJoinRoom}
           />

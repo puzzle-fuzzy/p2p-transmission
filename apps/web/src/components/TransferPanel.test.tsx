@@ -236,6 +236,11 @@ describe('TransferPanel', () => {
     expect(addMore).toBeDefined()
     expect(fileScroll.contains(addMore as Node)).toBe(false)
 
+    const clearFiles = screen.getByRole('button', { name: '清空' })
+    expect(clearFiles.className).toContain('shrink-0')
+    await user.click(clearFiles)
+    expect(onFileRemoved).toHaveBeenCalledWith('file-existing')
+
     fireEvent.change(input, { target: { files: [pickedFile] } })
     expect(onFilesAdded).toHaveBeenLastCalledWith([pickedFile])
 
@@ -249,6 +254,56 @@ describe('TransferPanel', () => {
 
     await user.click(screen.getByRole('button', { name: '发送 1 个文件' }))
     expect(onSendFiles).toHaveBeenCalledTimes(1)
+  })
+
+  test('explains that files cannot be sent before receivers connect', async () => {
+    const user = userEvent.setup()
+    const selection = createSelection(
+      'file-waiting',
+      new File(['waiting'], 'waiting.txt', { type: 'text/plain' }),
+    )
+    const onFileRemoved = vi.fn()
+    const onSendFiles = vi.fn(async () => undefined)
+    render(
+      <TransferPanel
+        {...createProps({
+          receivers: [],
+          files: [selection],
+          onFileRemoved,
+          onSendFiles,
+        })}
+      />,
+    )
+
+    await user.click(screen.getByRole('tab', { name: '传输文件' }))
+
+    const sendButton = screen.getByRole('button', { name: '暂无接收者连接' }) as HTMLButtonElement
+    expect(sendButton.disabled).toBe(true)
+    expect(screen.queryByRole('button', { name: '发送 1 个文件' })).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: '清空' }))
+    expect(onFileRemoved).toHaveBeenCalledWith('file-waiting')
+    expect(onSendFiles).not.toHaveBeenCalled()
+  })
+
+  test('clears every selected file exactly once', async () => {
+    const user = userEvent.setup()
+    const files = [
+      createSelection('file-one', new File(['one'], 'one.txt')),
+      createSelection('file-two', new File(['two'], 'two.txt')),
+      createSelection('file-three', new File(['three'], 'three.txt')),
+    ]
+    const onFileRemoved = vi.fn()
+    render(<TransferPanel {...createProps({ files, onFileRemoved })} />)
+
+    await user.click(screen.getByRole('tab', { name: '传输文件' }))
+    await user.click(screen.getByRole('button', { name: '清空' }))
+
+    expect(onFileRemoved.mock.calls).toEqual([
+      ['file-one'],
+      ['file-two'],
+      ['file-three'],
+    ])
   })
 
   test('exposes controlled 10-file and 100-MiB validation errors', () => {
@@ -267,6 +322,15 @@ describe('TransferPanel', () => {
     )
     expect(screen.getByRole('alert').textContent)
       .toContain('文件总大小不能超过 100 MiB')
+  })
+
+  test('shows the 10-file and 100-MiB limits before files are selected', async () => {
+    const user = userEvent.setup()
+    render(<TransferPanel {...createProps()} />)
+
+    await user.click(screen.getByRole('tab', { name: '传输文件' }))
+
+    expect(screen.getByText('一次最多 10 个文件，总计不超过 100 MiB')).toBeDefined()
   })
 
   test('shows real slowest-peer file progress, locks editing, and exposes Cancel', async () => {

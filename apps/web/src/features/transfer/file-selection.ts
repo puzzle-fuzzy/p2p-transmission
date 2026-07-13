@@ -3,6 +3,9 @@ import {
   MAX_FILE_COUNT,
 } from '@p2p/contracts'
 
+const MEBIBYTE_BYTES = 1024 * 1024
+const MAX_FILE_BATCH_MEBIBYTES = MAX_FILE_BATCH_BYTES / MEBIBYTE_BYTES
+
 export type FileSelection = {
   fileId: string
   file: File
@@ -50,7 +53,7 @@ export const addFileSelections = (
     return {
       ok: false,
       code: 'FILE_BATCH_SIZE_LIMIT',
-      message: '文件总大小不能超过 500 MiB',
+      message: `文件总大小不能超过 ${String(MAX_FILE_BATCH_MEBIBYTES)} MiB`,
     }
   }
 

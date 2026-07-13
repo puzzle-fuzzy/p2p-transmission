@@ -28,7 +28,7 @@ describe('room session lifecycle', () => {
     const lifecycle = createRoomSessionLifecycle({
       expiresAt: 1_000,
       now: () => now,
-      setTimer: () => 1 as ReturnType<typeof setTimeout>,
+      setTimer: () => 1 as unknown as ReturnType<typeof setTimeout>,
       clearTimer: vi.fn(),
       onExpire,
     })
@@ -47,7 +47,7 @@ describe('room session lifecycle', () => {
     const lifecycle = createRoomSessionLifecycle({
       expiresAt: 1_000,
       now: () => 100,
-      setTimer: () => 7 as ReturnType<typeof setTimeout>,
+      setTimer: () => 7 as unknown as ReturnType<typeof setTimeout>,
       clearTimer,
       isCurrent: () => current,
       onExpire,

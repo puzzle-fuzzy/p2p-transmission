@@ -75,15 +75,18 @@ vi.mock('./components/Loading', () => ({ default: () => <div>loading</div> }))
 
 vi.mock('./components/RoomJoin', () => ({
   default: ({
+    initialCode,
     onCreateRoom,
     onJoinRoom,
   }: {
+    initialCode?: string
     onCreateRoom(): Promise<void>
     onJoinRoom(code: string): Promise<void>
   }) => (
     <div>
       <button type="button" onClick={() => { void onCreateRoom() }}>创建测试房间</button>
-      <button type="button" onClick={() => { void onJoinRoom('012345') }}>加入测试房间</button>
+      <button type="button" onClick={() => { void onJoinRoom(initialCode ?? '012345') }}>加入测试房间</button>
+      <output data-testid="initial-room-code">{initialCode ?? ''}</output>
     </div>
   ),
 }))
@@ -92,6 +95,7 @@ type MockTransferPanelProps = {
   activity?: OutgoingActivity
   files: FileSelection[]
   receivers: PublicVisitor[]
+  fileSpeedData?: Record<string, { speed: number; eta: number | undefined }>
   onFilesAdded(files: readonly File[]): void
   onSendText(text: string): Promise<void>
   onSendFiles(): Promise<void>
@@ -103,6 +107,8 @@ vi.mock('./components/TransferPanel', () => ({
     const firstFile = props.activity
       ? Object.values(props.activity.files)[0]
       : undefined
+    const firstFileId = props.files[0]?.fileId
+    const firstFileSpeed = firstFileId ? props.fileSpeedData?.[firstFileId] : undefined
     return (
       <div
         data-testid="transfer-panel"
@@ -134,6 +140,8 @@ vi.mock('./components/TransferPanel', () => ({
         <button type="button" onClick={props.onCancel}>取消测试传输</button>
         <output data-testid="activity-phase">{props.activity?.phase ?? 'idle'}</output>
         <output data-testid="file-progress">{firstFile?.progress ?? 0}</output>
+        <output data-testid="file-speed">{firstFileSpeed?.speed ?? ''}</output>
+        <output data-testid="file-eta">{firstFileSpeed?.eta ?? ''}</output>
       </div>
     )
   },
@@ -187,17 +195,19 @@ vi.mock('./components/IncomingFileRequestDialog', () => ({
   default: ({
     files,
     state,
+    fileSpeedData,
     onAccept,
     onReject,
     onCancel,
     onClose,
   }: {
-    files: Array<{ name: string }>
+    files: Array<{ fileId: string; name: string }>
     state: {
       status: string
       files?: Array<{ name: string; url: string }>
       progressByFileId?: Record<string, number>
     }
+    fileSpeedData?: Record<string, { speed: number; eta: number | undefined }>
     onAccept(): void
     onReject(): void
     onCancel(): void
@@ -205,6 +215,12 @@ vi.mock('./components/IncomingFileRequestDialog', () => ({
   }) => (
     <div role="dialog" aria-label="收到文件">
       <div data-testid="file-dialog-status">{state.status}</div>
+      <output data-testid="incoming-file-speed">
+        {fileSpeedData?.[files[0]?.fileId ?? '']?.speed ?? ''}
+      </output>
+      <output data-testid="incoming-file-eta">
+        {fileSpeedData?.[files[0]?.fileId ?? '']?.eta ?? ''}
+      </output>
       {state.status === 'receiving' && (
         <output data-testid="incoming-file-progress">
           {JSON.stringify(state.progressByFileId)}
@@ -274,7 +290,8 @@ class FakeRealtimeClient {
 class FakePeerSession {
   readonly syncRoom = vi.fn()
   readonly handleSignal = vi.fn(async () => undefined)
-  readonly readyPeerIds = vi.fn((): readonly string[] => ['receiver'])
+  readyPeerIdList: readonly string[] = ['receiver']
+  readonly readyPeerIds = vi.fn((): readonly string[] => this.readyPeerIdList)
   readonly close = vi.fn()
   readonly offerText = vi.fn((_text: string) => ({
     transferId: 'text-1',
@@ -318,6 +335,7 @@ const visitor = (
 
 const sender = visitor('sender', '发送者')
 const receiver = visitor('receiver', '接收者')
+const receiverTwo = visitor('receiver-2', '接收者二号')
 
 const room: PublicRoom = {
   code: '012345',
@@ -394,6 +412,8 @@ const receivingProgress = (
 })
 
 beforeEach(() => {
+  window.localStorage.clear()
+  window.history.replaceState({}, '', '/')
   realtime = new FakeRealtimeClient()
   peerSession = new FakePeerSession()
   boundary.createRealtimeClient.mockReturnValue(realtime)
@@ -551,6 +571,97 @@ describe('App transfer integration', () => {
     )
   })
 
+  test('prefills a valid shared room link but waits for explicit join', async () => {
+    window.history.replaceState({}, '', '/?room=654321')
+    boundary.createVisitor.mockResolvedValueOnce(sessionFor(receiver))
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    expect((await screen.findByTestId('initial-room-code')).textContent).toBe('654321')
+    expect(boundary.joinRoom).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: '加入测试房间' }))
+    await waitFor(() => expect(boundary.joinRoom).toHaveBeenCalledWith(
+      '654321',
+      'token-receiver',
+      'receiver',
+      'off',
+    ))
+  })
+
+  test('recovers one persisted receiver room without clearing it before bootstrap completes', async () => {
+    const persisted = {
+      roomCode: room.code,
+      role: 'receiver',
+      expiresAt: Date.now() + 60_000,
+    }
+    window.localStorage.setItem('p2p.roomSession', JSON.stringify(persisted))
+    boundary.loadVisitorSession.mockReturnValue(sessionFor(receiver))
+    let resolveJoin!: (value: { room: PublicRoom }) => void
+    const pendingJoin = new Promise<{ room: PublicRoom }>(resolve => {
+      resolveJoin = resolve
+    })
+    boundary.joinRoom.mockReturnValueOnce(pendingJoin)
+
+    render(<App />)
+
+    await waitFor(() => expect(boundary.joinRoom).toHaveBeenCalledWith(
+      room.code,
+      'token-receiver',
+      'receiver',
+      'off',
+    ))
+    expect(boundary.createVisitor).not.toHaveBeenCalled()
+    expect(JSON.parse(window.localStorage.getItem('p2p.roomSession') ?? 'null')).toEqual(persisted)
+
+    await act(async () => {
+      resolveJoin({ room })
+      await pendingJoin
+    })
+    await waitFor(() => expect(boundary.createRealtimeClient).toHaveBeenCalledTimes(1))
+    expect(JSON.parse(window.localStorage.getItem('p2p.roomSession') ?? 'null')).toEqual({
+      roomCode: room.code,
+      role: 'receiver',
+      expiresAt: room.expiresAt,
+    })
+  })
+
+  test('does not recover a receiver room at its exact expiry boundary', async () => {
+    const now = Date.now()
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(now)
+    boundary.loadVisitorSession.mockReturnValue(sessionFor(receiver))
+    window.localStorage.setItem('p2p.roomSession', JSON.stringify({
+      roomCode: room.code,
+      role: 'receiver',
+      expiresAt: now,
+    }))
+
+    try {
+      render(<App />)
+
+      await waitFor(() => expect(window.localStorage.getItem('p2p.roomSession')).toBeNull())
+      expect(boundary.joinRoom).not.toHaveBeenCalled()
+      expect(boundary.createVisitor).not.toHaveBeenCalled()
+      expect(boundary.showToast).toHaveBeenCalledWith(
+        '上次的房间已到期，请创建或加入新房间',
+        'info',
+      )
+    } finally {
+      nowSpy.mockRestore()
+    }
+  })
+
+  test('does not persist an unsupported sender recovery session', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByRole('button', { name: '创建测试房间' }))
+    await waitFor(() => expect(boundary.createRealtimeClient).toHaveBeenCalledTimes(1))
+
+    expect(window.localStorage.getItem('p2p.roomSession')).toBeNull()
+  })
+
   test('passes only ready room receivers to the transfer panel', async () => {
     const receiverTwo = visitor('receiver-2', '接收者二号')
     const roomWithTwoReceivers: PublicRoom = {
@@ -670,7 +781,7 @@ describe('App transfer integration', () => {
     expect(screen.queryByRole('dialog', { name: '收到文件' })).toBeNull()
     expect(screen.getByRole('button', { name: '创建测试房间' })).toBeTruthy()
     expect(boundary.showToast).toHaveBeenCalledWith(
-      '发送者已离开，房间已关闭',
+      '发送者已退出，房间自动关闭',
       'info',
     )
   })
@@ -715,63 +826,88 @@ describe('App transfer integration', () => {
   })
 
   test('accepts or rejects only file requests and creates/revokes each result URL once', async () => {
-    const user = await enterRoom('receiver')
-    emit({
-      type: 'transfer:file-requested',
-      peerId: sender.id,
-      transferId: 'files-reject',
-      files: [{
-        fileId: 'file-reject',
-        streamId: 1,
-        name: '拒绝.txt',
-        mimeType: 'text/plain',
-        byteLength: 1,
-        lastModified: 1,
-        chunkSize: 1024,
-        chunkCount: 1,
-      }],
-    })
-    await user.click(screen.getByRole('button', { name: '拒绝测试文件' }))
-    expect(peerSession.rejectFiles).toHaveBeenCalledWith(sender.id, 'files-reject')
+    let now = Date.now()
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
 
-    emit({
-      type: 'transfer:file-requested',
-      peerId: sender.id,
-      transferId: 'files-receive',
-      files: [{
-        fileId: 'file-1',
-        streamId: 2,
-        name: '接收.txt',
-        mimeType: 'text/plain',
-        byteLength: 4,
-        lastModified: 1,
-        chunkSize: 1024,
-        chunkCount: 1,
-      }],
-    })
-    await user.click(screen.getByRole('button', { name: '接收测试文件' }))
-    expect(peerSession.acceptFiles).toHaveBeenCalledWith(sender.id, 'files-receive')
+    try {
+      const user = await enterRoom('receiver')
+      emit({
+        type: 'transfer:file-requested',
+        peerId: sender.id,
+        transferId: 'files-reject',
+        files: [{
+          fileId: 'file-reject',
+          streamId: 1,
+          name: '拒绝.txt',
+          mimeType: 'text/plain',
+          byteLength: 1,
+          lastModified: 1,
+          chunkSize: 1024,
+          chunkCount: 1,
+        }],
+      })
+      await user.click(screen.getByRole('button', { name: '拒绝测试文件' }))
+      expect(peerSession.rejectFiles).toHaveBeenCalledWith(sender.id, 'files-reject')
 
-    const received: PeerSessionEvent = {
-      type: 'transfer:files-received',
-      peerId: sender.id,
-      transferId: 'files-receive',
-      files: [{
-        fileId: 'file-1',
-        name: '接收.txt',
-        mimeType: 'text/plain',
-        byteLength: 4,
-        lastModified: 1,
-        blob: new Blob(['body']),
-      }],
+      emit({
+        type: 'transfer:file-requested',
+        peerId: sender.id,
+        transferId: 'files-receive',
+        files: [{
+          fileId: 'file-1',
+          streamId: 2,
+          name: '接收.txt',
+          mimeType: 'text/plain',
+          byteLength: 4,
+          lastModified: 1,
+          chunkSize: 1024,
+          chunkCount: 1,
+        }],
+      })
+      await user.click(screen.getByRole('button', { name: '接收测试文件' }))
+      expect(peerSession.acceptFiles).toHaveBeenCalledWith(sender.id, 'files-receive')
+
+      emit(receivingProgress('files-receive', 'file-1', 0, 4))
+      act(() => {
+        const callback = frameCallbacks.get(1)
+        frameCallbacks.delete(1)
+        callback?.(0)
+      })
+      now += 1_000
+      emit(receivingProgress('files-receive', 'file-1', 2, 4))
+      act(() => {
+        const callback = frameCallbacks.get(2)
+        frameCallbacks.delete(2)
+        callback?.(0)
+      })
+      expect(screen.getByTestId('incoming-file-speed').textContent).toBe('2')
+      expect(screen.getByTestId('incoming-file-eta').textContent).toBe('1')
+
+      const received: PeerSessionEvent = {
+        type: 'transfer:files-received',
+        peerId: sender.id,
+        transferId: 'files-receive',
+        files: [{
+          fileId: 'file-1',
+          name: '接收.txt',
+          mimeType: 'text/plain',
+          byteLength: 4,
+          lastModified: 1,
+          blob: new Blob(['body']),
+        }],
+      }
+      emit(received)
+      emit(received)
+
+      expect(createObjectUrl).toHaveBeenCalledTimes(1)
+      expect(screen.getByTestId('incoming-file-speed').textContent).toBe('')
+      expect(screen.getByTestId('incoming-file-eta').textContent).toBe('')
+      await user.click(screen.getByRole('button', { name: '关闭文件弹窗' }))
+      expect(revokeObjectUrl).toHaveBeenCalledTimes(1)
+      expect(revokeObjectUrl).toHaveBeenCalledWith('blob:test-1')
+    } finally {
+      nowSpy.mockRestore()
     }
-    emit(received)
-    emit(received)
-
-    expect(createObjectUrl).toHaveBeenCalledTimes(1)
-    await user.click(screen.getByRole('button', { name: '关闭文件弹窗' }))
-    expect(revokeObjectUrl).toHaveBeenCalledTimes(1)
-    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:test-1')
   })
 
   test('tracks receiving progress independently per file without regressions', async () => {
@@ -844,6 +980,64 @@ describe('App transfer integration', () => {
       'file-1': 0.25,
       'file-2': 0.75,
     })
+  })
+
+  test('clears incoming speed and ETA when the transfer fails and closes', async () => {
+    let now = Date.now()
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+
+    try {
+      const user = await enterRoom('receiver')
+      emit({
+        type: 'transfer:file-requested',
+        peerId: sender.id,
+        transferId: 'files-speed-error',
+        files: [{
+          fileId: 'file-speed-error',
+          streamId: 14,
+          name: '中断.bin',
+          mimeType: 'application/octet-stream',
+          byteLength: 100,
+          lastModified: 1,
+          chunkSize: 1024,
+          chunkCount: 1,
+        }],
+      })
+      await user.click(screen.getByRole('button', { name: '接收测试文件' }))
+
+      emit(receivingProgress('files-speed-error', 'file-speed-error', 0, 100))
+      act(() => {
+        const callback = frameCallbacks.get(1)
+        frameCallbacks.delete(1)
+        callback?.(0)
+      })
+      now += 1_000
+      emit(receivingProgress('files-speed-error', 'file-speed-error', 50, 100))
+      act(() => {
+        const callback = frameCallbacks.get(2)
+        frameCallbacks.delete(2)
+        callback?.(0)
+      })
+
+      expect(screen.getByTestId('incoming-file-speed').textContent).toBe('50')
+      expect(screen.getByTestId('incoming-file-eta').textContent).toBe('1')
+
+      emit({
+        type: 'transfer:terminal',
+        peerId: sender.id,
+        transferId: 'files-speed-error',
+        outcome: 'failed',
+      })
+
+      expect(screen.getByTestId('file-dialog-status').textContent).toBe('error')
+      expect(screen.getByTestId('incoming-file-speed').textContent).toBe('')
+      expect(screen.getByTestId('incoming-file-eta').textContent).toBe('')
+
+      await user.click(screen.getByRole('button', { name: '关闭文件弹窗' }))
+      expect(screen.queryByRole('dialog', { name: '收到文件' })).toBeNull()
+    } finally {
+      nowSpy.mockRestore()
+    }
   })
 
   test('cancels an active incoming batch and clears pending progress safely', async () => {
@@ -1011,6 +1205,137 @@ describe('App transfer integration', () => {
     })
     act(() => realtime.emitStatus('reconnecting'))
     expect(cancelFrame).toHaveBeenCalledTimes(1)
+  })
+
+  test('keeps real multi-receiver progress and speed isolated through peer terminals', async () => {
+    let now = Date.now()
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    const roomWithTwoReceivers: PublicRoom = {
+      ...room,
+      receivers: [receiver.id, receiverTwo.id],
+      participants: [
+        ...room.participants,
+        {
+          visitor: receiverTwo,
+          role: 'receiver',
+          joinedAt: 1,
+          status: 'online',
+        },
+      ],
+    }
+    boundary.createRoom.mockResolvedValueOnce({ room: roomWithTwoReceivers })
+    peerSession.readyPeerIdList = [receiver.id, receiverTwo.id]
+    peerSession.offerFiles.mockReturnValueOnce({
+      transferId: 'files-1',
+      peerIds: [receiver.id, receiverTwo.id],
+      peerCount: 2,
+      unsupportedPeerIds: [],
+    })
+
+    try {
+      const user = await enterRoom('sender')
+      expect(screen.getByTestId('transfer-panel').dataset.receiverIds).toBe(
+        `${receiver.id},${receiverTwo.id}`,
+      )
+      await user.click(screen.getByRole('button', { name: '添加测试文件' }))
+      await user.click(screen.getByRole('button', { name: '发送测试文件' }))
+      const fileId = peerSession.offerFiles.mock.calls[0]?.[0][0]?.fileId
+      expect(fileId).toBeTruthy()
+
+      for (const peerId of [receiver.id, receiverTwo.id]) {
+        emit({
+          type: 'transfer:file-decision',
+          peerId,
+          transferId: 'files-1',
+          decision: 'accept',
+        })
+        emit({
+          type: 'transfer:file-progress',
+          peerId,
+          transferId: 'files-1',
+          fileId: fileId!,
+          direction: 'sending',
+          fileBytes: 0,
+          fileTotalBytes: 100,
+          batchBytes: 0,
+          batchTotalBytes: 100,
+        })
+      }
+      act(() => {
+        const callback = frameCallbacks.get(1)
+        frameCallbacks.delete(1)
+        callback?.(0)
+      })
+
+      now += 1_000
+      for (const [peerId, fileBytes] of [[receiver.id, 20], [receiverTwo.id, 80]] as const) {
+        emit({
+          type: 'transfer:file-progress',
+          peerId,
+          transferId: 'files-1',
+          fileId: fileId!,
+          direction: 'sending',
+          fileBytes,
+          fileTotalBytes: 100,
+          batchBytes: fileBytes,
+          batchTotalBytes: 100,
+        })
+      }
+      act(() => {
+        const callback = frameCallbacks.get(2)
+        frameCallbacks.delete(2)
+        callback?.(0)
+      })
+
+      expect(screen.getByTestId('file-speed').textContent).toBe('20')
+      expect(screen.getByTestId('file-eta').textContent).toBe('4')
+
+      now += 1_000
+      emit({
+        type: 'transfer:file-progress',
+        peerId: receiverTwo.id,
+        transferId: 'files-1',
+        fileId: fileId!,
+        direction: 'sending',
+        fileBytes: 90,
+        fileTotalBytes: 100,
+        batchBytes: 90,
+        batchTotalBytes: 100,
+      })
+      expect(frameCallbacks.has(3)).toBe(true)
+
+      emit({
+        type: 'transfer:terminal',
+        peerId: receiver.id,
+        transferId: 'files-1',
+        outcome: 'completed',
+      })
+
+      expect(frameCallbacks.has(3)).toBe(true)
+      expect(screen.getByTestId('file-progress').textContent).toBe('0.8')
+      expect(screen.getByTestId('file-speed').textContent).toBe('80')
+      expect(screen.getByTestId('file-eta').textContent).toBe('0.25')
+
+      act(() => {
+        const callback = frameCallbacks.get(3)
+        frameCallbacks.delete(3)
+        callback?.(0)
+      })
+      expect(screen.getByTestId('file-progress').textContent).toBe('0.9')
+      expect(screen.getByTestId('file-speed').textContent).not.toBe('')
+
+      emit({
+        type: 'transfer:terminal',
+        peerId: receiverTwo.id,
+        transferId: 'files-1',
+        outcome: 'completed',
+      })
+
+      expect(screen.getByTestId('file-speed').textContent).toBe('')
+      expect(screen.getByTestId('file-eta').textContent).toBe('')
+    } finally {
+      nowSpy.mockRestore()
+    }
   })
 
   test('a stale terminal callback cannot clear a newer generation', async () => {

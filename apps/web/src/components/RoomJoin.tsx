@@ -2,16 +2,25 @@ import { useMemo, useRef, useState } from 'react'
 
 type RoomJoinProps = {
   busy?: boolean
+  initialCode?: string
   onCreateRoom(): void
   onJoinRoom(code: string): void
 }
 
+const initialDigits = (code?: string) => {
+  const value = code ?? ''
+  return /^[0-9]{6}$/u.test(value)
+    ? Array.from(value)
+    : Array.from({ length: 6 }, () => '')
+}
+
 export default function RoomJoin({
   busy = false,
+  initialCode,
   onCreateRoom,
   onJoinRoom,
 }: RoomJoinProps) {
-  const [digits, setDigits] = useState(Array.from({ length: 6 }, () => ''))
+  const [digits, setDigits] = useState(() => initialDigits(initialCode))
   const inputRefs = useRef<(HTMLInputElement | null)[]>([])
   const code = useMemo(() => digits.join(''), [digits])
 
@@ -39,13 +48,7 @@ export default function RoomJoin({
     e.preventDefault()
     const text = e.clipboardData.getData('text')
     const chars = text.replace(/\D/g, '').split('').slice(0, 6)
-    setDigits(prev => {
-      const next = [...prev]
-      chars.forEach((char, i) => {
-        next[i] = char
-      })
-      return next
-    })
+    setDigits(Array.from({ length: 6 }, (_, index) => chars[index] ?? ''))
     const nextIndex = Math.min(chars.length, 5)
     inputRefs.current[nextIndex]?.focus()
   }
@@ -105,10 +108,8 @@ export default function RoomJoin({
       </button>
 
       {/* 隐私声明 */}
-      <div className="mt-6 text-center text-xs leading-5 text-amber-50/40">
-        数据通过端到端加密直接在设备间传输，不会存储在任何服务器上。
-        <br />
-        文件传输结束即从内存清除，不留缓存。
+      <div className="mt-6 text-center text-xs leading-5 text-amber-50/60">
+        {'文件和文本正文通过加密的 WebRTC 通道传输，优先尝试设备直连，必要时经加密中继转发；应用服务器只协调连接，不保存传输内容。接收完成的文件会暂存在当前页面中，关闭结果或退出房间后释放。'}
       </div>
     </div>
   )

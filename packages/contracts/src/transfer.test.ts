@@ -4,6 +4,7 @@ import {
   encodeTransferMessage,
   MAX_CONTROL_FRAME_BYTES,
   MAX_FILE_BATCH_BYTES,
+  MAX_FILE_COUNT,
   parseTransferMessage,
   sanitizeFileName,
   textByteLength,
@@ -180,7 +181,7 @@ describe('transfer protocol v2', () => {
   })
 
   test('rejects file-count and aggregate-byte overflow', () => {
-    const eleven = Array.from({ length: 11 }, (_, index) => descriptor({
+    const overflow = Array.from({ length: MAX_FILE_COUNT + 1 }, (_, index) => descriptor({
       fileId: `file_${index + 1}`,
       streamId: index + 1,
       byteLength: 0,
@@ -188,7 +189,7 @@ describe('transfer protocol v2', () => {
     }))
 
     expectProtocolError(fileRequest([]))
-    expectProtocolError(fileRequest(eleven))
+    expectProtocolError(fileRequest(overflow))
     expectProtocolError(fileRequest([descriptor({
       byteLength: MAX_FILE_BATCH_BYTES + 1,
       chunkCount: Math.ceil((MAX_FILE_BATCH_BYTES + 1) / DEFAULT_FILE_CHUNK_BYTES),

@@ -1,10 +1,8 @@
-import type { ParticipantRole } from '../shared/contracts'
-
 const ROOM_SESSION_KEY = 'p2p.roomSession'
 
 export type RoomSession = {
   roomCode: string
-  role: Exclude<ParticipantRole, 'receiver'> | 'receiver'
+  role: 'receiver'
   expiresAt: number
 }
 
@@ -12,7 +10,10 @@ const isRoomSession = (value: unknown): value is RoomSession => {
   if (!value || typeof value !== 'object') return false
   const session = value as RoomSession
   return Boolean(
-    session.roomCode && session.role && Number.isSafeInteger(session.expiresAt),
+    typeof session.roomCode === 'string'
+    && /^\d{6}$/u.test(session.roomCode)
+    && session.role === 'receiver'
+    && Number.isSafeInteger(session.expiresAt),
   )
 }
 

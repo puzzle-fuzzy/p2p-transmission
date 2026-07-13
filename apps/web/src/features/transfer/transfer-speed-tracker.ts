@@ -1,13 +1,14 @@
 export type SpeedSample = {
   timestamp: number
   bytes: number
+  totalBytes: number
 }
 
 export type SpeedTracker = {
-  record(fileId: string, bytes: number, totalBytes: number): void
-  getSpeed(fileId: string): number // bytes per second
-  getEta(fileId: string): number | undefined // seconds remaining
-  reset(fileId: string): void
+  record(key: string, bytes: number, totalBytes: number): void
+  getSpeed(key: string): number // bytes per second
+  getEta(key: string): number | undefined // seconds remaining
+  reset(key: string): void
   clear(): void
 }
 
@@ -17,61 +18,74 @@ const MAX_SAMPLES = 20
 export const createSpeedTracker = (now: () => number = Date.now): SpeedTracker => {
   const samples = new Map<string, SpeedSample[]>()
 
-  const record = (fileId: string, bytes: number, totalBytes: number) => {
-    const t = now()
-    const fileSamples = samples.get(fileId) ?? []
+  const record = (key: string, bytes: number, totalBytes: number) => {
+    const timestamp = now()
+    if (
+      !Number.isFinite(timestamp)
+      || !Number.isFinite(bytes)
+      || !Number.isFinite(totalBytes)
+      || bytes < 0
+      || totalBytes < 0
+      || bytes > totalBytes
+    ) {
+      return
+    }
+
+    const keySamples = samples.get(key) ?? []
 
     // Only record if meaningful progress was made
-    const last = fileSamples[fileSamples.length - 1]
-    if (last && t - last.timestamp < 200) return // Throttle to ~5 updates/sec
+    const last = keySamples[keySamples.length - 1]
+    if (last && timestamp - last.timestamp < 200) return // Throttle to ~5 updates/sec
     if (last && bytes <= last.bytes) return // No progress
 
-    fileSamples.push({ timestamp: t, bytes })
+    keySamples.push({ timestamp, bytes, totalBytes })
 
     // Trim old samples outside the window
-    const cutoff = t - MOVING_AVERAGE_WINDOW_MS
-    while (fileSamples.length > 1 && fileSamples[0].timestamp < cutoff) {
-      fileSamples.shift()
+    const cutoff = timestamp - MOVING_AVERAGE_WINDOW_MS
+    while (keySamples.length > 1 && keySamples[0].timestamp < cutoff) {
+      keySamples.shift()
     }
 
     // Cap total samples
-    while (fileSamples.length > MAX_SAMPLES) {
-      fileSamples.shift()
+    while (keySamples.length > MAX_SAMPLES) {
+      keySamples.shift()
     }
 
-    samples.set(fileId, fileSamples)
+    samples.set(key, keySamples)
   }
 
-  const getSpeed = (fileId: string): number => {
-    const fileSamples = samples.get(fileId)
-    if (!fileSamples || fileSamples.length < 2) return 0
+  const getSpeed = (key: string): number => {
+    const keySamples = samples.get(key)
+    if (!keySamples || keySamples.length < 2) return 0
 
-    const first = fileSamples[0]
-    const last = fileSamples[fileSamples.length - 1]
+    const first = keySamples[0]
+    const last = keySamples[keySamples.length - 1]
     const elapsed = last.timestamp - first.timestamp
 
     if (elapsed <= 0) return 0
 
-    return (last.bytes - first.bytes) / (elapsed / 1000)
+    const speed = (last.bytes - first.bytes) / (elapsed / 1000)
+    return Number.isFinite(speed) && speed > 0 ? speed : 0
   }
 
-  const getEta = (fileId: string, totalBytes: number): number | undefined => {
-    const speed = getSpeed(fileId)
+  const getEta = (key: string): number | undefined => {
+    const speed = getSpeed(key)
     if (speed <= 0) return undefined
 
-    const fileSamples = samples.get(fileId)
-    if (!fileSamples || fileSamples.length < 2) return undefined
+    const keySamples = samples.get(key)
+    if (!keySamples || keySamples.length < 2) return undefined
 
-    const latestBytes = fileSamples[fileSamples.length - 1].bytes
-    const remaining = totalBytes - latestBytes
+    const latest = keySamples[keySamples.length - 1]
+    const remaining = latest.totalBytes - latest.bytes
 
     if (remaining <= 0) return 0
 
-    return remaining / speed
+    const eta = remaining / speed
+    return Number.isFinite(eta) ? eta : undefined
   }
 
-  const reset = (fileId: string) => {
-    samples.delete(fileId)
+  const reset = (key: string) => {
+    samples.delete(key)
   }
 
   const clear = () => {

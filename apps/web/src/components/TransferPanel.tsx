@@ -1,5 +1,10 @@
 import { useId, useRef, useState } from 'react'
-import { MAX_TEXT_CHARACTERS, type PublicVisitor } from '@p2p/contracts'
+import {
+  MAX_FILE_BATCH_BYTES,
+  MAX_FILE_COUNT,
+  MAX_TEXT_CHARACTERS,
+  type PublicVisitor,
+} from '@p2p/contracts'
 import type { FileSelection } from '../features/transfer/file-selection'
 import {
   aggregateFileProgress,
@@ -10,6 +15,9 @@ import FileTransferRow from './FileTransferRow'
 import TransferPeerFlow from './TransferPeerFlow'
 
 type Tab = 'text' | 'file'
+
+const MEBIBYTE_BYTES = 1024 * 1024
+const MAX_FILE_BATCH_MEBIBYTES = MAX_FILE_BATCH_BYTES / MEBIBYTE_BYTES
 
 export type TransferPanelProps = {
   visitor: PublicVisitor
@@ -68,6 +76,12 @@ export default function TransferPanel({
   const canSendText = connectedCount > 0 && Boolean(text.trim()) && !locked
   const canSendFiles = connectedCount > 0 && files.length > 0 && !locked
   const connectedLabel = `${String(connectedCount)} 位接收者已连接`
+  const showClearFiles = tab === 'file' && files.length > 0
+  const fileSubmitLabel = files.length === 0
+    ? '选择文件'
+    : connectedCount === 0
+      ? '暂无接收者连接'
+      : `发送 ${String(files.length)} 个文件`
   const activePeerIds = new Set(activity?.peerIds ?? [])
   const flowReceivers = activity
     ? receivers.filter(receiver => activePeerIds.has(receiver.id))
@@ -128,6 +142,11 @@ export default function TransferPanel({
     } finally {
       setSubmitting(false)
     }
+  }
+
+  const handleClearFiles = () => {
+    if (locked) return
+    for (const selection of files) onFileRemoved(selection.fileId)
   }
 
   const addFiles = (nextFiles: FileList | readonly File[] | null) => {
@@ -293,7 +312,9 @@ export default function TransferPanel({
               <div className="flex flex-1 flex-col items-center justify-center px-5 text-center">
                 <span className="material-symbols-outlined text-amber-50/30" style={{ fontSize: '28px' }} aria-hidden="true">upload_file</span>
                 <div className="mt-3 text-sm text-amber-50/70">拖拽文件到这里，或点击选择</div>
-                <p className="mt-2 text-xs leading-5 text-amber-50/50">一次最多 50 个文件，总计不超过 500 MiB</p>
+                <p className="mt-2 text-xs leading-5 text-amber-50/50">
+                  一次最多 {String(MAX_FILE_COUNT)} 个文件，总计不超过 {String(MAX_FILE_BATCH_MEBIBYTES)} MiB
+                </p>
               </div>
             ) : (
               <div className="flex flex-1 flex-col gap-2" onClick={event => event.stopPropagation()}>
@@ -377,32 +398,42 @@ export default function TransferPanel({
           {activity.phase === 'complete' || activity.phase === 'error' ? activityLabel : '取消传输'}
         </button>
       ) : (
-        <button
-          type="button"
-          className={`flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-transparent px-4 text-sm transition-[filter,color,background-color,border-color] focus-visible:border-amber-50/80 focus-visible:outline-none ${
-            (tab === 'text' ? canSendText : canSendFiles)
-              ? 'cursor-pointer bg-accent text-white/90 hover:brightness-110 active:brightness-90'
-              : 'cursor-not-allowed bg-white/5 text-amber-50/30'
-          }`}
-          disabled={tab === 'text' ? !canSendText : !canSendFiles}
-          onClick={() => {
-            if (tab === 'text') void handleTextSend()
-            else void handleFileSend()
-          }}
-        >
-          {submitting && (
-            <span className="material-symbols-outlined motion-safe:animate-spin" style={{ fontSize: '16px' }} aria-hidden="true">progress_activity</span>
+        <div className="flex w-full items-center gap-3">
+          {showClearFiles && (
+            <button
+              type="button"
+              className="flex min-h-11 shrink-0 items-center justify-center rounded-xl border border-amber-50/15 bg-transparent px-4 text-sm text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none disabled:cursor-not-allowed disabled:border-amber-50/10 disabled:text-amber-50/25"
+              disabled={locked}
+              onClick={handleClearFiles}
+            >
+              清空
+            </button>
           )}
-          {tab === 'file'
-            ? files.length > 0
-              ? `发送 ${String(files.length)} 个文件`
-              : '选择文件'
-            : connectedCount === 0
-              ? '等待接收者连接'
-              : connectedCount === 1
-                ? '发送给 1 位接收者'
-                : `发送给 ${String(connectedCount)} 位接收者`}
-        </button>
+          <button
+            type="button"
+            className={`flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-transparent px-4 text-sm transition-[filter,color,background-color,border-color] focus-visible:border-amber-50/80 focus-visible:outline-none ${
+              (tab === 'text' ? canSendText : canSendFiles)
+                ? 'cursor-pointer bg-accent text-white/90 hover:brightness-110 active:brightness-90'
+                : 'cursor-not-allowed bg-white/5 text-amber-50/30'
+            }`}
+            disabled={tab === 'text' ? !canSendText : !canSendFiles}
+            onClick={() => {
+              if (tab === 'text') void handleTextSend()
+              else void handleFileSend()
+            }}
+          >
+            {submitting && (
+              <span className="material-symbols-outlined motion-safe:animate-spin" style={{ fontSize: '16px' }} aria-hidden="true">progress_activity</span>
+            )}
+            {tab === 'file'
+              ? fileSubmitLabel
+              : connectedCount === 0
+                ? '等待接收者连接'
+                : connectedCount === 1
+                  ? '发送给 1 位接收者'
+                  : `发送给 ${String(connectedCount)} 位接收者`}
+          </button>
+        </div>
       )}
     </section>
   )
