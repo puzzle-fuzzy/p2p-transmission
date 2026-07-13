@@ -2,417 +2,635 @@ import { describe, expect, test } from "bun:test";
 import type {
   PublicRoom,
   RtcConfigurationDto,
+  RoomInviteCapability,
+  RoomJoinRequestReceipt,
 } from "@p2p/contracts";
-import { createMaintenanceService } from "../maintenance/service";
-import { createRateLimitService } from "../rate-limit/service";
-import { createTurnService } from "../turn/service";
-import { createVisitorService } from "../visitor/service";
+import type { RoomAccessFinalizePlan } from "../room-access/model";
 import type { Visitor } from "../visitor/model";
 import type { RoomMutationPlan } from "./model";
-import { createRoomBootstrapService } from "./bootstrap";
-import { createRoomService } from "./service";
+import {
+  createRoomBootstrapService,
+  type RoomBootstrapServiceOptions,
+} from "./bootstrap";
 
-const visitor: Visitor = {
-  id: "vis_001",
-  token: "tok_001",
-  avatarSeed: "avatar_001",
-  displayName: "访客 0001",
+const sender: Visitor = {
+  id: "vis_sender",
+  token: "tok_sender",
+  avatarSeed: "avatar_sender",
+  displayName: "发送者",
+  createdAt: 1_000,
+  lastSeenAt: 1_000,
+};
+
+const receiver: Visitor = {
+  id: "vis_receiver",
+  token: "tok_receiver",
+  avatarSeed: "avatar_receiver",
+  displayName: "接收者",
   createdAt: 1_000,
   lastSeenAt: 1_000,
 };
 
 const room: PublicRoom = {
   code: "123456",
-  senderId: visitor.id,
+  senderId: sender.id,
   receivers: [],
   participants: [{
     visitor: {
-      id: visitor.id,
-      avatarSeed: visitor.avatarSeed,
-      displayName: visitor.displayName,
-      createdAt: visitor.createdAt,
-      lastSeenAt: visitor.lastSeenAt,
+      id: sender.id,
+      avatarSeed: sender.avatarSeed,
+      displayName: sender.displayName,
+      createdAt: sender.createdAt,
+      lastSeenAt: sender.lastSeenAt,
     },
     role: "sender",
     joinedAt: 1_000,
-    status: "connecting",
+    status: "online",
   }],
   createdAt: 1_000,
   expiresAt: 61_000,
 };
 
-const plan: RoomMutationPlan = {
-  id: "plan_1",
+const ownerPlan: RoomMutationPlan = {
+  id: "plan_create",
   revision: 0,
   kind: "create",
-  visitorId: visitor.id,
+  visitorId: sender.id,
   role: "sender",
   room,
 };
 
+const receiverPlan: RoomMutationPlan = {
+  id: "plan_join",
+  revision: 0,
+  kind: "join",
+  visitorId: receiver.id,
+  role: "receiver",
+  room,
+};
+
+const invite: RoomInviteCapability = {
+  token: `inv_${"A".repeat(43)}`,
+  expiresAt: room.expiresAt,
+};
+
+const receipt = (
+  state: RoomJoinRequestReceipt["state"] = "pending",
+): RoomJoinRequestReceipt => ({
+  requestId: "request_001",
+  state,
+  expiresAt: 91_000,
+});
+
 const rtcConfiguration: RtcConfigurationDto = {
   iceServers: [{
     urls: ["turn:turn.example.com:3478"],
-    username: "361:vis_001",
+    username: "361:vis_receiver",
     credential: "signed",
     credentialType: "password",
   }],
 };
 
-describe("room bootstrap orchestration", () => {
-  test("creates in strict sweep, auth, prepare, limits, TURN, commit order", () => {
-    const calls: string[] = [];
-    let consumed: unknown;
-    const bootstrap = createRoomBootstrapService({
-      maintenance: {
-        sweepForAdmission() {
-          calls.push("sweep");
-          return [];
-        },
-      },
-      visitors: {
-        touch(token: string) {
-          calls.push(`touch:${token}`);
-          return visitor;
-        },
-      },
-      rooms: {
-        prepareCreate(token: string) {
-          calls.push(`prepare:${token}`);
-          return {
-            ok: true as const,
-            plan,
-            invite: {
-              token: `inv_${"A".repeat(43)}`,
-              expiresAt: room.expiresAt,
-            },
-          };
-        },
-        prepareJoin() {
-          throw new Error("unexpected join");
-        },
-        commit(committedPlan: RoomMutationPlan) {
-          calls.push(`commit:${committedPlan.id}`);
-          return { ok: true as const, room };
-        },
-      },
-      rateLimits: {
-        consumeMany(checks) {
-          calls.push("limits");
-          consumed = checks;
-          return { ok: true as const };
-        },
-      },
-      turn: {
-        issue(visitorId: string, expiresAt: number) {
-          calls.push(`turn:${visitorId}:${String(expiresAt)}`);
-          return {
-            ok: true as const,
-            credential: {
-              rtcConfiguration,
-              credentialExpiresAt: 361_000,
-            },
-          };
-        },
-      },
-    });
+const createFixture = () => {
+  const calls: string[] = [];
+  const consumed: string[][] = [];
+  const policies: Array<Array<{
+    key: string;
+    limit: number;
+    windowMs: number;
+  }>> = [];
+  const accessPlan: RoomAccessFinalizePlan = {
+    requestId: "request_001",
+    roomCode: room.code,
+    visitorId: receiver.id,
+    revision: 1,
+    expiresAt: 31_000,
+  };
 
-    expect(bootstrap.createRoom({
-      visitorToken: visitor.token,
+  const options: RoomBootstrapServiceOptions = {
+    maintenance: {
+      sweepForAdmission() {
+        calls.push("sweep");
+        return [];
+      },
+    },
+    visitors: {
+      touch(token) {
+        calls.push(`touch:${token}`);
+        if (token === sender.token) return sender;
+        if (token === receiver.token) return receiver;
+        return undefined;
+      },
+    },
+    rooms: {
+      prepareCreate(token) {
+        calls.push(`prepare-create:${token}`);
+        return { ok: true, plan: ownerPlan, invite };
+      },
+      prepareInviteJoin(code, token, inviteToken) {
+        calls.push(`prepare-invite:${code}:${token}:${inviteToken}`);
+        return { ok: true, plan: receiverPlan };
+      },
+      prepareReceiverRecovery(code, token) {
+        calls.push(`prepare-recovery:${code}:${token}`);
+        return { ok: true, plan: receiverPlan };
+      },
+      prepareApprovedReceiverJoin(code, token) {
+        calls.push(`prepare-approved:${code}:${token}`);
+        return { ok: true, plan: receiverPlan };
+      },
+      commit(plan) {
+        calls.push(`commit:${plan.id}`);
+        return { ok: true, room };
+      },
+    },
+    roomAccess: {
+      inspectCreateOrGetPending(code, token) {
+        calls.push(`inspect-request:${code}:${token}`);
+        return { ok: true, mode: "requestable" };
+      },
+      createOrGetPending(code, token) {
+        calls.push(`request:${code}:${token}`);
+        return { ok: true, receipt: receipt() };
+      },
+      readReceipt(code, requestId, token) {
+        calls.push(`read:${code}:${requestId}:${token}`);
+        return { ok: true, receipt: receipt() };
+      },
+      decide(code, requestId, token, decision) {
+        calls.push(`decide:${code}:${requestId}:${token}:${decision}`);
+        return { ok: true, receipt: receipt(decision === "approve" ? "approved" : "rejected") };
+      },
+      cancel(code, requestId, token) {
+        calls.push(`cancel:${code}:${requestId}:${token}`);
+        return { ok: true, receipt: receipt("cancelled") };
+      },
+      prepareFinalize(code, requestId, token) {
+        calls.push(`access-prepare:${code}:${requestId}:${token}`);
+        return { ok: true, mode: "commit", plan: accessPlan };
+      },
+      commitFinalize(plan, commitMembership) {
+        calls.push(`access-commit:${plan.requestId}`);
+        const committed = commitMembership();
+        if (!committed.ok) return committed;
+        return { ok: true, receipt: receipt("finalized"), room: committed.room };
+      },
+    },
+    rateLimits: {
+      consumeMany(checks) {
+        const keys = checks.map(check => check.key);
+        calls.push(`limits:${keys.join(",")}`);
+        consumed.push(keys);
+        policies.push(checks.map(check => ({ ...check })));
+        return { ok: true };
+      },
+    },
+    turn: {
+      issue(visitorId, expiresAt) {
+        calls.push(`turn:${visitorId}:${String(expiresAt)}`);
+        return {
+          ok: true,
+          credential: {
+            rtcConfiguration,
+            credentialExpiresAt: 361_000,
+          },
+        };
+      },
+    },
+  };
+
+  return { accessPlan, calls, consumed, options, policies };
+};
+
+describe("room bootstrap orchestration", () => {
+  test("creates an owner bootstrap after auth and entrance limits", () => {
+    const { calls, consumed, options, policies } = createFixture();
+    const service = createRoomBootstrapService(options);
+
+    expect(service.createRoom({
+      visitorToken: sender.token,
       clientIp: "203.0.113.10",
       iceMode: "api",
     })).toEqual({
       ok: true,
       bootstrap: {
         room,
+        invite,
         rtcConfiguration,
         credentialExpiresAt: 361_000,
       },
     });
     expect(calls).toEqual([
       "sweep",
-      "touch:tok_001",
-      "prepare:tok_001",
-      "limits",
-      "turn:vis_001:61000",
-      "commit:plan_1",
+      "touch:tok_sender",
+      "limits:room:create:ip:203.0.113.10,room:create:visitor:vis_sender",
+      "prepare-create:tok_sender",
+      "limits:turn:credential:instance,turn:credential:ip:203.0.113.10,turn:credential:visitor:vis_sender,turn:credential:room:123456",
+      "turn:vis_sender:61000",
+      "commit:plan_create",
     ]);
     expect(consumed).toEqual([
-      { key: "room:create:ip:203.0.113.10", limit: 30, windowMs: 3_600_000 },
-      { key: "room:create:visitor:vis_001", limit: 10, windowMs: 3_600_000 },
-      { key: "turn:credential:instance", limit: 300, windowMs: 60_000 },
-      { key: "turn:credential:ip:203.0.113.10", limit: 20, windowMs: 60_000 },
-      { key: "turn:credential:visitor:vis_001", limit: 5, windowMs: 60_000 },
-      { key: "turn:credential:room:123456", limit: 30, windowMs: 60_000 },
+      [
+        "room:create:ip:203.0.113.10",
+        "room:create:visitor:vis_sender",
+      ],
+      [
+        "turn:credential:instance",
+        "turn:credential:ip:203.0.113.10",
+        "turn:credential:visitor:vis_sender",
+        "turn:credential:room:123456",
+      ],
+    ]);
+    expect(policies).toEqual([
+      [
+        { key: "room:create:ip:203.0.113.10", limit: 30, windowMs: 3_600_000 },
+        { key: "room:create:visitor:vis_sender", limit: 10, windowMs: 3_600_000 },
+      ],
+      [
+        { key: "turn:credential:instance", limit: 300, windowMs: 60_000 },
+        { key: "turn:credential:ip:203.0.113.10", limit: 20, windowMs: 60_000 },
+        { key: "turn:credential:visitor:vis_sender", limit: 5, windowMs: 60_000 },
+        { key: "turn:credential:room:123456", limit: 30, windowMs: 60_000 },
+      ],
     ]);
   });
 
-  test("joins in off mode without invoking TURN and uses exact join policies", () => {
-    const calls: string[] = [];
-    let consumed: unknown;
-    const joinPlan: RoomMutationPlan = {
-      ...plan,
-      id: "plan_join",
-      revision: 1,
-      kind: "join",
-      visitorId: "vis_002",
-      role: "receiver",
-    };
-    const receiver = { ...visitor, id: "vis_002", token: "tok_002" };
-    const bootstrap = createRoomBootstrapService({
-      maintenance: {
-        sweepForAdmission() {
-          calls.push("sweep");
-          return [];
-        },
-      },
-      visitors: {
-        touch() {
-          calls.push("touch");
-          return receiver;
-        },
-      },
-      rooms: {
-        prepareCreate() {
-          throw new Error("unexpected create");
-        },
-        prepareJoin(code, token, role) {
-          calls.push(`prepare:${code}:${token}:${role}`);
-          return { ok: true as const, plan: joinPlan };
-        },
-        commit() {
-          calls.push("commit");
-          return { ok: true as const, room };
-        },
-      },
-      rateLimits: {
-        consumeMany(checks) {
-          calls.push("limits");
-          consumed = checks;
-          return { ok: true as const };
-        },
-      },
-      turn: {
-        issue() {
-          calls.push("turn");
-          throw new Error("TURN must not run in off mode");
-        },
-      },
-    });
+  test("authorizes invite and recovery before allocating TURN keys", () => {
+    for (const admission of [
+      { kind: "invite" as const, inviteToken: invite.token },
+      { kind: "recovery" as const },
+    ]) {
+      const { calls, options } = createFixture();
+      const service = createRoomBootstrapService(options);
 
-    expect(bootstrap.joinRoom({
+      expect(service.joinRoom({
+        code: room.code,
+        visitorToken: receiver.token,
+        clientIp: "198.51.100.4",
+        iceMode: "api",
+        admission,
+      })).toMatchObject({ ok: true, bootstrap: { room } });
+      expect(calls.slice(0, 5)).toEqual([
+        "sweep",
+        "limits:room:join:ip:198.51.100.4",
+        "touch:tok_receiver",
+        "limits:room:join:visitor:vis_receiver",
+        admission.kind === "invite"
+          ? `prepare-invite:123456:tok_receiver:${invite.token}`
+          : "prepare-recovery:123456:tok_receiver",
+      ]);
+      expect(calls.slice(5)).toEqual([
+        "limits:turn:credential:instance,turn:credential:ip:198.51.100.4,turn:credential:visitor:vis_receiver,turn:credential:room:123456",
+        "turn:vis_receiver:61000",
+        "commit:plan_join",
+      ]);
+    }
+  });
+
+  test("an authorization failure never issues TURN or commits membership", () => {
+    for (const admission of [
+      { kind: "invite" as const, inviteToken: "malformed" },
+      { kind: "recovery" as const },
+    ]) {
+      const { calls, options } = createFixture();
+      const denied = () => ({
+        ok: false as const,
+        error: { code: "ROOM_ACCESS_DENIED" as const, message: "denied" },
+      });
+      if (admission.kind === "invite") {
+        options.rooms.prepareInviteJoin = denied;
+      } else {
+        options.rooms.prepareReceiverRecovery = denied;
+      }
+      const service = createRoomBootstrapService(options);
+
+      expect(service.joinRoom({
+        code: room.code,
+        visitorToken: receiver.token,
+        clientIp: "198.51.100.4",
+        iceMode: "api",
+        admission,
+      })).toEqual({
+        ok: false,
+        error: { code: "ROOM_ACCESS_DENIED", message: "denied" },
+      });
+      expect(calls).toEqual([
+        "sweep",
+        "limits:room:join:ip:198.51.100.4",
+        "touch:tok_receiver",
+        "limits:room:join:visitor:vis_receiver",
+      ]);
+    }
+  });
+
+  test("applies exact request, polling, decision, and cancel policies", () => {
+    const { calls, consumed, options, policies } = createFixture();
+    const service = createRoomBootstrapService(options);
+
+    expect(service.createJoinRequest({
       code: room.code,
       visitorToken: receiver.token,
-      clientIp: "198.51.100.4",
-      role: "receiver",
-      iceMode: "off",
-    })).toEqual({
+      clientIp: "203.0.113.20",
+    })).toEqual({ ok: true, receipt: receipt() });
+    expect(service.readJoinRequest({
+      code: room.code,
+      requestId: "request_001",
+      visitorToken: receiver.token,
+      clientIp: "203.0.113.20",
+    })).toEqual({ ok: true, receipt: receipt() });
+    expect(service.decideJoinRequest({
+      code: room.code,
+      requestId: "request_001",
+      visitorToken: sender.token,
+      clientIp: "203.0.113.10",
+      decision: "approve",
+    })).toEqual({ ok: true, receipt: receipt("approved") });
+    expect(service.cancelJoinRequest({
+      code: room.code,
+      requestId: "request_001",
+      visitorToken: receiver.token,
+      clientIp: "203.0.113.20",
+    })).toEqual({ ok: true, receipt: receipt("cancelled") });
+
+    expect(consumed).toEqual([
+      ["room:join-request:instance", "room:join-request:ip:203.0.113.20"],
+      ["room:join-request:visitor:vis_receiver"],
+      ["room:join-request:room:123456"],
+      ["room:join-request-status:ip:203.0.113.20"],
+      ["room:join-request-status:visitor:vis_receiver"],
+      ["room:join-request-decision:ip:203.0.113.10"],
+      ["room:join-request-decision:sender:vis_sender"],
+      ["room:join-request-cancel:ip:203.0.113.20"],
+      ["room:join-request-cancel:visitor:vis_receiver"],
+    ]);
+    expect(calls.indexOf("inspect-request:123456:tok_receiver")).toBeLessThan(
+      calls.indexOf("limits:room:join-request:room:123456"),
+    );
+    expect(calls.indexOf("limits:room:join-request:room:123456")).toBeLessThan(
+      calls.indexOf("request:123456:tok_receiver"),
+    );
+    expect(policies).toEqual([
+      [
+        { key: "room:join-request:instance", limit: 300, windowMs: 60_000 },
+        { key: "room:join-request:ip:203.0.113.20", limit: 10, windowMs: 60_000 },
+      ],
+      [{ key: "room:join-request:visitor:vis_receiver", limit: 3, windowMs: 60_000 }],
+      [{ key: "room:join-request:room:123456", limit: 10, windowMs: 60_000 }],
+      [{ key: "room:join-request-status:ip:203.0.113.20", limit: 240, windowMs: 60_000 }],
+      [{ key: "room:join-request-status:visitor:vis_receiver", limit: 60, windowMs: 60_000 }],
+      [{ key: "room:join-request-decision:ip:203.0.113.10", limit: 60, windowMs: 60_000 }],
+      [{ key: "room:join-request-decision:sender:vis_sender", limit: 30, windowMs: 60_000 }],
+      [{ key: "room:join-request-cancel:ip:203.0.113.20", limit: 60, windowMs: 60_000 }],
+      [{ key: "room:join-request-cancel:visitor:vis_receiver", limit: 20, windowMs: 60_000 }],
+    ]);
+  });
+
+  test("a lost 202 retry returns the authoritative request and still consumes every policy", () => {
+    const { calls, consumed, options } = createFixture();
+    let created = false;
+    options.roomAccess.inspectCreateOrGetPending = (code, token) => {
+      calls.push(`inspect-request:${code}:${token}`);
+      return created
+        ? { ok: true, mode: "existing", receipt: receipt("approved") }
+        : { ok: true, mode: "requestable" };
+    };
+    options.roomAccess.createOrGetPending = (code, token) => {
+      calls.push(`request:${code}:${token}`);
+      created = true;
+      return { ok: true, receipt: receipt() };
+    };
+    const service = createRoomBootstrapService(options);
+    const input = {
+      code: room.code,
+      visitorToken: receiver.token,
+      clientIp: "203.0.113.20",
+    };
+
+    expect(service.createJoinRequest(input)).toEqual({ ok: true, receipt: receipt() });
+    expect(service.createJoinRequest(input)).toEqual({
       ok: true,
-      bootstrap: { room },
+      receipt: receipt("approved"),
     });
+    expect(consumed).toEqual([
+      ["room:join-request:instance", "room:join-request:ip:203.0.113.20"],
+      ["room:join-request:visitor:vis_receiver"],
+      ["room:join-request:room:123456"],
+      ["room:join-request:instance", "room:join-request:ip:203.0.113.20"],
+      ["room:join-request:visitor:vis_receiver"],
+      ["room:join-request:room:123456"],
+    ]);
+    expect(calls.filter(call =>
+      call === "inspect-request:123456:tok_receiver"
+    )).toHaveLength(2);
+    expect(calls.filter(call => call === "request:123456:tok_receiver")).toHaveLength(1);
+  });
+
+  test("stops at the exact admission limit stage that rejects the request", () => {
+    for (const blockedKey of [
+      "room:join:ip:198.51.100.4",
+      "room:join:visitor:vis_receiver",
+      "turn:credential:instance",
+    ]) {
+      const { calls, options } = createFixture();
+      options.rateLimits.consumeMany = checks => {
+        const keys = checks.map(check => check.key);
+        calls.push(`limits:${keys.join(",")}`);
+        return keys.includes(blockedKey)
+          ? {
+              ok: false,
+              error: { code: "RATE_LIMITED", message: "limited", retryAfterMs: 1_000 },
+            }
+          : { ok: true };
+      };
+      const service = createRoomBootstrapService(options);
+
+      expect(service.joinRoom({
+        code: room.code,
+        visitorToken: receiver.token,
+        clientIp: "198.51.100.4",
+        iceMode: "api",
+        admission: { kind: "invite", inviteToken: invite.token },
+      })).toMatchObject({ ok: false, error: { code: "RATE_LIMITED" } });
+
+      if (blockedKey === "room:join:ip:198.51.100.4") {
+        expect(calls).toEqual([
+          "sweep",
+          "limits:room:join:ip:198.51.100.4",
+        ]);
+      } else if (blockedKey === "room:join:visitor:vis_receiver") {
+        expect(calls).toEqual([
+          "sweep",
+          "limits:room:join:ip:198.51.100.4",
+          "touch:tok_receiver",
+          "limits:room:join:visitor:vis_receiver",
+        ]);
+      } else {
+        expect(calls).toEqual([
+          "sweep",
+          "limits:room:join:ip:198.51.100.4",
+          "touch:tok_receiver",
+          "limits:room:join:visitor:vis_receiver",
+          `prepare-invite:123456:tok_receiver:${invite.token}`,
+          "limits:turn:credential:instance,turn:credential:ip:198.51.100.4,turn:credential:visitor:vis_receiver,turn:credential:room:123456",
+        ]);
+      }
+    }
+  });
+
+  test("an offline sender does not consume a room key or create a request", () => {
+    const { calls, consumed, options } = createFixture();
+    options.roomAccess.inspectCreateOrGetPending = (code, token) => {
+      calls.push(`inspect-request:${code}:${token}`);
+      return {
+        ok: false,
+        error: {
+          code: "ROOM_REQUEST_UNAVAILABLE",
+          message: "房间不存在或暂时无法接收申请",
+        },
+      };
+    };
+    const service = createRoomBootstrapService(options);
+
+    expect(service.createJoinRequest({
+      code: room.code,
+      visitorToken: receiver.token,
+      clientIp: "203.0.113.20",
+    })).toEqual({
+      ok: false,
+      error: {
+        code: "ROOM_REQUEST_UNAVAILABLE",
+        message: "房间不存在或暂时无法接收申请",
+      },
+    });
+    expect(consumed).toEqual([
+      ["room:join-request:instance", "room:join-request:ip:203.0.113.20"],
+      ["room:join-request:visitor:vis_receiver"],
+    ]);
+    expect(calls).toContain("inspect-request:123456:tok_receiver");
+    expect(calls).not.toContain("limits:room:join-request:room:123456");
+    expect(calls).not.toContain("request:123456:tok_receiver");
+  });
+
+  test("finalizes approved membership atomically after TURN succeeds", () => {
+    const { calls, consumed, options, policies } = createFixture();
+    const service = createRoomBootstrapService(options);
+
+    expect(service.finalizeJoinRequest({
+      code: room.code,
+      requestId: "request_001",
+      visitorToken: receiver.token,
+      clientIp: "203.0.113.20",
+      iceMode: "api",
+    })).toMatchObject({ ok: true, bootstrap: { room } });
     expect(calls).toEqual([
       "sweep",
-      "touch",
-      "prepare:123456:tok_002:receiver",
-      "limits",
-      "commit",
+      "limits:room:join:ip:203.0.113.20",
+      "touch:tok_receiver",
+      "limits:room:join:visitor:vis_receiver",
+      "access-prepare:123456:request_001:tok_receiver",
+      "prepare-approved:123456:tok_receiver",
+      "limits:turn:credential:instance,turn:credential:ip:203.0.113.20,turn:credential:visitor:vis_receiver,turn:credential:room:123456",
+      "turn:vis_receiver:61000",
+      "access-commit:request_001",
+      "commit:plan_join",
     ]);
-    expect(consumed).toEqual([
-      { key: "room:join:ip:198.51.100.4", limit: 60, windowMs: 60_000 },
-      { key: "room:join:visitor:vis_002", limit: 20, windowMs: 60_000 },
+    expect(consumed[0]).toEqual(["room:join:ip:203.0.113.20"]);
+    expect(consumed[1]).toEqual(["room:join:visitor:vis_receiver"]);
+    expect(policies).toEqual([
+      [{ key: "room:join:ip:203.0.113.20", limit: 60, windowMs: 60_000 }],
+      [{ key: "room:join:visitor:vis_receiver", limit: 20, windowMs: 60_000 }],
+      [
+        { key: "turn:credential:instance", limit: 300, windowMs: 60_000 },
+        { key: "turn:credential:ip:203.0.113.20", limit: 20, windowMs: 60_000 },
+        { key: "turn:credential:visitor:vis_receiver", limit: 5, windowMs: 60_000 },
+        { key: "turn:credential:room:123456", limit: 30, windowMs: 60_000 },
+      ],
     ]);
   });
 
-  test("sweeps before rejecting an invalid visitor and performs no later effects", () => {
-    const calls: string[] = [];
-    const bootstrap = createRoomBootstrapService({
-      maintenance: {
-        sweepForAdmission() {
-          calls.push("sweep");
-          return [];
-        },
-      },
-      visitors: {
-        touch() {
-          calls.push("touch");
-          return undefined;
-        },
-      },
-      rooms: {
-        prepareCreate() {
-          calls.push("prepare");
-          return { ok: false as const, error: { code: "VISITOR_NOT_FOUND" as const, message: "bad" } };
-        },
-        prepareJoin() {
-          throw new Error("unexpected join");
-        },
-        commit() {
-          calls.push("commit");
-          return { ok: false as const, error: { code: "INVALID_STATE" as const, message: "bad" } };
-        },
-      },
-      rateLimits: {
-        consumeMany() {
-          calls.push("limits");
-          return { ok: true as const };
-        },
-      },
-      turn: {
-        issue() {
-          calls.push("turn");
-          return { ok: false as const, error: { code: "TURN_NOT_CONFIGURED" as const, message: "bad" } };
-        },
-      },
-    });
+  test("a room change after approval leaves the request unfinalized", () => {
+    const { calls, options } = createFixture();
+    options.rooms.prepareApprovedReceiverJoin = (code, token) => {
+      calls.push(`prepare-approved:${code}:${token}`);
+      return {
+        ok: false,
+        error: { code: "ROOM_NOT_FOUND", message: "closed" },
+      };
+    };
+    const service = createRoomBootstrapService(options);
 
-    expect(bootstrap.createRoom({
-      visitorToken: "bad",
-      clientIp: "unknown",
-      iceMode: "off",
+    expect(service.finalizeJoinRequest({
+      code: room.code,
+      requestId: "request_001",
+      visitorToken: receiver.token,
+      clientIp: "203.0.113.20",
+      iceMode: "api",
     })).toEqual({
       ok: false,
-      error: { code: "VISITOR_NOT_FOUND", message: "访客不存在或已过期" },
+      error: { code: "ROOM_NOT_FOUND", message: "closed" },
     });
-    expect(calls).toEqual(["sweep", "touch"]);
+    expect(calls).not.toContain("access-commit:request_001");
+    expect(calls.some(call => call.startsWith("turn:"))).toBe(false);
   });
 
-  test("rate and TURN failures leave no created room or joined receiver", () => {
-    let visitorIndex = 0;
-    let roomIndex = 0;
-    const visitors = createVisitorService({
-      now: () => 1_000,
-      createId: () => `vis_${String(++visitorIndex).padStart(3, "0")}`,
-      createToken: () => `tok_${String(visitorIndex).padStart(3, "0")}`,
-      createAvatarSeed: () => `avatar_${String(visitorIndex).padStart(3, "0")}`,
-    });
-    const rooms = createRoomService({
-      visitors,
-      now: () => 1_000,
-      createCode: () => String(200_000 + ++roomIndex),
-      createPlanId: () => `plan_${String(roomIndex)}`,
-    });
-    const rateLimits = createRateLimitService({ now: () => 1_000 });
-    const maintenance = createMaintenanceService({ rooms, visitors, rateLimits });
-    const sender = visitors.createVisitor();
-    const receiver = visitors.createVisitor();
-    const rateFailure = createRoomBootstrapService({
-      maintenance,
-      visitors,
-      rooms,
-      rateLimits: {
-        consumeMany: () => ({
+  test("uses ordinary receiver recovery for an already finalized receipt", () => {
+    const { calls, options } = createFixture();
+    options.roomAccess.prepareFinalize = (code, requestId, token) => {
+      calls.push(`access-prepare:${code}:${requestId}:${token}`);
+      return { ok: true, mode: "recovery", receipt: receipt("finalized") };
+    };
+    const service = createRoomBootstrapService(options);
+
+    expect(service.finalizeJoinRequest({
+      code: room.code,
+      requestId: "request_001",
+      visitorToken: receiver.token,
+      clientIp: "203.0.113.20",
+      iceMode: "off",
+    })).toMatchObject({ ok: true, bootstrap: { room } });
+    expect(calls).toEqual([
+      "sweep",
+      "limits:room:join:ip:203.0.113.20",
+      "touch:tok_receiver",
+      "limits:room:join:visitor:vis_receiver",
+      "access-prepare:123456:request_001:tok_receiver",
+      "prepare-recovery:123456:tok_receiver",
+      "commit:plan_join",
+    ]);
+  });
+
+  test("TURN and room commit failures leave finalize uncommitted", () => {
+    for (const failure of ["turn", "room"] as const) {
+      const { calls, options } = createFixture();
+      if (failure === "turn") {
+        options.turn.issue = () => ({
           ok: false,
-          error: { code: "RATE_LIMITED", message: "limited", retryAfterMs: 1 },
-        }),
-      },
-      turn: createTurnService({ stunUrls: [], turn: undefined }, { now: () => 1_000 }),
-    });
-
-    expect(rateFailure.createRoom({
-      visitorToken: sender.token,
-      clientIp: "203.0.113.1",
-      iceMode: "off",
-    })).toMatchObject({ ok: false, error: { code: "RATE_LIMITED" } });
-    expect(rooms.getRoom("200001")).toMatchObject({
-      ok: false,
-      error: { code: "ROOM_NOT_FOUND" },
-    });
-
-    const created = rooms.createRoom(sender.token);
-    if (!created.ok) throw new Error("expected room");
-    expect(rateFailure.joinRoom({
-      code: created.room.code,
-      visitorToken: receiver.token,
-      clientIp: "203.0.113.2",
-      role: "receiver",
-      iceMode: "off",
-    })).toMatchObject({ ok: false, error: { code: "RATE_LIMITED" } });
-    expect(rooms.getRoom(created.room.code)).toMatchObject({
-      ok: true,
-      room: { receivers: [] },
-    });
-
-    const turnFailure = createRoomBootstrapService({
-      maintenance,
-      visitors,
-      rooms,
-      rateLimits,
-      turn: createTurnService({ stunUrls: [], turn: undefined }, { now: () => 1_000 }),
-    });
-    expect(turnFailure.createRoom({
-      visitorToken: receiver.token,
-      clientIp: "203.0.113.2",
-      iceMode: "api",
-    })).toEqual({
-      ok: false,
-      error: { code: "TURN_NOT_CONFIGURED", message: "TURN 中继服务尚未配置" },
-    });
-    expect(rooms.getRoom("200003")).toMatchObject({
-      ok: false,
-      error: { code: "ROOM_NOT_FOUND" },
-    });
-  });
-
-  test("a receiver join survives sender attach during TURN credential issuance", () => {
-    let visitorIndex = 0;
-    const visitors = createVisitorService({
-      now: () => 1_000,
-      createId: () => `vis_${String(++visitorIndex).padStart(3, "0")}`,
-      createToken: () => `tok_${String(visitorIndex).padStart(3, "0")}`,
-      createAvatarSeed: () => `avatar_${String(visitorIndex).padStart(3, "0")}`,
-    });
-    const rooms = createRoomService({
-      visitors,
-      now: () => 1_000,
-      createCode: () => "300001",
-      createPlanId: () => crypto.randomUUID(),
-    });
-    const rateLimits = createRateLimitService({ now: () => 1_000 });
-    const maintenance = createMaintenanceService({ rooms, visitors, rateLimits });
-    const sender = visitors.createVisitor();
-    const receiver = visitors.createVisitor();
-    const created = rooms.createRoom(sender.token);
-    if (!created.ok) throw new Error("expected room");
-    const bootstrap = createRoomBootstrapService({
-      maintenance,
-      visitors,
-      rooms,
-      rateLimits,
-      turn: {
-        issue() {
-          rooms.attach(created.room.code, sender.id, "sender");
+          error: { code: "TURN_NOT_CONFIGURED", message: "missing" },
+        });
+      } else {
+        options.rooms.commit = plan => {
+          calls.push(`commit:${plan.id}`);
           return {
-            ok: true,
-            credential: {
-              rtcConfiguration,
-              credentialExpiresAt: created.room.expiresAt + 300_000,
-            },
+            ok: false,
+            error: { code: "INVALID_STATE", message: "changed" },
           };
-        },
-      },
-    });
+        };
+      }
+      const service = createRoomBootstrapService(options);
 
-    expect(bootstrap.joinRoom({
-      code: created.room.code,
-      visitorToken: receiver.token,
-      clientIp: "203.0.113.8",
-      role: "receiver",
-      iceMode: "api",
-    })).toMatchObject({
-      ok: true,
-      bootstrap: {
-        room: {
-          receivers: [receiver.id],
-          participants: [
-            { visitor: { id: sender.id }, role: "sender", status: "online" },
-            { visitor: { id: receiver.id }, role: "receiver", status: "connecting" },
-          ],
-        },
-      },
-    });
-    expect(rooms.getRoom(created.room.code)).toMatchObject({
-      ok: true,
-      room: { receivers: [receiver.id] },
-    });
+      expect(service.finalizeJoinRequest({
+        code: room.code,
+        requestId: "request_001",
+        visitorToken: receiver.token,
+        clientIp: "203.0.113.20",
+        iceMode: "api",
+      })).toMatchObject({ ok: false });
+      if (failure === "turn") {
+        expect(calls).not.toContain("access-commit:request_001");
+      } else {
+        expect(calls).toContain("access-commit:request_001");
+        expect(calls).toContain("commit:plan_join");
+      }
+    }
   });
 });

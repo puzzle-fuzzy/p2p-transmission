@@ -109,6 +109,31 @@ describe("room access service", () => {
     });
   });
 
+  test("inspects without creating or publishing and keeps an existing receipt after sender leaves", () => {
+    const harness = createHarness();
+    const { code, sender } = harness.createOnlineRoom();
+    const receiver = harness.visitors.createVisitor();
+    const transitions: RoomAccessTransition[] = [];
+    harness.access.subscribe(transition => transitions.push(transition));
+
+    expect(harness.access.inspectCreateOrGetPending(code, receiver.token)).toEqual({
+      ok: true,
+      mode: "requestable",
+    });
+    expect(transitions).toEqual([]);
+    const created = harness.access.createOrGetPending(code, receiver.token);
+    if (!created.ok) throw new Error("expected request");
+    expect(transitions).toHaveLength(1);
+
+    expect(harness.rooms.leave(code, sender.id).ok).toBe(true);
+    expect(harness.access.inspectCreateOrGetPending(code, receiver.token)).toEqual({
+      ok: true,
+      mode: "existing",
+      receipt: created.receipt,
+    });
+    expect(transitions).toHaveLength(1);
+  });
+
   test("retains the idempotency index through approval and terminal tombstones", () => {
     const harness = createHarness();
     const { code, sender } = harness.createOnlineRoom();
@@ -152,6 +177,16 @@ describe("room access service", () => {
     });
 
     expect(requests.slice(0, 5).every(({ result }) => result.ok)).toBe(true);
+    expect(harness.access.inspectCreateOrGetPending(
+      code,
+      requests[5]!.receiver.token,
+    )).toEqual({
+      ok: false,
+      error: {
+        code: "ROOM_REQUEST_UNAVAILABLE",
+        message: "房间不存在或暂时无法接收申请",
+      },
+    });
     expect(requests[5]?.result).toEqual({
       ok: false,
       error: {
@@ -201,6 +236,13 @@ describe("room access service", () => {
   test("rejects an unknown visitor before inspecting room availability", () => {
     const harness = createHarness();
 
+    expect(harness.access.inspectCreateOrGetPending(
+      "999999",
+      "missing-token",
+    )).toEqual({
+      ok: false,
+      error: { code: "VISITOR_NOT_FOUND", message: "访客不存在或已过期" },
+    });
     expect(harness.access.createOrGetPending("999999", "missing-token")).toEqual({
       ok: false,
       error: { code: "VISITOR_NOT_FOUND", message: "访客不存在或已过期" },

@@ -37,6 +37,11 @@ export type RoomJoinRequestResult =
   | { ok: true; receipt: RoomJoinRequestReceipt }
   | { ok: false; error: RoomAccessError };
 
+export type RoomJoinRequestInspectionResult =
+  | { ok: true; mode: "existing"; receipt: RoomJoinRequestReceipt }
+  | { ok: true; mode: "requestable" }
+  | { ok: false; error: RoomAccessError };
+
 export type RoomJoinRequestListResult =
   | { ok: true; requests: RoomJoinRequestSummary[] }
   | { ok: false; error: RoomAccessError };

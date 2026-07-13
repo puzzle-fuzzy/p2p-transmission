@@ -16,6 +16,7 @@ import type {
   RoomAccessFinalizePlan,
   RoomAccessTransition,
   RoomFinalizeCommitResult,
+  RoomJoinRequestInspectionResult,
   RoomJoinRequestListResult,
   RoomJoinRequestResult,
 } from "./model";
@@ -39,6 +40,10 @@ export type RoomAccessServiceOptions = {
 };
 
 export type RoomAccessService = {
+  inspectCreateOrGetPending(
+    roomCode: string,
+    visitorToken: string,
+  ): RoomJoinRequestInspectionResult;
   createOrGetPending(
     roomCode: string,
     visitorToken: string,
@@ -348,6 +353,29 @@ export const createRoomAccessService = (
     }
   };
 
+  const inspectCreateOrGetPending = (
+    roomCode: string,
+    visitorToken: string,
+  ): RoomJoinRequestInspectionResult => {
+    const visitor = options.visitors.getByToken(visitorToken);
+    if (!visitor) return { ok: false, error: visitorNotFound };
+    const existingId = requestsByRoomVisitor.get(roomVisitorKey(roomCode, visitor.id));
+    const existing = existingId ? requests.get(existingId) : undefined;
+    if (existing) {
+      return { ok: true, mode: "existing", receipt: toReceipt(existing) };
+    }
+
+    const requestable = isRequestableRoom(roomCode, visitor.id);
+    if (!requestable) return { ok: false, error: roomRequestUnavailable };
+    const pendingCount = Array.from(requests.values()).filter(request =>
+      request.roomCode === roomCode && request.state === "pending"
+    ).length;
+    if (pendingCount >= maxPendingPerRoom) {
+      return { ok: false, error: roomRequestUnavailable };
+    }
+    return { ok: true, mode: "requestable" };
+  };
+
   const createOrGetPending = (
     roomCode: string,
     visitorToken: string,
@@ -632,6 +660,7 @@ export const createRoomAccessService = (
   };
 
   return {
+    inspectCreateOrGetPending,
     createOrGetPending,
     readReceipt,
     listPendingForSender,
