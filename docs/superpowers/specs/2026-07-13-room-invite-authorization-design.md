@@ -133,7 +133,7 @@ type RoomJoinRequestSummary = {
 
 `RoomJoinRequestReceipt.expiresAt` is the deadline for the current stored state. For `pending` it is the approval-request deadline. For `approved` it is the finalize deadline. For a terminal state it is the tombstone-removal deadline, allowing the bound client to observe the result before cleanup.
 
-Add the following server realtime messages:
+Add the following server realtime messages and an exact runtime guard for this union:
 
 ```ts
 type RoomAccessServerMessage =
@@ -153,6 +153,8 @@ type RoomAccessServerMessage =
       state: Exclude<RoomJoinRequestState, 'pending'>
     }
 ```
+
+`isRoomAccessServerMessage` rejects extra fields and any secret-bearing field, just like the receipt and summary guards.
 
 The sender receives only summaries and state changes. Invitation plaintext never crosses the realtime channel.
 
@@ -293,7 +295,7 @@ POST /v1/rooms/:code/join-requests
 Authorization: Bearer <visitor token>
 ```
 
-Success returns HTTP 202 with `RoomJoinRequestReceipt` in the `pending` state. Repeating the call for the same room and visitor returns the same live request.
+The first successful call returns HTTP 202 with `RoomJoinRequestReceipt` in the `pending` state. The room-and-visitor idempotency index remains bound through `approved` and every observable terminal tombstone. A replay during that retention window also returns HTTP 202 with the same request ID and the authoritative current receipt, which may already be non-pending. The index is removed only when the tombstone is removed. This prevents a lost HTTP 202 response racing with a sender decision from creating a second request.
 
 ### 6.4 Read request state
 
@@ -310,6 +312,8 @@ The Web client applies these exact polling rules:
 - `approved`: stop polling and immediately call finalize;
 - `rejected`, `cancelled`, or `expired`: stop polling and return to the form;
 - `finalized`: stop polling and continue through existing-member recovery.
+
+After the client has observed `approved` and entered the finalize stage, a finalize retry may receive `ROOM_JOIN_REQUEST_NOT_FOUND` because a successful earlier finalize response was lost and its finalized tombstone has since been cleaned up. In that specific state, the client attempts strict existing-member recovery once with the same visitor. Recovery cannot mint a new identity; if no membership exists it fails with the normal access-denied response.
 
 ### 6.5 Decide as sender
 
@@ -589,7 +593,7 @@ Implementation is test-first and covers:
 5. Bootstrap ordering, rate consumption, TURN issuance only after authorization, no partial membership on failure, repeated finalize after a lost response, and ordinary recovery after finalized tombstone cleanup.
 6. Route authentication, receiver-only join, sender-only decision, uniform outsider errors, finalize/cancel rate limits, `Retry-After`, and `no-store` on off-mode successes and every error response.
 7. Status polling returning HTTP 200 receipts for every retained tombstone state and 404 only for unbound or cleaned requests.
-8. Manual request creation after a lost HTTP 202 response returning the same request ID for the same visitor without consuming another pending slot.
+8. Manual request creation after a lost HTTP 202 response returning the same request ID and authoritative receipt for the same visitor—even when a sender decision won the race—without consuming another pending slot.
 9. Manual missing, expired, closed, sender-offline, and pending-full cases returning indistinguishable external responses.
 10. Realtime sender targeting, stable snapshot ordering, reconnect snapshots, duplicate event/snapshot deduplication, incremental request delivery, throwing-subscriber isolation, and secret absence.
 11. Fragment parsing/clearing, path-preserving URL construction, legacy query manual semantics, and token discard after code edits.
