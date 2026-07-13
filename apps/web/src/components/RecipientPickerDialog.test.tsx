@@ -35,8 +35,19 @@ describe('RecipientPickerDialog', () => {
     )
 
     expect(screen.getByRole('dialog', { name: '选择接收者' })).not.toBeNull()
-    expect((screen.getByRole('checkbox', { name: receiverOne.displayName }) as HTMLInputElement).checked).toBe(true)
-    expect((screen.getByRole('checkbox', { name: receiverTwo.displayName }) as HTMLInputElement).checked).toBe(false)
+    const selectedCheckbox = screen.getByRole('checkbox', { name: receiverOne.displayName }) as HTMLInputElement
+    const selectedRow = selectedCheckbox.closest('label')
+    const unselectedCheckbox = screen.getByRole('checkbox', { name: receiverTwo.displayName }) as HTMLInputElement
+    const unselectedRow = unselectedCheckbox.closest('label')
+
+    expect(selectedRow?.getAttribute('data-selected')).toBe('true')
+    expect(selectedRow?.className).toContain('bg-accent/15')
+    expect(selectedRow?.className).toContain('border-accent/60')
+    expect(selectedRow?.querySelector('[data-testid="recipient-check-indicator"]')).not.toBeNull()
+    expect(unselectedRow?.getAttribute('data-selected')).toBe('false')
+    expect(unselectedRow?.className).not.toContain('bg-accent/15')
+    expect(selectedCheckbox.checked).toBe(true)
+    expect(unselectedCheckbox.checked).toBe(false)
   })
 
   test('supports select all, clear all, empty-selection validation, and confirmation', async () => {

@@ -129,7 +129,8 @@ export default function RecipientPickerDialog({
             return (
               <label
                 key={receiver.id}
-                className="flex min-h-14 cursor-pointer items-center gap-3 rounded-xl border border-amber-50/10 px-3 transition-colors hover:bg-white/5 has-[:focus-visible]:border-accent"
+                data-selected={checked ? 'true' : 'false'}
+                className={`flex min-h-14 cursor-pointer items-center gap-3 rounded-xl border px-3 transition-[background-color,border-color] focus-within:border-accent focus-within:outline-none ${checked ? 'border-accent/60 bg-accent/15' : 'border-amber-50/10 hover:bg-white/5'}`}
               >
                 <input
                   type="checkbox"
@@ -138,16 +139,16 @@ export default function RecipientPickerDialog({
                   onChange={() => toggle(receiver.id)}
                   aria-label={receiver.displayName}
                 />
+                <span
+                  data-testid="recipient-check-indicator"
+                  aria-hidden="true"
+                  className={`flex size-5 shrink-0 items-center justify-center rounded-md border transition-[background-color,border-color,color] motion-reduce:transition-none ${checked ? 'border-accent bg-accent text-white' : 'border-amber-50/30 bg-transparent text-transparent'}`}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>check</span>
+                </span>
                 <Avatar seed={receiver.avatarSeed} label={receiver.displayName} className="shrink-0" />
                 <span className="min-w-0 flex-1 truncate text-sm text-amber-50/80">
                   {receiver.displayName}
-                </span>
-                <span
-                  className={`material-symbols-outlined shrink-0 text-accent ${checked ? '' : 'invisible'}`}
-                  style={{ fontSize: '18px' }}
-                  aria-hidden="true"
-                >
-                  check_circle
                 </span>
               </label>
             )
