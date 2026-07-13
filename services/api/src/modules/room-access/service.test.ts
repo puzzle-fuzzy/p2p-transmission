@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createNodeRoomInviteCrypto } from "../../shared/room-invite-crypto";
 import { createRoomService, type RoomService } from "../room/service";
 import { createVisitorService, type VisitorService } from "../visitor/service";
 import type { RoomResult } from "../room/model";
@@ -42,6 +43,7 @@ const createHarness = (options: {
     now: () => timestamp,
     createCode: () => String(++roomSequence),
     createPlanId: () => `room-plan-${roomSequence}-${requestSequence}`,
+    inviteCrypto: createNodeRoomInviteCrypto(),
   });
   const access = createRoomAccessService({
     rooms,

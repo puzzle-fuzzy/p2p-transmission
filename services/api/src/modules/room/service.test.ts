@@ -87,6 +87,15 @@ const createRoom = (
   senderToken: string,
 ) => createAuthorizedRoom(services, senderToken).room;
 
+const joinApprovedReceiver = (
+  services: ReturnType<typeof createServices>,
+  code: string,
+  visitorToken: string,
+) => {
+  const prepared = services.rooms.prepareApprovedReceiverJoin(code, visitorToken);
+  return prepared.ok ? services.rooms.commit(prepared.plan) : prepared;
+};
+
 describe("room service authorized prepared mutations", () => {
   test("creates one invitation capability while keeping secrets out of public state", () => {
     const services = createServices();
@@ -419,7 +428,7 @@ describe("room service authorized prepared mutations", () => {
     const services = createServices();
     for (let index = 0; index < 2_000; index += 1) {
       const sender = services.visitors.createVisitor();
-      expect(services.rooms.createRoom(sender.token).ok).toBe(true);
+      createRoom(services, sender.token);
     }
     const overflow = services.visitors.createVisitor();
 
@@ -492,7 +501,7 @@ describe("room membership attach and resume", () => {
         visitorId: expiredSender.id,
       }],
     });
-    expect(atDeadline.rooms.getRoom(expiredRoom.code)).toMatchObject({
+    expect(atDeadline.rooms.getInternalRoomSnapshot(expiredRoom.code)).toMatchObject({
       ok: false,
       error: { code: "ROOM_NOT_FOUND" },
     });
@@ -534,7 +543,7 @@ describe("room removal and cleanup transitions", () => {
     const sender = services.visitors.createVisitor();
     const receiver = services.visitors.createVisitor();
     const room = createRoom(services, sender.token);
-    const joined = services.rooms.joinRoom(room.code, receiver.token);
+    const joined = joinApprovedReceiver(services, room.code, receiver.token);
     if (!joined.ok) throw new Error("expected receiver");
 
     expect(services.rooms.leave(room.code, receiver.id)).toMatchObject({
@@ -551,7 +560,7 @@ describe("room removal and cleanup transitions", () => {
       error: { code: "ROOM_MEMBERSHIP_REQUIRED" },
       transitions: [],
     });
-    expect(services.rooms.getRoom(room.code).ok).toBe(true);
+    expect(services.rooms.getInternalRoomSnapshot(room.code).ok).toBe(true);
   });
 
   test("any explicit sender leave closes the room for every member", () => {
@@ -559,7 +568,7 @@ describe("room removal and cleanup transitions", () => {
     const sender = services.visitors.createVisitor();
     const receiver = services.visitors.createVisitor();
     const room = createRoom(services, sender.token);
-    services.rooms.joinRoom(room.code, receiver.token);
+    joinApprovedReceiver(services, room.code, receiver.token);
 
     expect(services.rooms.leave(room.code, sender.id)).toMatchObject({
       ok: true,
@@ -568,7 +577,7 @@ describe("room removal and cleanup transitions", () => {
         { type: "participant:left", roomCode: room.code, visitorId: receiver.id },
       ],
     });
-    expect(services.rooms.getRoom(room.code)).toMatchObject({
+    expect(services.rooms.getInternalRoomSnapshot(room.code)).toMatchObject({
       ok: false,
       error: { code: "ROOM_NOT_FOUND" },
     });
@@ -580,7 +589,7 @@ describe("room removal and cleanup transitions", () => {
     const receiver = receiverTimeout.visitors.createVisitor();
     const room = createRoom(receiverTimeout, sender.token);
     receiverTimeout.rooms.attach(room.code, sender.id, "sender");
-    receiverTimeout.rooms.joinRoom(room.code, receiver.token);
+    joinApprovedReceiver(receiverTimeout, room.code, receiver.token);
     receiverTimeout.setTime(25_000);
 
     expect(receiverTimeout.rooms.cleanupExpiredState()).toEqual([{
@@ -588,7 +597,7 @@ describe("room removal and cleanup transitions", () => {
       roomCode: room.code,
       visitorId: receiver.id,
     }]);
-    expect(receiverTimeout.rooms.getRoom(room.code)).toMatchObject({
+    expect(receiverTimeout.rooms.getInternalRoomSnapshot(room.code)).toMatchObject({
       ok: true,
       room: { senderId: sender.id, receivers: [] },
     });
@@ -597,7 +606,7 @@ describe("room removal and cleanup transitions", () => {
     const expiringSender = senderTimeout.visitors.createVisitor();
     const expiringReceiver = senderTimeout.visitors.createVisitor();
     const expiringRoom = createRoom(senderTimeout, expiringSender.token);
-    senderTimeout.rooms.joinRoom(expiringRoom.code, expiringReceiver.token);
+    joinApprovedReceiver(senderTimeout, expiringRoom.code, expiringReceiver.token);
     senderTimeout.setTime(25_000);
     expect(senderTimeout.rooms.cleanupExpiredState()).toEqual([
       {
@@ -620,22 +629,22 @@ describe("room removal and cleanup transitions", () => {
     const receiver = services.visitors.createVisitor();
     const roomOne = createRoom(services, senderOne.token);
     const roomTwo = createRoom(services, senderTwo.token);
-    services.rooms.joinRoom(roomOne.code, receiver.token);
-    services.rooms.joinRoom(roomTwo.code, receiver.token);
+    joinApprovedReceiver(services, roomOne.code, receiver.token);
+    joinApprovedReceiver(services, roomTwo.code, receiver.token);
 
     expect(services.rooms.removeVisitor(receiver.id)).toEqual([
       { type: "participant:left", roomCode: roomOne.code, visitorId: receiver.id },
       { type: "participant:left", roomCode: roomTwo.code, visitorId: receiver.id },
     ]);
-    expect(services.rooms.getRoom(roomOne.code).ok).toBe(true);
-    expect(services.rooms.getRoom(roomTwo.code).ok).toBe(true);
+    expect(services.rooms.getInternalRoomSnapshot(roomOne.code).ok).toBe(true);
+    expect(services.rooms.getInternalRoomSnapshot(roomTwo.code).ok).toBe(true);
 
     expect(services.rooms.removeVisitor(senderOne.id)).toEqual([{
       type: "participant:left",
       roomCode: roomOne.code,
       visitorId: senderOne.id,
     }]);
-    expect(services.rooms.getRoom(roomOne.code).ok).toBe(false);
+    expect(services.rooms.getInternalRoomSnapshot(roomOne.code).ok).toBe(false);
   });
 
   test("room expiry closes every member in stable order exactly once", () => {
@@ -643,7 +652,7 @@ describe("room removal and cleanup transitions", () => {
     const sender = services.visitors.createVisitor();
     const receiver = services.visitors.createVisitor();
     const room = createRoom(services, sender.token);
-    services.rooms.joinRoom(room.code, receiver.token);
+    joinApprovedReceiver(services, room.code, receiver.token);
     services.setTime(11_000);
 
     expect(services.rooms.cleanupExpiredState()).toEqual([
@@ -651,28 +660,9 @@ describe("room removal and cleanup transitions", () => {
       { type: "participant:left", roomCode: room.code, visitorId: receiver.id },
     ]);
     expect(services.rooms.cleanupExpiredState()).toEqual([]);
-    expect(services.rooms.getRoom(room.code)).toMatchObject({
+    expect(services.rooms.getInternalRoomSnapshot(room.code)).toMatchObject({
       ok: false,
       error: { code: "ROOM_NOT_FOUND" },
     });
-  });
-
-  test("keeps legacy wrappers delegating through the prepared lifecycle", () => {
-    const services = createServices({ ttlMs: 1_000 });
-    const sender = services.visitors.createVisitor();
-    const receiver = services.visitors.createVisitor();
-    const created = services.rooms.createRoom(sender.token);
-    if (!created.ok) throw new Error("expected room");
-    const joined = services.rooms.joinRoom(created.room.code, receiver.token);
-    if (!joined.ok) throw new Error("expected join");
-    expect(joined.room.participants.map(participant => participant.status)).toEqual([
-      "connecting",
-      "connecting",
-    ]);
-
-    expect(services.rooms.leaveRoom(created.room.code, receiver.id).ok).toBe(true);
-    services.setTime(11_000);
-    services.rooms.cleanupExpiredRooms();
-    expect(services.rooms.getRoom(created.room.code).ok).toBe(false);
   });
 });

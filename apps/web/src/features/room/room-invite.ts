@@ -65,9 +65,6 @@ export const parseLegacyRoomCode = (search: string): string | undefined => {
   return value && ROOM_CODE_PATTERN.test(value) ? value : undefined
 }
 
-// Kept until App switches to the immutable entry-navigation snapshot.
-export const parseRoomCodeFromSearch = parseLegacyRoomCode
-
 export const buildRoomInviteUrl = (
   currentHref: string,
   roomCode: string,

@@ -3,10 +3,7 @@ import {
   createRandomId,
   createRoomCode as defaultCreateCode,
 } from "../../shared/ids";
-import {
-  createNodeRoomInviteCrypto,
-  type RoomInviteCrypto,
-} from "../../shared/room-invite-crypto";
+import type { RoomInviteCrypto } from "../../shared/room-invite-crypto";
 import { minutes, now as defaultNow } from "../../shared/time";
 import type { VisitorService } from "../visitor/service";
 import type {
@@ -32,7 +29,7 @@ export type RoomServiceOptions = {
   maxReceivers?: number;
   createCode?: () => string;
   createPlanId?: () => string;
-  inviteCrypto?: RoomInviteCrypto;
+  inviteCrypto: RoomInviteCrypto;
 };
 
 export type RoomService = {
@@ -51,12 +48,6 @@ export type RoomService = {
     visitorToken: string,
   ): RoomMutationPlanResult;
   getInternalRoomSnapshot(code: string): RoomResult;
-  /** @deprecated Remove with the legacy role-selectable HTTP join route. */
-  prepareJoin(
-    code: string,
-    visitorToken: string,
-    role?: ParticipantRole,
-  ): RoomMutationPlanResult;
   commit(plan: RoomMutationPlan): RoomResult;
   attach(
     code: string,
@@ -67,14 +58,6 @@ export type RoomService = {
   leave(code: string, visitorId: string): RoomTransitionResult;
   removeVisitor(visitorId: string): RoomTransition[];
   cleanupExpiredState(): RoomTransition[];
-  /** @deprecated Use prepareCreate() and preserve its invitation capability. */
-  createRoom(senderToken: string): RoomResult;
-  /** @deprecated Remove with the legacy role-selectable HTTP join route. */
-  joinRoom(code: string, visitorToken: string, role?: ParticipantRole): RoomResult;
-  /** @deprecated Use getInternalRoomSnapshot() from trusted services only. */
-  getRoom(code: string): RoomResult;
-  leaveRoom(code: string, visitorId: string): RoomResult;
-  cleanupExpiredRooms(): void;
 };
 
 type PreparedMutation = {
@@ -86,7 +69,7 @@ type PreparedMutation = {
   role: ParticipantRole;
   code: string;
   room?: Room;
-  admission: "create" | "invite" | "recovery" | "approved" | "legacy";
+  admission: "create" | "invite" | "recovery" | "approved";
 };
 
 type PreparedMutationRecord = {
@@ -167,8 +150,7 @@ export const createRoomService = (options: RoomServiceOptions): RoomService => {
   const maxReceivers = options.maxReceivers ?? 20;
   const createCode = options.createCode ?? defaultCreateCode;
   const createPlanId = options.createPlanId ?? (() => createRandomId("room-plan"));
-  // Kept as a secure migration default until every composition root passes the adapter.
-  const inviteCrypto = options.inviteCrypto ?? createNodeRoomInviteCrypto();
+  const inviteCrypto = options.inviteCrypto;
   assertPositiveSafeInteger(ttlMs, "Room TTL");
   assertPositiveSafeInteger(attachTimeoutMs, "Attach timeout");
   assertPositiveSafeInteger(maxRooms, "Room capacity");
@@ -438,36 +420,6 @@ export const createRoomService = (options: RoomServiceOptions): RoomService => {
     return prepareReceiverMutation(room, visitorToken, visitor.id, "approved");
   };
 
-  const prepareJoin = (
-    code: string,
-    visitorToken: string,
-    role: ParticipantRole = "receiver",
-  ): RoomMutationPlanResult => {
-    const visitor = options.visitors.getByToken(visitorToken);
-    if (!visitor) return { ok: false, error: visitorNotFound };
-    const room = rooms.get(code);
-    if (!room) return { ok: false, error: roomNotFound };
-    if (room.expiresAt <= currentTime()) return { ok: false, error: roomExpired };
-    const policyError = validateJoin(room, visitor.id, role);
-    if (policyError) return { ok: false, error: policyError };
-
-    const preview = cloneRoom(room);
-    if (!preview.participants.has(visitor.id)) {
-      addParticipant(preview, visitor.id, role, currentTime());
-    }
-    const plan = makePlan({
-      id: createPlanId(),
-      revision: room.revision,
-      kind: "join",
-      visitorId: visitor.id,
-      visitorToken,
-      role,
-      code,
-      admission: "legacy",
-    }, toPublicRoom(preview));
-    return { ok: true, plan };
-  };
-
   const commit = (plan: RoomMutationPlan): RoomResult => {
     const record = preparedMutations.get(plan);
     if (!record) return failure(invalidState);
@@ -656,28 +608,11 @@ export const createRoomService = (options: RoomServiceOptions): RoomService => {
     prepareReceiverRecovery,
     prepareApprovedReceiverJoin,
     getInternalRoomSnapshot,
-    prepareJoin,
     commit,
     attach,
     markConnecting,
     leave,
     removeVisitor,
     cleanupExpiredState,
-    createRoom(senderToken) {
-      const prepared = prepareCreate(senderToken);
-      return prepared.ok ? commit(prepared.plan) : prepared;
-    },
-    joinRoom(code, visitorToken, role = "receiver") {
-      const prepared = prepareJoin(code, visitorToken, role);
-      return prepared.ok ? commit(prepared.plan) : prepared;
-    },
-    getRoom: getInternalRoomSnapshot,
-    leaveRoom(code, visitorId) {
-      const result = leave(code, visitorId);
-      return result.ok ? { ok: true, room: result.room } : failure(result.error);
-    },
-    cleanupExpiredRooms() {
-      cleanupExpiredState();
-    },
   };
 };

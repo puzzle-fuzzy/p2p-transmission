@@ -36,6 +36,8 @@ const boundary = vi.hoisted(() => ({
   loadRoomSession: vi.fn(),
   saveRoomSession: vi.fn(),
   clearRoomSession: vi.fn(),
+  setupNotificationPermissionPrompt: vi.fn(),
+  cleanupNotificationPermissionPrompt: vi.fn(),
   renderShareDialog: vi.fn(),
   showToast: vi.fn(),
 }))
@@ -87,6 +89,11 @@ vi.mock('./lib/config', () => ({
   roomIceMode: () => 'off',
 }))
 
+vi.mock('./lib/notifications', () => ({
+  setupNotificationPermissionPrompt: boundary.setupNotificationPermissionPrompt,
+  sendNotification: vi.fn(),
+}))
+
 vi.mock('./components/ui/useToast', () => ({
   useToast: () => ({
     toast: undefined,
@@ -118,6 +125,9 @@ vi.mock('./components/RoomJoin', () => ({
       <button type="button" onClick={() => { void onCreateRoom() }}>创建测试房间</button>
       <button type="button" onClick={() => { void onSubmit(initialCode || '012345') }}>
         {mode === 'invite' ? '加入测试房间' : '请求加入测试房间'}
+      </button>
+      <button type="button" onClick={() => { void onSubmit('654321') }}>
+        请求加入其他测试房间
       </button>
       <button type="button" onClick={onCodeEdited}>编辑测试房间码</button>
       <output data-testid="initial-room-code">{initialCode ?? ''}</output>
@@ -563,6 +573,9 @@ beforeEach(() => {
     ...pendingReceipt,
     state: 'cancelled',
   })
+  boundary.setupNotificationPermissionPrompt.mockReturnValue(
+    boundary.cleanupNotificationPermissionPrompt,
+  )
   boundary.createVisitor.mockResolvedValue(sessionFor(sender))
   boundary.loadVisitorSession.mockReturnValue(sessionFor(sender))
   boundary.loadRoomSession.mockReturnValue(undefined)
@@ -623,6 +636,8 @@ describe('App transfer integration', () => {
 
     await waitFor(() => expect(boundary.createVisitor).toHaveBeenCalledTimes(1))
     rendered.unmount()
+    expect(boundary.setupNotificationPermissionPrompt).toHaveBeenCalledTimes(2)
+    expect(boundary.cleanupNotificationPermissionPrompt).toHaveBeenCalledTimes(2)
     await act(async () => {
       resolveVisitor(sessionFor(sender))
       await pendingVisitor
@@ -781,6 +796,23 @@ describe('App transfer integration', () => {
     })
   })
 
+  test('does not resurrect the original invite code after changing a manual room', async () => {
+    const user = userEvent.setup()
+    boundary.createVisitor.mockResolvedValueOnce(sessionFor(receiver))
+
+    render(<App initialNavigation={invitationNavigation} />)
+
+    await user.click(await screen.findByRole('button', { name: '编辑测试房间码' }))
+    await user.click(screen.getByRole('button', { name: '请求加入其他测试房间' }))
+    await waitFor(() => expect(screen.getByTestId('manual-waiting').dataset.roomCode)
+      .toBe('654321'))
+    await user.click(screen.getByRole('button', { name: '更换测试房间' }))
+
+    await waitFor(() => expect(screen.queryByTestId('manual-waiting')).toBeNull())
+    expect(screen.getByTestId('join-mode').textContent).toBe('manual')
+    expect(screen.getByTestId('initial-room-code').textContent).toBe('')
+  })
+
   test('replaces an invite visitor at most once after VISITOR_NOT_FOUND', async () => {
     const user = userEvent.setup()
     boundary.createVisitor
@@ -920,22 +952,55 @@ describe('App transfer integration', () => {
     await waitFor(() => expect(boundary.clearRoomSession).toHaveBeenCalledTimes(1))
     expect(boundary.clearVisitorSession).toHaveBeenCalledTimes(1)
     expect(boundary.createVisitor).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: '重新连接' })).toBeNull()
   })
 
-  test('a recovery network failure retains the same-tab recovery record', async () => {
+  test.each([
+    {
+      label: 'network failure',
+      error: new TypeError('Failed to fetch'),
+      message: '网络连接失败，请稍后重试',
+    },
+    {
+      label: 'rate limit',
+      error: new ApiClientError('请求过于频繁', 'RATE_LIMITED', 429),
+      message: '请求过于频繁',
+    },
+    {
+      label: 'server failure',
+      error: new ApiClientError('服务暂时不可用', 'INTERNAL_ERROR', 503),
+      message: '服务暂时不可用',
+    },
+  ])('a recovery $label retains its identity and exposes an exact recovery retry', async ({
+    error,
+    message,
+  }) => {
     boundary.loadVisitorSession.mockReturnValue(sessionFor(receiver))
     boundary.loadRoomSession.mockReturnValue({
       roomCode: room.code,
       role: 'receiver',
       expiresAt: Date.now() + 60_000,
     })
-    boundary.joinRoom.mockRejectedValueOnce(new Error('network unavailable'))
+    boundary.joinRoom
+      .mockRejectedValueOnce(error)
+      .mockResolvedValueOnce({ room })
+    const user = userEvent.setup()
 
     render(<App initialNavigation={absentNavigation} />)
 
-    await waitFor(() => expect(boundary.showToast).toHaveBeenCalledWith('network unavailable'))
-    expect(boundary.joinRoom).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(boundary.showToast).toHaveBeenCalledWith(message))
+    expect(screen.getByText(room.code)).not.toBeNull()
     expect(boundary.clearRoomSession).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: '重新连接' }))
+    await waitFor(() => expect(boundary.createRealtimeClient).toHaveBeenCalledTimes(1))
+
+    expect(boundary.joinRoom).toHaveBeenCalledTimes(2)
+    expect(boundary.joinRoom).toHaveBeenLastCalledWith({
+      roomCode: room.code,
+      visitorToken: 'token-receiver',
+      iceMode: 'off',
+      admission: { kind: 'recovery' },
+    })
     expect(boundary.clearVisitorSession).not.toHaveBeenCalled()
     expect(boundary.createVisitor).not.toHaveBeenCalled()
   })
@@ -1015,6 +1080,41 @@ describe('App transfer integration', () => {
       roomCode: room.code,
       requestId: pendingReceipt.requestId,
       visitorToken: 'token-receiver',
+      iceMode: 'off',
+    })
+  })
+
+  test('replaces a receiptless manual intent before a failed create-room attempt', async () => {
+    const user = userEvent.setup()
+    boundary.createVisitor
+      .mockResolvedValueOnce(sessionFor(receiver))
+      .mockResolvedValueOnce(sessionFor(receiverTwo))
+    boundary.createRoomJoinRequest
+      .mockRejectedValueOnce(new Error('request response lost'))
+      .mockResolvedValueOnce({ ...pendingReceipt, state: 'approved' })
+    boundary.createRoom.mockRejectedValueOnce(new Error('create failed'))
+    boundary.finalizeRoomJoinRequest.mockResolvedValueOnce({
+      room: roomForReceiver(receiverTwo),
+    })
+
+    render(<App initialNavigation={absentNavigation} />)
+
+    await user.click(await screen.findByRole('button', { name: '请求加入测试房间' }))
+    await waitFor(() => expect(boundary.showToast).toHaveBeenCalledWith('request response lost'))
+    await user.click(screen.getByRole('button', { name: '创建测试房间' }))
+    await waitFor(() => expect(boundary.showToast).toHaveBeenCalledWith('create failed'))
+    await user.click(screen.getByRole('button', { name: '请求加入测试房间' }))
+    await waitFor(() => expect(boundary.createRealtimeClient).toHaveBeenCalledTimes(1))
+
+    expect(boundary.createVisitor).toHaveBeenCalledTimes(2)
+    expect(boundary.createRoomJoinRequest).toHaveBeenLastCalledWith({
+      roomCode: room.code,
+      visitorToken: 'token-receiver-2',
+    })
+    expect(boundary.finalizeRoomJoinRequest).toHaveBeenCalledWith({
+      roomCode: room.code,
+      requestId: pendingReceipt.requestId,
+      visitorToken: 'token-receiver-2',
       iceMode: 'off',
     })
   })

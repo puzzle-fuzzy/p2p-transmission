@@ -21,6 +21,7 @@ import ReceiverPanel, {
 import RoomCodeCopyButton from './components/RoomCodeCopyButton'
 import RoomExpiryCountdown from './components/RoomExpiryCountdown'
 import RoomJoin from './components/RoomJoin'
+import RoomRecoveryPrompt from './components/RoomRecoveryPrompt'
 import ShareDialog from './components/ShareDialog'
 import SenderJoinRequestDialog from './components/SenderJoinRequestDialog'
 import TransferPanel from './components/TransferPanel'
@@ -34,6 +35,7 @@ import {
   initialJoinFlowState,
   joinFlowReducer,
 } from './features/room/join-state'
+import { mapJoinError } from './features/room/join-errors'
 import {
   createJoinRequestPoller,
   type JoinRequestPoller,
@@ -242,6 +244,11 @@ type ManualJoinIntent = {
   strictRecoveryAttempted: boolean
 }
 
+type ReceiverRecoveryIntent = {
+  roomCode: string
+  session: VisitorSession
+}
+
 function App({ initialNavigation }: AppProps) {
   const [state, dispatch] = useReducer(roomFlowReducer, initialRoomFlowState)
   const [joinFlow, dispatchJoinFlow] = useReducer(
@@ -279,6 +286,9 @@ function App({ initialNavigation }: AppProps) {
   const [shareDialog, setShareDialog] = useState<ShareDialogState>()
   const [manualActionBusy, setManualActionBusy] = useState(false)
   const [manualReceipt, setManualReceipt] = useState<RoomJoinRequestReceipt>()
+  const [receiverRecoveryIntent, setReceiverRecoveryIntent] = useState<
+    ReceiverRecoveryIntent | undefined
+  >()
   const [manualRoomCode, setManualRoomCode] = useState(
     initialNavigation.legacyRoomCode ?? '',
   )
@@ -580,6 +590,13 @@ function App({ initialNavigation }: AppProps) {
     dispatchJoinFlow({ type: 'join:reset' })
   }, [])
 
+  const abandonReceiverRecovery = useCallback(() => {
+    if (!receiverRecoveryIntent) return
+
+    setReceiverRecoveryIntent(undefined)
+    clearRoomSession()
+  }, [receiverRecoveryIntent])
+
   const disposeRoomResources = useCallback(() => {
     disposeRoomLifecycle()
     const realtime = realtimeRef.current
@@ -589,6 +606,7 @@ function App({ initialNavigation }: AppProps) {
     roomRef.current = undefined
     clearOwnerInvite()
     resetManualIntent()
+    setReceiverRecoveryIntent(undefined)
     dispatchRoomAccess({ type: 'reset' })
     clearRoomSession()
     resetTransferPresentation({ type: 'room:reset' })
@@ -596,8 +614,8 @@ function App({ initialNavigation }: AppProps) {
 
   useEffect(() => {
     const bootGeneration = operationGenerationRef.current
+    const cleanupNotificationPrompt = setupNotificationPermissionPrompt()
     const boot = async () => {
-      setupNotificationPermissionPrompt()
       try {
         const existingSession = loadVisitorSession()
         if (existingSession) {
@@ -624,6 +642,7 @@ function App({ initialNavigation }: AppProps) {
     void boot()
 
     return () => {
+      cleanupNotificationPrompt()
       invalidatePendingOperations()
       const realtime = realtimeRef.current
       realtimeRef.current = undefined
@@ -1110,6 +1129,8 @@ function App({ initialNavigation }: AppProps) {
 
   const handleCreateRoom = useCallback(async () => {
     if (!state.session) return
+    resetManualIntent()
+    abandonReceiverRecovery()
     const operationGeneration = ++operationGenerationRef.current
     dispatch({ type: 'room:joining' })
 
@@ -1147,7 +1168,14 @@ function App({ initialNavigation }: AppProps) {
       showToast(message)
       dispatch({ type: 'error', message })
     }
-  }, [connectRealtime, runWithFreshSession, showToast, state.session])
+  }, [
+    abandonReceiverRecovery,
+    connectRealtime,
+    resetManualIntent,
+    runWithFreshSession,
+    showToast,
+    state.session,
+  ])
 
   const clearInviteIntent = useCallback(() => {
     inviteIntentRef.current = undefined
@@ -1251,6 +1279,7 @@ function App({ initialNavigation }: AppProps) {
   ) => {
     const operationGeneration = ++operationGenerationRef.current
     dispatch({ type: 'room:joining' })
+    setJoinError('')
 
     try {
       const iceMode = getClientIceMode()
@@ -1277,26 +1306,33 @@ function App({ initialNavigation }: AppProps) {
         role: 'receiver',
         expiresAt: bootstrap.room.expiresAt,
       })
+      setReceiverRecoveryIntent(undefined)
     } catch (error) {
       if (operationGenerationRef.current !== operationGeneration) return
-      const deterministicDenial = error instanceof ApiClientError && (
-        error.code === 'VISITOR_NOT_FOUND'
-        || error.code === 'ROOM_ACCESS_DENIED'
-        || error.code === 'ROOM_NOT_FOUND'
-        || error.code === 'ROOM_EXPIRED'
-        || error.code === 'ROOM_MEMBERSHIP_REQUIRED'
-        || error.code === 'INVALID_STATE'
-      )
-      if (deterministicDenial) {
+      const failure = mapJoinError(error, 'recovery')
+      if (failure.clearRecovery) {
+        setReceiverRecoveryIntent(undefined)
         clearRoomSession()
-        if (error.code === 'VISITOR_NOT_FOUND') clearVisitorSession()
+        if (failure.code === 'VISITOR_NOT_FOUND') clearVisitorSession()
+      } else if (failure.retryable) {
+        setReceiverRecoveryIntent({ roomCode, session })
+      } else {
+        setReceiverRecoveryIntent(undefined)
       }
-      const message = error instanceof Error ? error.message : '恢复房间失败'
-      setJoinError(message)
-      showToast(message)
-      dispatch({ type: 'error', message })
+      setJoinError(failure.message)
+      showToast(failure.message)
+      dispatch({ type: 'error', message: failure.message })
     }
   }, [connectRealtime, showToast])
+
+  const retryReceiverRecovery = useCallback(() => {
+    if (!receiverRecoveryIntent || state.phase === 'joining') return
+
+    void recoverReceiverRoom(
+      receiverRecoveryIntent.session,
+      receiverRecoveryIntent.roomCode,
+    )
+  }, [receiverRecoveryIntent, recoverReceiverRoom, state.phase])
 
   useEffect(() => {
     if (state.phase !== 'lobby' || !state.session) return
@@ -1534,6 +1570,7 @@ function App({ initialNavigation }: AppProps) {
 
   const requestManualJoin = useCallback(async (code: string) => {
     if (!state.session) return
+    abandonReceiverRecovery()
     setManualRoomCode(code)
     setJoinError('')
     let intent = manualJoinIntentRef.current
@@ -1564,7 +1601,12 @@ function App({ initialNavigation }: AppProps) {
     } catch (error) {
       failManualOperation(intent, undefined, error)
     }
-  }, [failManualOperation, resetManualIntent, state.session])
+  }, [
+    abandonReceiverRecovery,
+    failManualOperation,
+    resetManualIntent,
+    state.session,
+  ])
 
   const handleJoinRoom = useCallback((code: string) => {
     if (inviteIntentRef.current) return joinInvitedRoom(code)
@@ -1939,9 +1981,10 @@ function App({ initialNavigation }: AppProps) {
   const roomReceivers = receiversFromRoom(roomView?.room)
   const readyPeerIdSet = new Set(state.readyPeerIds)
   const connectedReceivers = roomReceivers.filter(receiver => readyPeerIdSet.has(receiver.id))
-  const initialJoinCode = initialInvite?.roomCode
-    ?? manualRoomCode
-    ?? initialNavigation.legacyRoomCode
+  const activeInviteCode = joinMode === 'invite'
+    ? inviteIntentRef.current?.roomCode
+    : undefined
+  const initialJoinCode = activeInviteCode ?? manualRoomCode
   const canShareOwnerInvite = state.role === 'sender'
     && ownerInviteRoomCode === roomView?.room.code
   const manualWaitingReceipt = manualReceipt
@@ -1975,15 +2018,24 @@ function App({ initialNavigation }: AppProps) {
         {!roomView
           && state.phase !== 'booting'
           && !manualWaitingReceipt && (
-          <RoomJoin
-            busy={state.phase === 'joining' || manualActionBusy}
-            initialCode={initialJoinCode}
-            mode={joinMode}
-            error={joinError || state.error || undefined}
-            onCreateRoom={handleCreateRoom}
-            onSubmit={handleJoinRoom}
-            onCodeEdited={handleRoomCodeEdited}
-          />
+          <div className="flex w-full max-w-sm flex-col">
+            {receiverRecoveryIntent && (
+              <RoomRecoveryPrompt
+                roomCode={receiverRecoveryIntent.roomCode}
+                busy={state.phase === 'joining'}
+                onRetry={retryReceiverRecovery}
+              />
+            )}
+            <RoomJoin
+              busy={state.phase === 'joining' || manualActionBusy}
+              initialCode={initialJoinCode}
+              mode={joinMode}
+              error={joinError || state.error || undefined}
+              onCreateRoom={handleCreateRoom}
+              onSubmit={handleJoinRoom}
+              onCodeEdited={handleRoomCodeEdited}
+            />
+          </div>
         )}
 
         {roomView && (

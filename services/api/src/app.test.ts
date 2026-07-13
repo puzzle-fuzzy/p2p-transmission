@@ -153,6 +153,8 @@ describe("app routes", () => {
       .toBe("GET, POST, OPTIONS");
     expect(options.headers.get("access-control-allow-headers"))
       .toBe("content-type, authorization");
+    expect(options.headers.get("cache-control")).toBe("no-store");
+    expect(options.headers.get("referrer-policy")).toBe("no-referrer");
     expect([
       response.headers.get("access-control-allow-origin"),
       disallowed.headers.get("access-control-allow-origin"),
@@ -178,6 +180,8 @@ describe("app routes", () => {
     }>(response);
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
     expect(body).toEqual({
       visitor: {
         id: "vis_001",
@@ -314,7 +318,35 @@ describe("app routes", () => {
       expect(invalid.status).toBe(422);
       expect(invalid.headers.get("cache-control")).toBe("no-store");
       expect(invalid.headers.get("referrer-policy")).toBe("no-referrer");
+      const invalidText = await invalid.text();
+      expect(invalidText).not.toContain(created.invite.token);
+      expect(JSON.parse(invalidText)).toEqual({
+        error: {
+          code: "INVALID_REQUEST",
+          message: "Request validation failed",
+        },
+      });
     }
+
+    const invalidJson = await app.handle(new Request(joinUrl, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${receiver.token}`,
+        "content-type": "application/json",
+      },
+      body: `{"admission":{"kind":"invite","inviteToken":"${created.invite.token}"`,
+    }));
+    const invalidJsonText = await invalidJson.text();
+    expect(invalidJson.status).toBe(400);
+    expect(invalidJson.headers.get("cache-control")).toBe("no-store");
+    expect(invalidJson.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(invalidJsonText).not.toContain(created.invite.token);
+    expect(JSON.parse(invalidJsonText)).toEqual({
+      error: {
+        code: "INVALID_REQUEST",
+        message: "Request validation failed",
+      },
+    });
 
     const malformedInvite = await sendJoin({
       iceMode: "off",

@@ -57,14 +57,25 @@ export const sendNotification = ({ title, body, tag }: NotificationOptions) => {
 
 // Track visibility to request permission when user is active
 export const setupNotificationPermissionPrompt = () => {
-  if (!('Notification' in window) || Notification.permission !== 'default') return
+  if (!('Notification' in window) || Notification.permission !== 'default') {
+    return () => undefined
+  }
+
+  let active = true
+  const cleanup = () => {
+    if (!active) return
+
+    active = false
+    document.removeEventListener('visibilitychange', handler)
+  }
 
   const handler = () => {
-    if (document.hidden) return
+    if (!active || document.hidden) return
     // Request permission after a user interaction
-    document.removeEventListener('visibilitychange', handler)
+    cleanup()
     void requestNotificationPermission()
   }
 
   document.addEventListener('visibilitychange', handler)
+  return cleanup
 }

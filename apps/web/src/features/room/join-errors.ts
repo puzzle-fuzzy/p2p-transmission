@@ -30,6 +30,7 @@ const staleRecoveryCodes = new Set([
   'ROOM_NOT_FOUND',
   'ROOM_EXPIRED',
   'ROOM_MEMBERSHIP_REQUIRED',
+  'INVALID_STATE',
 ])
 
 const failure = (

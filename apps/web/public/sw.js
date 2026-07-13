@@ -1,11 +1,11 @@
-const CACHE_NAME = 'p2p-transmission-v1'
+const CACHE_PREFIX = 'p2p-transmission-'
+const CACHE_NAME = `${CACHE_PREFIX}static-v2`
 const STATIC_ASSETS = [
-  '/',
-  '/index.html',
   '/favicon.svg',
   '/icons.svg',
   '/fonts/material-symbols-outlined.woff2',
 ]
+const STATIC_ASSET_PATHS = new Set(STATIC_ASSETS)
 
 self.addEventListener('install', event => {
   event.waitUntil(
@@ -16,36 +16,39 @@ self.addEventListener('install', event => {
 
 self.addEventListener('activate', event => {
   event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(
-        keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key)),
-      ),
-    ),
+    caches.keys()
+      .then(keys => Promise.all(
+        keys
+          .filter(key => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME)
+          .map(key => caches.delete(key)),
+      ))
+      .then(() => self.clients.claim()),
   )
-  self.clients.claim()
 })
 
 self.addEventListener('fetch', event => {
   const { request } = event
-
   if (request.method !== 'GET') return
 
-  if (request.url.startsWith(self.location.origin) && STATIC_ASSETS.includes(new URL(request.url).pathname)) {
-    event.respondWith(
-      caches.match(request).then(cached => cached ?? fetch(request)),
-    )
-    return
-  }
+  const url = new URL(request.url)
+  if (
+    url.origin !== self.location.origin
+    || url.search !== ''
+    || request.headers.has('authorization')
+    || !STATIC_ASSET_PATHS.has(url.pathname)
+  ) return
 
   event.respondWith(
-    fetch(request)
-      .then(response => {
-        if (response.ok && request.url.startsWith(self.location.origin)) {
+    caches.open(CACHE_NAME).then(cache => cache.match(request).then(cached => {
+      if (cached) return cached
+
+      return fetch(request).then(response => {
+        if (response.ok && response.type === 'basic') {
           const clone = response.clone()
-          caches.open(CACHE_NAME).then(cache => cache.put(request, clone))
+          void cache.put(request, clone)
         }
         return response
       })
-      .catch(() => caches.match(request)),
+    })),
   )
 })

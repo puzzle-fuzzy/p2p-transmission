@@ -3,7 +3,6 @@ import {
   buildRoomInviteUrl,
   parseLegacyRoomCode,
   parseRoomInviteFragment,
-  parseRoomCodeFromSearch,
 } from './room-invite'
 
 const inviteToken = `inv_${'A'.repeat(43)}`
@@ -63,10 +62,6 @@ describe('parseLegacyRoomCode', () => {
     '?room=%EF%BC%91%EF%BC%92%EF%BC%93%EF%BC%94%EF%BC%95%EF%BC%96',
   ])('rejects missing, duplicate, or malformed room values from %s', search => {
     expect(parseLegacyRoomCode(search)).toBeUndefined()
-  })
-
-  test('keeps the legacy export compatible until App adopts the navigation snapshot', () => {
-    expect(parseRoomCodeFromSearch('?room=123456')).toBe('123456')
   })
 })
 

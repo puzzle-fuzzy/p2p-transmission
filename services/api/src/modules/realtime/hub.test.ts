@@ -146,12 +146,26 @@ const createHarness = (options: HarnessOptions = {}) => {
 
 type Harness = ReturnType<typeof createHarness>;
 
+const createRoom = (harness: Harness, senderToken: string) => {
+  const prepared = harness.rooms.prepareCreate(senderToken);
+  return prepared.ok ? harness.rooms.commit(prepared.plan) : prepared;
+};
+
+const joinApprovedReceiver = (
+  harness: Harness,
+  roomCode: string,
+  visitorToken: string,
+) => {
+  const prepared = harness.rooms.prepareApprovedReceiverJoin(roomCode, visitorToken);
+  return prepared.ok ? harness.rooms.commit(prepared.plan) : prepared;
+};
+
 const bootstrapPair = (harness: Harness) => {
   const sender = harness.visitors.createVisitor();
   const receiver = harness.visitors.createVisitor();
-  const created = harness.rooms.createRoom(sender.token);
+  const created = createRoom(harness, sender.token);
   if (!created.ok) throw new Error("expected room creation");
-  const joined = harness.rooms.joinRoom(created.room.code, receiver.token, "receiver");
+  const joined = joinApprovedReceiver(harness, created.room.code, receiver.token);
   if (!joined.ok) throw new Error("expected room join");
   return { sender, receiver, roomCode: created.room.code };
 };
@@ -197,7 +211,7 @@ describe("realtime hub attach and resume", () => {
     const harness = createHarness();
     const sender = harness.visitors.createVisitor();
     const outsider = harness.visitors.createVisitor();
-    const created = harness.rooms.createRoom(sender.token);
+    const created = createRoom(harness, sender.token);
     if (!created.ok) throw new Error("expected room");
     const senderSocket = createSocket("socket_sender");
     const outsiderSocket = createSocket("socket_outsider");
@@ -467,10 +481,10 @@ describe("realtime hub attach and resume", () => {
     const sender = harness.visitors.createVisitor();
     const receiverA = harness.visitors.createVisitor();
     const receiverB = harness.visitors.createVisitor();
-    const created = harness.rooms.createRoom(sender.token);
+    const created = createRoom(harness, sender.token);
     if (!created.ok) throw new Error("expected room");
     for (const receiver of [receiverA, receiverB]) {
-      const joined = harness.rooms.joinRoom(created.room.code, receiver.token, "receiver");
+      const joined = joinApprovedReceiver(harness, created.room.code, receiver.token);
       if (!joined.ok) throw new Error("expected join");
     }
     const senderSocket = createSocket("socket_sender");
@@ -498,9 +512,9 @@ describe("realtime hub room access notifications", () => {
     const receiver = harness.visitors.createVisitor();
     const waitingA = harness.visitors.createVisitor();
     const waitingB = harness.visitors.createVisitor();
-    const created = harness.rooms.createRoom(sender.token);
+    const created = createRoom(harness, sender.token);
     if (!created.ok) throw new Error("expected room");
-    const joined = harness.rooms.joinRoom(created.room.code, receiver.token, "receiver");
+    const joined = joinApprovedReceiver(harness, created.room.code, receiver.token);
     if (!joined.ok) throw new Error("expected receiver membership");
     const firstSenderSocket = createSocket("socket_sender_first");
     const receiverSocket = createSocket("socket_receiver");
@@ -553,10 +567,10 @@ describe("realtime hub room access notifications", () => {
     const receiverA = harness.visitors.createVisitor();
     const waitingA = harness.visitors.createVisitor();
     const waitingB = harness.visitors.createVisitor();
-    const roomA = harness.rooms.createRoom(senderA.token);
-    const roomB = harness.rooms.createRoom(senderB.token);
+    const roomA = createRoom(harness, senderA.token);
+    const roomB = createRoom(harness, senderB.token);
     if (!roomA.ok || !roomB.ok) throw new Error("expected rooms");
-    const receiverJoin = harness.rooms.joinRoom(roomA.room.code, receiverA.token, "receiver");
+    const receiverJoin = joinApprovedReceiver(harness, roomA.room.code, receiverA.token);
     if (!receiverJoin.ok) throw new Error("expected receiver membership");
 
     const oldSenderSocket = createSocket("socket_sender_a_old");
@@ -624,7 +638,7 @@ describe("realtime hub room access notifications", () => {
   test("all access resolution states are delivered without bearer secrets", () => {
     const harness = createHarness();
     const sender = harness.visitors.createVisitor();
-    const created = harness.rooms.createRoom(sender.token);
+    const created = createRoom(harness, sender.token);
     if (!created.ok) throw new Error("expected room");
     const senderSocket = createSocket("socket_sender");
     connect(harness.hub, senderSocket.socket, sender.token);
@@ -719,7 +733,7 @@ describe("realtime hub room access notifications", () => {
   test("snapshot failure stays generic and does not detach valid sender membership", () => {
     const harness = createHarness({ failAccessSnapshots: true });
     const sender = harness.visitors.createVisitor();
-    const created = harness.rooms.createRoom(sender.token);
+    const created = createRoom(harness, sender.token);
     if (!created.ok) throw new Error("expected room");
     const senderSocket = createSocket("socket_sender");
     connect(harness.hub, senderSocket.socket, sender.token);
@@ -738,7 +752,7 @@ describe("realtime hub room access notifications", () => {
     const harness = createHarness();
     const sender = harness.visitors.createVisitor();
     const waiting = harness.visitors.createVisitor();
-    const created = harness.rooms.createRoom(sender.token);
+    const created = createRoom(harness, sender.token);
     if (!created.ok) throw new Error("expected room");
     const broken = createSocket("socket_broken_sender", { throwOnSend: true });
     connect(harness.hub, broken.socket, sender.token);

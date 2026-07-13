@@ -112,6 +112,7 @@ describe('mapJoinError', () => {
     'ROOM_NOT_FOUND',
     'ROOM_EXPIRED',
     'ROOM_MEMBERSHIP_REQUIRED',
+    'INVALID_STATE',
   ])('clears stale recovery for deterministic room error %s', code => {
     expect(mapJoinError(apiError(code, 404), 'recovery')).toMatchObject({
       retryable: false,
