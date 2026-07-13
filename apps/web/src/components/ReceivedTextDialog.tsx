@@ -19,6 +19,20 @@ const copyLabels: Record<ReceivedTextCopyStatus, string> = {
   error: '复制失败',
 }
 
+const copyIcons: Record<ReceivedTextCopyStatus, string> = {
+  idle: 'content_copy',
+  copying: 'progress_activity',
+  copied: 'check_circle',
+  error: 'error',
+}
+
+const copyStatusMessages: Record<ReceivedTextCopyStatus, string> = {
+  idle: '',
+  copying: '正在复制到剪贴板…',
+  copied: '文本已复制到剪贴板',
+  error: '复制失败，请重试',
+}
+
 export default function ReceivedTextDialog({
   sender,
   text,
@@ -94,11 +108,25 @@ export default function ReceivedTextDialog({
         <div className="mt-5 grid grid-cols-2 gap-2">
           <button
             type="button"
-            className="min-h-11 rounded-xl border border-amber-50/15 px-4 text-sm tracking-wider text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none disabled:cursor-wait disabled:text-amber-50/20"
+            data-copy-status={copyStatus}
+            className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border px-4 text-sm tracking-wider transition-[background-color,border-color,color] focus-visible:border-accent focus-visible:outline-none disabled:cursor-wait disabled:text-amber-50/20 ${
+              copyStatus === 'copied'
+                ? 'border-accent bg-accent/10 text-accent hover:bg-accent/20'
+                : copyStatus === 'error'
+                  ? 'border-amber-50/30 bg-white/5 text-amber-50/80 hover:bg-white/10'
+                  : 'border-amber-50/15 text-amber-50/60 hover:bg-white/5 hover:text-amber-50/80'
+            }`}
             disabled={copyStatus === 'copying'}
             onClick={onCopy}
           >
-            {copyLabels[copyStatus]}
+            <span
+              data-testid="copy-status-icon"
+              className="material-symbols-outlined text-[18px] leading-none"
+              aria-hidden="true"
+            >
+              {copyIcons[copyStatus]}
+            </span>
+            <span>{copyLabels[copyStatus]}</span>
           </button>
           <button
             ref={closeButtonRef}
@@ -110,10 +138,15 @@ export default function ReceivedTextDialog({
           </button>
         </div>
 
-        <span className="sr-only" aria-live="polite" aria-atomic="true">
-          {copyStatus === 'copied' && '文本已复制'}
-          {copyStatus === 'error' && '复制失败'}
-        </span>
+        <p
+          data-testid="copy-status-message"
+          className="mt-2 min-h-5 text-center text-xs text-amber-50/60"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {copyStatusMessages[copyStatus]}
+        </p>
       </div>
     </dialog>
   )

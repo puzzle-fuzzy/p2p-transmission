@@ -58,6 +58,22 @@ describe('ReceivedTextDialog', () => {
 
     await user.click(screen.getByRole('button', { name: '复制' }))
     expect(onCopy).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('copy-status-icon').textContent).toBe('content_copy')
+    expect(screen.getByTestId('copy-status-message').textContent).toBe('')
+
+    rerender(
+      <ReceivedTextDialog
+        sender={sender}
+        text={text}
+        copyStatus="copying"
+        onCopy={onCopy}
+        onClose={onClose}
+      />,
+    )
+    expect(
+      (screen.getByRole('button', { name: '复制中…' }) as HTMLButtonElement).disabled,
+    ).toBe(true)
+    expect(screen.getByTestId('copy-status-icon').textContent).toBe('progress_activity')
 
     rerender(
       <ReceivedTextDialog
@@ -68,8 +84,16 @@ describe('ReceivedTextDialog', () => {
         onClose={onClose}
       />,
     )
-    expect(screen.getByRole('button', { name: '已复制' })).not.toBeNull()
+    const copied = screen.getByRole('button', { name: '已复制' })
+    expect((copied as HTMLButtonElement).disabled).toBe(false)
+    expect(copied.getAttribute('data-copy-status')).toBe('copied')
+    expect(copied.className).toContain('bg-accent/10')
+    expect(screen.getByTestId('copy-status-icon').textContent).toBe('check_circle')
+    expect(screen.getByTestId('copy-status-message').textContent).toBe('文本已复制到剪贴板')
     expect((screen.getByRole('dialog') as HTMLDialogElement).open).toBe(true)
+
+    await user.click(copied)
+    expect(onCopy).toHaveBeenCalledTimes(2)
 
     rerender(
       <ReceivedTextDialog
@@ -80,7 +104,10 @@ describe('ReceivedTextDialog', () => {
         onClose={onClose}
       />,
     )
-    expect(screen.getByRole('button', { name: '复制失败' })).not.toBeNull()
+    const failed = screen.getByRole('button', { name: '复制失败' })
+    expect(failed.getAttribute('data-copy-status')).toBe('error')
+    expect(screen.getByTestId('copy-status-icon').textContent).toBe('error')
+    expect(screen.getByTestId('copy-status-message').textContent).toBe('复制失败，请重试')
     expect(screen.getByText(text).textContent).toBe(text)
     expect(onClose).not.toHaveBeenCalled()
   })
