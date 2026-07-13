@@ -1,0 +1,12 @@
+.git
+.github
+.turbo
+node_modules
+**/node_modules
+dist
+**/dist
+deploy/data
+deploy/coturn/.local
+**/.env
+**/.env.*
+!**/.env.example

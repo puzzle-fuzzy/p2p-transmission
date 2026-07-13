@@ -17,11 +17,11 @@ export type ClientIceMode =
 export const getApiBaseUrl = () =>
   trimTrailingSlash(import.meta.env.VITE_API_URL ?? 'http://localhost:3000')
 
-export const getRealtimeUrl = (token: string) => {
+export const getRealtimeUrl = (ticket: string) => {
   const baseUrl = new URL(getApiBaseUrl())
   baseUrl.protocol = baseUrl.protocol === 'https:' ? 'wss:' : 'ws:'
   baseUrl.pathname = '/v1/realtime'
-  baseUrl.search = new URLSearchParams({ token }).toString()
+  baseUrl.search = new URLSearchParams({ ticket }).toString()
 
   return baseUrl.toString()
 }

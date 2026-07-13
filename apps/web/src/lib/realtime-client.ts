@@ -1,4 +1,5 @@
 import { getRealtimeUrl } from './config'
+import { createRealtimeTicket } from './api-client'
 import type { ClientRealtimeMessage, ServerRealtimeMessage } from '../shared/contracts'
 
 export type WebSocketLike = {
@@ -14,6 +15,7 @@ export type WebSocketConstructor = new (url: string) => WebSocketLike
 
 export type RealtimeClientOptions = {
   token: string
+  getRealtimeTicket?: () => Promise<string>
   WebSocketCtor?: WebSocketConstructor
   realtimeUrl?: (token: string) => string
   reconnectDelays?: readonly number[]
@@ -42,6 +44,7 @@ const openReadyState = 1
 
 export const createRealtimeClient = ({
   token,
+  getRealtimeTicket,
   WebSocketCtor = WebSocket as unknown as WebSocketConstructor,
   realtimeUrl = getRealtimeUrl,
   reconnectDelays = defaultReconnectDelays,
@@ -56,6 +59,7 @@ export const createRealtimeClient = ({
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
   let stabilityTimer: ReturnType<typeof setTimeout> | undefined
   let explicitlyClosed = false
+  let opening = false
 
   const emit = (message: ServerRealtimeMessage) => {
     for (const listener of listeners) {
@@ -121,17 +125,30 @@ export const createRealtimeClient = ({
     scheduleReconnect()
   }
 
-  function openSocket() {
-    if (explicitlyClosed) return
+  async function openSocket() {
+    if (explicitlyClosed || opening) return
+    opening = true
 
     let nextSocket: WebSocketLike
-
     try {
-      nextSocket = new WebSocketCtor(realtimeUrl(token))
+      const ticket = getRealtimeTicket
+        ? await getRealtimeTicket()
+        // Custom URL factories are used by unit tests and embedding clients;
+        // production's default URL factory always obtains a short-lived ticket.
+        : realtimeUrl === getRealtimeUrl
+          ? await createRealtimeTicket(token).then(result => result.ticket)
+          : token
+      if (explicitlyClosed) {
+        opening = false
+        return
+      }
+      nextSocket = new WebSocketCtor(realtimeUrl(ticket))
     } catch {
+      opening = false
       scheduleReconnect()
       return
     }
+    opening = false
 
     socket = nextSocket
     nextSocket.onopen = () => {
@@ -175,7 +192,7 @@ export const createRealtimeClient = ({
       explicitlyClosed = false
       reconnectAttempt = 0
       setStatus('connecting')
-      openSocket()
+      void openSocket()
     },
     send(message) {
       if (explicitlyClosed) return
@@ -189,6 +206,7 @@ export const createRealtimeClient = ({
     },
     close() {
       explicitlyClosed = true
+      opening = false
       clearReconnectTimer()
       clearStabilityTimer()
       pendingMessages.splice(0)

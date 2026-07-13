@@ -9,6 +9,12 @@ describe("API configuration", () => {
 
     expect(config).toEqual({
       port: 3000,
+      databasePath: ":memory:",
+      realtimeTicketTtlMs: 60_000,
+      realtimeTicketMaxPerVisitor: 12,
+      realtimeMessagesPerSecond: 30,
+      realtimeOutboundQueueMaxMessages: 128,
+      realtimeOutboundQueueMaxBytes: 1_048_576,
       stunUrls: [],
       corsAllowedOrigins: ["http://localhost:5713"],
       trustProxy: false,

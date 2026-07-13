@@ -26,8 +26,6 @@ describe("coturn configuration renderer", () => {
       "total-quota=100",
       "max-bps=12500000",
       "bps-capacity=125000000",
-      "no-cli",
-      "no-loopback-peers",
       "no-multicast-peers",
       "cert=/run/coturn/tls/fullchain.pem",
       "pkey=/run/coturn/tls/privkey.pem",

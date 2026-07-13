@@ -270,6 +270,49 @@ describe('peer session v2', () => {
     expect(session.readyPeerIds()).toEqual([])
   })
 
+  test('offers text only to the selected ready peer', async () => {
+    const first = new FakePeerConnection()
+    const second = new FakePeerConnection()
+    const receiverTwo = { ...receiver, id: 'vis_receiver_2' }
+    const { session } = senderHarness([first, second])
+    session.syncRoom(room([receiver, receiverTwo]))
+    await settle()
+
+    const firstChannel = first.channels[0] as FakeDataChannel
+    const secondChannel = second.channels[0] as FakeDataChannel
+    firstChannel.open()
+    secondChannel.open()
+
+    const offered = session.offerText('targeted', [receiver.id])
+
+    expect(offered.peerIds).toEqual([receiver.id])
+    expect(controls(firstChannel)).toContainEqual(expect.objectContaining({ type: 'transfer:text' }))
+    expect(controls(secondChannel)).not.toContainEqual(expect.objectContaining({ type: 'transfer:text' }))
+  })
+
+  test('offers files only to selected ready peers and rejects an empty target set', async () => {
+    const first = new FakePeerConnection(4096)
+    const second = new FakePeerConnection(4096)
+    const receiverTwo = { ...receiver, id: 'vis_receiver_2' }
+    const { session } = senderHarness([first, second])
+    session.syncRoom(room([receiver, receiverTwo]))
+    await settle()
+
+    const firstChannel = first.channels[0] as FakeDataChannel
+    const secondChannel = second.channels[0] as FakeDataChannel
+    firstChannel.open()
+    secondChannel.open()
+    const file = new File([new Uint8Array([1, 2, 3])], 'target.txt')
+
+    expect(() => session.offerText('empty', [])).toThrow('No connected receivers')
+
+    const offered = session.offerFiles([{ fileId: 'file_target', file }], [receiver.id])
+
+    expect(offered.peerIds).toEqual([receiver.id])
+    expect(controls(firstChannel)).toContainEqual(expect.objectContaining({ type: 'transfer:file-request' }))
+    expect(controls(secondChannel)).not.toContainEqual(expect.objectContaining({ type: 'transfer:file-request' }))
+  })
+
   test('delivers text directly, waits for one receipt, and excludes concurrent offers', async () => {
     const connection = new FakePeerConnection()
     const { session, events } = senderHarness([connection])

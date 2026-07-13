@@ -23,6 +23,12 @@ import {
   type ClientIpResolver,
 } from "./shared/client-ip";
 import { createNodeRoomInviteCrypto } from "./shared/room-invite-crypto";
+import {
+  createRealtimeTicketService,
+  type RealtimeTicketService,
+} from "./modules/realtime/ticket-service";
+import type { StateStore } from "./storage/model";
+import { loadSqliteState, createSqliteStateStore } from "./storage/sqlite";
 
 export type AppContext = {
   config: ApiConfig;
@@ -34,15 +40,27 @@ export type AppContext = {
   maintenance: MaintenanceService;
   roomBootstrap: RoomBootstrapService;
   clientIp: ClientIpResolver;
+  stateStore?: StateStore;
+  realtimeTickets?: RealtimeTicketService;
 };
 
 export const createDefaultContext = (
   config: ApiConfig = loadApiConfig(),
 ): AppContext => {
-  const visitors = createVisitorService();
+  const databasePath = config.databasePath ?? ":memory:";
+  const initialState = loadSqliteState(databasePath);
+  const visitors = createVisitorService({ initialVisitors: initialState.visitors });
   const inviteCrypto = createNodeRoomInviteCrypto();
-  const rooms = createRoomService({ visitors, inviteCrypto });
-  const roomAccess = createRoomAccessService({ rooms, visitors });
+  const rooms = createRoomService({
+    visitors,
+    inviteCrypto,
+    initialRooms: initialState.rooms,
+  });
+  const roomAccess = createRoomAccessService({
+    rooms,
+    visitors,
+    initialRequests: initialState.joinRequests,
+  });
   const rateLimits = createRateLimitService();
   const turn = createTurnService(config);
   const maintenance = createMaintenanceService({
@@ -63,6 +81,15 @@ export const createDefaultContext = (
     trustProxy: config.trustProxy,
     trustedProxyIps: config.trustedProxyIps,
   });
+  const stateStore = createSqliteStateStore(databasePath, {
+    visitors,
+    rooms,
+    roomAccess,
+  });
+  const realtimeTickets = createRealtimeTicketService(visitors, {
+    ttlMs: config.realtimeTicketTtlMs,
+    maxPerVisitor: config.realtimeTicketMaxPerVisitor,
+  });
 
   return {
     config,
@@ -74,5 +101,7 @@ export const createDefaultContext = (
     maintenance,
     roomBootstrap,
     clientIp,
+    stateStore,
+    realtimeTickets,
   };
 };

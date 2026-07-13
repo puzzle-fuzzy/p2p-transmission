@@ -91,12 +91,32 @@ export const realtimeRoutes = (context: AppContext) => {
   const hub = createRealtimeHub(context);
 
   return new Elysia()
+    .post("/v1/realtime/tickets", ({ headers, set, status }) => {
+      const authorization = headers.authorization;
+      const token = authorization?.startsWith("Bearer ")
+        ? authorization.slice("Bearer ".length).trim()
+        : "";
+      const result = context.realtimeTickets?.issue(token);
+      if (!result || !result.ok) {
+        if (result?.error.code === "CAPACITY_EXCEEDED") {
+          set.headers["retry-after"] = "1";
+          return status(429, { error: result.error });
+        }
+        return status(401, {
+          error: result?.error ?? {
+            code: "VISITOR_NOT_FOUND",
+            message: "访客不存在或已过期",
+          },
+        });
+      }
+      return result;
+    })
     .ws("/v1/realtime", {
       headers: t.Object({
         origin: t.Optional(t.String()),
       }),
       query: t.Object({
-        token: t.String({ minLength: 1, maxLength: 128 }),
+        ticket: t.String({ minLength: 40, maxLength: 128 }),
       }, { additionalProperties: false }),
       body: clientMessageSchema,
       error({ error }) {
@@ -110,7 +130,18 @@ export const realtimeRoutes = (context: AppContext) => {
           close: () => ws.close(),
         };
 
-        hub.connect(socket, ws.data.query.token);
+        const ticketService = context.realtimeTickets;
+        const consumed = ticketService?.consume(ws.data.query.ticket);
+        if (!consumed || !consumed.ok) {
+          const error = consumed?.error ?? {
+            code: "REALTIME_TICKET_INVALID",
+            message: "实时连接票据无效或已过期",
+          };
+          socket.send({ type: "error", ...error });
+          socket.close();
+          return;
+        }
+        hub.connect(socket, consumed.visitorToken);
       },
       message(ws, message) {
         hub.handleMessage(ws.id, message);

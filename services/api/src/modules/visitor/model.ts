@@ -10,6 +10,7 @@ export type Visitor = {
 };
 
 export type VisitorServiceOptions = {
+  initialVisitors?: readonly Visitor[];
   now?: () => number;
   createId?: () => string;
   createToken?: () => string;

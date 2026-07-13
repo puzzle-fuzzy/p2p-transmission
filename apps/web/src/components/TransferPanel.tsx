@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import {
   MAX_FILE_BATCH_BYTES,
   MAX_FILE_COUNT,
@@ -12,6 +12,7 @@ import {
   type OutgoingActivity,
 } from '../features/transfer/ui-state'
 import FileTransferRow from './FileTransferRow'
+import RecipientPickerDialog from './RecipientPickerDialog'
 import TransferPeerFlow from './TransferPeerFlow'
 
 type Tab = 'text' | 'file'
@@ -28,9 +29,11 @@ export type TransferPanelProps = {
   fileSpeedData?: Record<string, { speed: number; eta: number | undefined }>
   onFilesAdded(files: readonly File[]): void
   onFileRemoved(fileId: string): void
-  onSendText(text: string): Promise<void>
-  onSendFiles(): Promise<void>
+  onSendText(text: string, peerIds: ReadonlyArray<string>): Promise<void>
+  onSendFiles(peerIds: ReadonlyArray<string>): Promise<void>
   onCancel(): void
+  onRetry?(): Promise<void>
+  onDismissActivity?(): void
 }
 
 const terminalErrorProgress = (
@@ -61,32 +64,59 @@ export default function TransferPanel({
   onSendText,
   onSendFiles,
   onCancel,
+  onRetry,
+  onDismissActivity,
 }: TransferPanelProps) {
   const [tab, setTab] = useState<Tab>('text')
   const [text, setText] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [sendError, setSendError] = useState('')
   const [dragActive, setDragActive] = useState(false)
+  const [selectedReceiverIds, setSelectedReceiverIds] = useState<string[] | undefined>()
+  const [pickerOpen, setPickerOpen] = useState(false)
   const textTabRef = useRef<HTMLButtonElement>(null)
   const fileTabRef = useRef<HTMLButtonElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const pickerTriggerRef = useRef<HTMLButtonElement>(null)
   const tabId = useId()
+  const terminal = activity?.phase === 'complete' || activity?.phase === 'error'
+  const activeTransfer = Boolean(activity && !terminal)
   const connectedCount = receivers.length
+  const selectedIds = selectedReceiverIds ?? receivers.map(receiver => receiver.id)
+  const selectedReadyReceivers = receivers.filter(receiver => selectedIds.includes(receiver.id))
+  const selectedCount = selectedReadyReceivers.length
   const locked = isTransferLocked({ activity }) || submitting
-  const canSendText = connectedCount > 0 && Boolean(text.trim()) && !locked
-  const canSendFiles = connectedCount > 0 && files.length > 0 && !locked
+  const pickerLocked = activeTransfer || submitting
+  const canSendText = selectedCount > 0 && Boolean(text.trim()) && !locked
+  const canSendFiles = selectedCount > 0 && files.length > 0 && !locked
   const connectedLabel = `${String(connectedCount)} 位接收者已连接`
   const showClearFiles = tab === 'file' && files.length > 0
   const fileSubmitLabel = files.length === 0
     ? '选择文件'
-    : connectedCount === 0
-      ? '暂无接收者连接'
+    : selectedCount === 0
+      ? connectedCount === 0 ? '暂无接收者连接' : '请选择接收者'
       : `发送 ${String(files.length)} 个文件`
   const activePeerIds = new Set(activity?.peerIds ?? [])
   const flowReceivers = activity
     ? receivers.filter(receiver => activePeerIds.has(receiver.id))
     : receivers
   const flowPhase = activity?.phase ?? 'idle'
+
+  useEffect(() => {
+    if (selectedReceiverIds === undefined) return
+    const nextIds = receivers
+      .filter(receiver => selectedReceiverIds.includes(receiver.id))
+      .map(receiver => receiver.id)
+    if (nextIds.length === selectedReceiverIds.length
+      && nextIds.every((id, index) => id === selectedReceiverIds[index])) {
+      return
+    }
+    setSelectedReceiverIds(nextIds)
+  }, [receivers, selectedReceiverIds])
+
+  const restorePickerFocus = () => {
+    window.setTimeout(() => pickerTriggerRef.current?.focus(), 0)
+  }
 
   const selectTab = (nextTab: Tab, focus = false) => {
     if (locked) return
@@ -122,7 +152,7 @@ export default function TransferPanel({
     setSubmitting(true)
     setSendError('')
     try {
-      await onSendText(snapshot)
+      await onSendText(snapshot, selectedReadyReceivers.map(receiver => receiver.id))
       setText(current => current === snapshot ? '' : current)
     } catch (error) {
       setSendError(error instanceof Error ? error.message : '无法发送文本，请稍后重试。')
@@ -136,12 +166,30 @@ export default function TransferPanel({
     setSubmitting(true)
     setSendError('')
     try {
-      await onSendFiles()
+      await onSendFiles(selectedReadyReceivers.map(receiver => receiver.id))
     } catch (error) {
       setSendError(error instanceof Error ? error.message : '无法发送文件，请稍后重试。')
     } finally {
       setSubmitting(false)
     }
+  }
+
+  const handleRetry = async () => {
+    if (!onRetry || submitting) return
+    setSubmitting(true)
+    setSendError('')
+    try {
+      await onRetry()
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : '无法重试传输，请稍后重试。')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleDismissActivity = () => {
+    setSendError('')
+    onDismissActivity?.()
   }
 
   const handleClearFiles = () => {
@@ -225,12 +273,17 @@ export default function TransferPanel({
           <div className="shrink-0 whitespace-nowrap text-[11px] text-amber-50/60 tabular-nums sm:text-xs">
             {connectedLabel}
           </div>
-          <TransferPeerFlow
-            sender={visitor}
-            receivers={flowReceivers}
-            phase={flowPhase}
-            accessibleLabel={activityLabel}
-          />
+           <TransferPeerFlow
+             sender={visitor}
+             receivers={flowReceivers}
+             phase={flowPhase}
+             accessibleLabel={activityLabel}
+             onClick={receivers.length > 0 && !pickerLocked
+               ? () => setPickerOpen(true)
+               : undefined}
+             selectedCount={selectedCount}
+             triggerRef={pickerTriggerRef}
+           />
         </div>
       </div>
 
@@ -388,15 +441,46 @@ export default function TransferPanel({
         </div>
       )}
 
-      {activity ? (
+      {activity && !terminal ? (
         <button
           type="button"
           className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-amber-50/15 bg-transparent px-4 text-sm text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none disabled:cursor-not-allowed disabled:text-amber-50/30"
           onClick={onCancel}
-          disabled={activity.phase === 'complete' || activity.phase === 'error'}
         >
-          {activity.phase === 'complete' || activity.phase === 'error' ? activityLabel : '取消传输'}
+          取消传输
         </button>
+      ) : terminal ? (
+        <>
+          <div
+            className="rounded-xl border border-amber-50/15 bg-white/5 px-4 py-3"
+            role={activity.phase === 'error' ? 'alert' : 'status'}
+            aria-live="polite"
+          >
+            <p className="text-sm text-amber-50/80">
+              {activity.phase === 'complete' ? '传输已完成' : '传输未完成'}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-amber-50/55">
+              {summarizePeerOutcomes(activity)}
+            </p>
+          </div>
+          <div className="grid w-full grid-cols-2 gap-3">
+            <button
+              type="button"
+              className="min-h-11 rounded-xl border border-accent bg-accent px-4 text-sm text-white/90 transition-[filter,border-color] hover:brightness-110 active:brightness-90 focus-visible:border-amber-50/80 focus-visible:outline-none"
+              onClick={() => { void handleRetry() }}
+              disabled={!onRetry}
+            >
+              再次发送
+            </button>
+            <button
+              type="button"
+              className="min-h-11 rounded-xl border border-amber-50/15 bg-transparent px-4 text-sm text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
+               onClick={handleDismissActivity}
+            >
+              关闭结果
+            </button>
+          </div>
+        </>
       ) : (
         <div className="flex w-full items-center gap-3">
           {showClearFiles && (
@@ -427,14 +511,51 @@ export default function TransferPanel({
             )}
             {tab === 'file'
               ? fileSubmitLabel
-              : connectedCount === 0
-                ? '等待接收者连接'
-                : connectedCount === 1
+              : selectedCount === 0
+                 ? connectedCount === 0 ? '等待接收者连接' : '请选择接收者'
+                : selectedCount === 1
                   ? '发送给 1 位接收者'
-                  : `发送给 ${String(connectedCount)} 位接收者`}
+                  : `发送给 ${String(selectedCount)} 位接收者`}
           </button>
         </div>
       )}
+
+      {pickerOpen && (
+        <RecipientPickerDialog
+          receivers={receivers}
+          selectedIds={selectedIds}
+          onConfirm={ids => {
+            setSelectedReceiverIds(ids)
+            setPickerOpen(false)
+            restorePickerFocus()
+          }}
+          onClose={() => {
+            setPickerOpen(false)
+            restorePickerFocus()
+          }}
+        />
+      )}
     </section>
   )
+}
+
+const summarizePeerOutcomes = (activity: OutgoingActivity) => {
+  const counts = activity.peerIds.reduce<Record<string, number>>((result, peerId) => {
+    const outcome = activity.peers[peerId]?.outcome
+    if (!outcome) return result
+    result[outcome] = (result[outcome] ?? 0) + 1
+    return result
+  }, {})
+  const labels = [
+    ['completed', '完成'],
+    ['rejected', '拒绝'],
+    ['cancelled', '取消'],
+    ['failed', '失败'],
+    ['timed-out', '超时'],
+  ] as const
+  const summary = labels.flatMap(([key, label]) => {
+    const count = counts[key]
+    return count ? [`${label} ${String(count)}`] : []
+  })
+  return summary.length > 0 ? summary.join(' · ') : '正在整理接收结果'
 }

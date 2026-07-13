@@ -3,6 +3,10 @@
 该服务负责临时访客、短期房间、WebRTC 信令，以及按房间生命周期签发 TURN 短期
 凭据。它不会存储或中继文本正文与文件内容；传输载荷始终留在 WebRTC DataChannel。
 
+生产地址：[https://p2p.yxswy.com](https://p2p.yxswy.com)。普通用户不需要直接调用 API，
+操作路径见[用户指南](../../docs/user-guide.md)；仓库总览见[根 README](../../README.md)，
+腾讯云运行配置见[部署说明](../../deploy/README.md)。项目固定使用 Bun 1.3.14。
+
 ## 本地开发
 
 ```bash
@@ -30,6 +34,12 @@ bun run --cwd services/api build
 - `CORS_ALLOWED_ORIGINS`：允许的 Web 源，逗号分隔，不支持通配符。
 - `TRUST_PROXY`、`TRUSTED_PROXY_IPS`：仅在明确受信的反向代理后启用；后者必须列出
   直接可信代理 IP。
+- `DATABASE_PATH`：SQLite 文件路径；本地测试默认 `:memory:`，生产使用持久化数据卷，
+  例如 `/data/app.sqlite`。
+- `REALTIME_TICKET_TTL_SECONDS`、`REALTIME_TICKET_MAX_PER_VISITOR`：实时连接 ticket
+  的有效期和未消费容量。
+- `REALTIME_MESSAGES_PER_SECOND`、`REALTIME_OUTBOUND_QUEUE_MAX_MESSAGES`、
+  `REALTIME_OUTBOUND_QUEUE_MAX_BYTES`：逐连接信令速率和出站背压上限。
 
 生产 TURN 服务器的密钥生成、TLS、端口和 Compose 操作见
 [`deploy/coturn/README.md`](../../deploy/coturn/README.md)。
@@ -51,8 +61,9 @@ bun run --cwd services/api build
 5. 创建、邀请加入、既有接收者恢复和批准后的 `/finalize` 请求声明 ICE 模式，成功响应
    原子返回房间状态以及该会话所需的 ICE 配置；API 模式下还会返回不晚于房间生命周期
    使用的短期 TURN 凭据。pending 或尚未 finalize 的 approved 申请没有成员关系或 TURN。
-6. 浏览器连接 `/v1/realtime?token=...` 后发送 `room:attach`，只附着已由 HTTP 创建的
-   成员关系，不能通过 WebSocket 新建成员。
+6. 浏览器使用 visitor Bearer 调用 `POST /v1/realtime/tickets`，得到短时一次性 ticket，
+   再连接 `/v1/realtime?ticket=...` 并发送 `room:attach`。ticket 不包含 visitor token，
+   消费后立即失效；WebSocket 只附着已由 HTTP 创建的成员关系，不能新建成员。
 
 所有 `/v1/*` 响应（包括 visitor bearer、校验和错误响应）均发送
 `Cache-Control: no-store` 与 `Referrer-Policy: no-referrer`。请求解析与 schema 校验错误
@@ -82,17 +93,25 @@ bun run --cwd services/api turn:config
 
 ## 部署限制
 
-访客、房间、连接和限流状态目前保存在单进程内存中，因此 API 只能运行一个实例。
-服务有显式容量、TTL 和速率限制，但 TURN 仍可能产生显著带宽成本；生产环境应同时
-监控 API 容量和 coturn 分配、吞吐及费用。
+访客、房间、成员和入房申请会在业务变更后以 SQLite transaction 保存，并在 API 启动时
+恢复；文本和文件内容不进入 SQLite。在线 WebSocket 连接表仍在单进程内，因此首发仍只
+运行一个 API 实例；横向扩展需要共享状态、事件总线和连接路由。
+服务有显式容量、TTL、逐连接信令速率和出站队列限制，但 TURN 仍可能产生显著带宽成本；
+生产环境应同时监控 API 容量、SQLite 磁盘、coturn 分配、吞吐和费用。
 
-当前浏览器 WebSocket API 通过 `/v1/realtime?token=...` 携带 visitor bearer；在后续改为
-短时单次连接 ticket 前，反向代理、WAF、APM 与访问日志必须完全关闭或脱敏 query string，
-应用也不得记录请求 URL、headers、body、SDP 或 ICE 内容。
-逐连接信令速率限制与服务端出站队列上限仍是下一安全里程碑；公开部署前应结合网关连接
-配额、进程内存告警与异常流量监控限制滥用。
+虽然 ticket 是短时且一次性的，反向代理、WAF、APM 与访问日志仍不应记录完整 query string；
+应用不得记录请求 URL、headers、body、SDP 或 ICE 内容。
 
 安全加入协议必须与 Web 同步硬切部署。API 不提供旧 code-only join、公开
 `GET /v1/rooms/:code` 或客户端选择 `role` 的兼容路径，也不能与旧协议双模运行。API
-重启会使旧内存访客、房间和申请全部失效；发布后旧页面必须重新载入并重新创建房间，
-不能把旧 browser storage 迁移成恢复或邀请凭证。
+重启后 SQLite 会恢复仍在生命周期内的访客、房间和申请；已建立的 WebSocket 会断开，
+浏览器会重新申请 ticket 并重连。旧页面必须重新载入，不能把旧 browser storage 迁移成
+恢复或邀请凭证。当前生产只运行一个 API 实例；SQLite 不负责跨实例的在线 WebSocket 状态、
+广播或连接路由。腾讯云单机 Compose、宿主机 Nginx 和数据备份见
+[`deploy/README.md`](../../deploy/README.md)。
+
+其他入口：
+
+- [普通用户指南](../../docs/user-guide.md)
+- [Web 前端说明](../../apps/web/README.md)
+- [coturn 说明](../../deploy/coturn/README.md)

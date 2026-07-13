@@ -20,7 +20,13 @@ export const startRuntime = (config: ApiConfig = loadApiConfig()) => {
     stop() {
       if (stopping) return stopping;
       context.maintenance.stop();
-      stopping = app.stop(true).then(() => undefined);
+      stopping = app.stop(true).then(() => {
+        try {
+          context.stateStore?.save();
+        } finally {
+          context.stateStore?.close();
+        }
+      });
       return stopping;
     },
   };

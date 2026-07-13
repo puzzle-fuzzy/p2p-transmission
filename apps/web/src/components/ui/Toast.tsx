@@ -11,17 +11,17 @@ const toneStyles: Record<ToastTone, {
   icon: string
 }> = {
   error: {
-    container: 'border-red-300/20 bg-[#332729] text-red-200/80',
-    dismiss: 'text-red-200/50 hover:text-red-200',
+    container: 'border-accent/30 bg-surface-elevated text-amber-50/80',
+    dismiss: 'text-amber-50/50 hover:text-amber-50/90',
     icon: 'error',
   },
   success: {
-    container: 'border-emerald-200/15 bg-[#29322d] text-emerald-100/80',
-    dismiss: 'text-emerald-100/50 hover:text-emerald-100/80',
+    container: 'border-accent/20 bg-surface-elevated text-amber-50/80',
+    dismiss: 'text-amber-50/50 hover:text-amber-50/90',
     icon: 'check_circle',
   },
   info: {
-    container: 'border-amber-50/15 bg-[#333333] text-amber-50/70',
+    container: 'border-amber-50/15 bg-surface-elevated text-amber-50/70',
     dismiss: 'text-amber-50/60 hover:text-amber-50/80',
     icon: 'info',
   },

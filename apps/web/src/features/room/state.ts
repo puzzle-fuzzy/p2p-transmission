@@ -17,6 +17,7 @@ export type RoomFlowState = {
 }
 
 export type RoomFlowAction =
+  | { type: 'boot:retry' }
   | { type: 'visitor:ready'; session: VisitorSession }
   | { type: 'room:joining' }
   | { type: 'room:created'; room: PublicRoom }
@@ -46,6 +47,14 @@ export const roomFlowReducer = (
   state: RoomFlowState,
   action: RoomFlowAction,
 ): RoomFlowState => {
+  if (action.type === 'boot:retry') {
+    return {
+      ...state,
+      phase: 'booting',
+      error: '',
+    }
+  }
+
   if (action.type === 'visitor:ready') {
     return {
       ...state,

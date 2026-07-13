@@ -193,9 +193,11 @@ type MockTransferPanelProps = {
   receivers: PublicVisitor[]
   fileSpeedData?: Record<string, { speed: number; eta: number | undefined }>
   onFilesAdded(files: readonly File[]): void
-  onSendText(text: string): Promise<void>
-  onSendFiles(): Promise<void>
+  onSendText(text: string, peerIds: readonly string[]): Promise<void>
+  onSendFiles(peerIds: readonly string[]): Promise<void>
   onCancel(): void
+  onRetry?(): Promise<void>
+  onDismissActivity?(): void
 }
 
 vi.mock('./components/TransferPanel', () => ({
@@ -213,7 +215,7 @@ vi.mock('./components/TransferPanel', () => ({
         <button
           type="button"
           disabled={Boolean(props.activity)}
-          onClick={() => { void props.onSendText('精确文本\n🙂') }}
+          onClick={() => { void props.onSendText('精确文本\n🙂', ['receiver']) }}
         >
           发送测试文本
         </button>
@@ -229,11 +231,17 @@ vi.mock('./components/TransferPanel', () => ({
         <button
           type="button"
           disabled={Boolean(props.activity) || props.files.length === 0}
-          onClick={() => { void props.onSendFiles() }}
+          onClick={() => { void props.onSendFiles(['receiver']) }}
         >
           发送测试文件
         </button>
         <button type="button" onClick={props.onCancel}>取消测试传输</button>
+        {(props.activity?.phase === 'complete' || props.activity?.phase === 'error') && (
+          <>
+            <button type="button" onClick={() => { void props.onRetry?.() }}>再次发送</button>
+            <button type="button" onClick={props.onDismissActivity}>关闭结果</button>
+          </>
+        )}
         <output data-testid="activity-phase">{props.activity?.phase ?? 'idle'}</output>
         <output data-testid="file-progress">{firstFile?.progress ?? 0}</output>
         <output data-testid="file-speed">{firstFileSpeed?.speed ?? ''}</output>
@@ -389,13 +397,13 @@ class FakePeerSession {
   readyPeerIdList: readonly string[] = ['receiver']
   readonly readyPeerIds = vi.fn((): readonly string[] => this.readyPeerIdList)
   readonly close = vi.fn()
-  readonly offerText = vi.fn((_text: string) => ({
+  readonly offerText = vi.fn((_text: string, _peerIds?: readonly string[]) => ({
     transferId: 'text-1',
     peerIds: ['receiver'],
     peerCount: 1,
     unsupportedPeerIds: [],
   }))
-  readonly offerFiles = vi.fn((_files: readonly FileSelection[]) => ({
+  readonly offerFiles = vi.fn((_files: readonly FileSelection[], _peerIds?: readonly string[]) => ({
     transferId: 'files-1',
     peerIds: ['receiver'],
     peerCount: 1,
@@ -2062,16 +2070,7 @@ describe('App transfer integration', () => {
     }
   })
 
-  test('a stale terminal callback cannot clear a newer generation', async () => {
-    const terminalCallbacks: Array<() => void> = []
-    const nativeSetTimeout = globalThis.setTimeout
-    const timerSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((handler, delay, ...args) => {
-      if (delay === 400 && typeof handler === 'function') {
-        terminalCallbacks.push(() => handler(...args))
-        return terminalCallbacks.length as unknown as ReturnType<typeof setTimeout>
-      }
-      return nativeSetTimeout(handler, delay, ...args)
-    })
+  test('keeps a terminal result until dismiss and retries the original payload', async () => {
     const user = await enterRoom('sender')
 
     await user.click(screen.getByRole('button', { name: '发送测试文本' }))
@@ -2082,30 +2081,69 @@ describe('App transfer integration', () => {
       outcome: 'completed',
     })
     expect(screen.getByTestId('activity-phase').textContent).toBe('complete')
-    expect(terminalCallbacks).toHaveLength(1)
 
-    act(() => terminalCallbacks[0]?.())
-    expect(screen.getByTestId('activity-phase').textContent).toBe('idle')
     peerSession.offerText.mockReturnValueOnce({
       transferId: 'text-2',
       peerIds: [receiver.id],
       peerCount: 1,
       unsupportedPeerIds: [],
     })
-    await user.click(screen.getByRole('button', { name: '发送测试文本' }))
+    await new Promise(resolve => setTimeout(resolve, 500))
+    expect(screen.getByTestId('activity-phase').textContent).toBe('complete')
+
+    await user.click(screen.getByRole('button', { name: '再次发送' }))
+    expect(peerSession.offerText).toHaveBeenLastCalledWith('精确文本\n🙂', ['receiver'])
     expect(screen.getByTestId('activity-phase').textContent).toBe('transferring')
 
-    act(() => terminalCallbacks[0]?.())
-    expect(screen.getByTestId('activity-phase').textContent).toBe('transferring')
     emit({
       type: 'transfer:terminal',
       peerId: receiver.id,
       transferId: 'text-2',
       outcome: 'completed',
     })
-    act(() => terminalCallbacks[1]?.())
+    expect(screen.getByTestId('activity-phase').textContent).toBe('complete')
+    await user.click(screen.getByRole('button', { name: '关闭结果' }))
     expect(screen.getByTestId('activity-phase').textContent).toBe('idle')
-    timerSpy.mockRestore()
+  })
+
+  test('opens About from the lobby and closes it without changing the join flow', async () => {
+    const user = userEvent.setup()
+    render(<App initialNavigation={absentNavigation} />)
+
+    await user.click(await screen.findByRole('button', {
+      name: '关于 P2P Transmission',
+    }))
+
+    const dialog = screen.getByRole('dialog', {
+      name: '关于 P2P Transmission',
+    })
+    expect(dialog.textContent).toContain('https://p2p.yxswy.com')
+    expect(dialog.textContent).toContain('开发构建')
+
+    await user.click(screen.getByRole('button', { name: '关闭' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', {
+      name: '关于 P2P Transmission',
+    })).toBeNull())
+    expect(screen.getByRole('button', { name: '创建测试房间' })).not.toBeNull()
+  })
+
+  test('opens the same About dialog from the room toolbar', async () => {
+    const user = await enterRoom('sender')
+
+    await user.click(screen.getByRole('button', {
+      name: '关于 P2P Transmission',
+    }))
+
+    const dialog = screen.getByRole('dialog', {
+      name: '关于 P2P Transmission',
+    })
+    expect(dialog.textContent).toContain('不注册，不上传，直接把内容传给对方。')
+
+    await user.click(screen.getByRole('button', { name: '关闭' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', {
+      name: '关于 P2P Transmission',
+    })).toBeNull())
+    expect(screen.getByTestId('transfer-panel')).not.toBeNull()
   })
 
   test('wires room copy plus sender text, file, and cancel intents', async () => {
@@ -2117,7 +2155,7 @@ describe('App transfer integration', () => {
     expect(boundary.showToast).toHaveBeenCalledWith('房间码已复制', 'success')
 
     await user.click(screen.getByRole('button', { name: '发送测试文本' }))
-    expect(peerSession.offerText).toHaveBeenCalledWith('精确文本\n🙂')
+    expect(peerSession.offerText).toHaveBeenCalledWith('精确文本\n🙂', ['receiver'])
     await user.click(screen.getByRole('button', { name: '取消测试传输' }))
     expect(peerSession.cancelTransfer).toHaveBeenCalledWith('text-1')
   })

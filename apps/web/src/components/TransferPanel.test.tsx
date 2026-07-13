@@ -191,8 +191,36 @@ describe('TransferPanel', () => {
 
     await user.click(screen.getByRole('button', { name: '发送给 2 位接收者' }))
     expect(onSendText).toHaveBeenCalledTimes(1)
-    expect(onSendText).toHaveBeenCalledWith(exact)
+    expect(onSendText).toHaveBeenCalledWith(exact, [receiverOne.id, receiverTwo.id])
     await waitFor(() => expect(textarea.value).toBe(''))
+  })
+
+  test('defaults to all receivers and passes a multi-selection to text sends', async () => {
+    const user = userEvent.setup()
+    const onSendText = vi.fn(async () => undefined)
+    render(<TransferPanel {...createProps({ onSendText })} />)
+
+    await user.click(screen.getByRole('button', { name: /选择接收者/u }))
+    await user.click(screen.getByRole('checkbox', { name: receiverTwo.displayName }))
+    await user.click(screen.getByRole('button', { name: '确定' }))
+    await user.type(screen.getByRole('textbox', { name: '要传输的文本' }), 'hello')
+    await user.click(screen.getByRole('button', { name: '发送给 1 位接收者' }))
+
+    expect(onSendText).toHaveBeenCalledWith('hello', [receiverOne.id])
+  })
+
+  test('keeps an empty recipient selection explicit and disables sending', async () => {
+    const user = userEvent.setup()
+    render(<TransferPanel {...createProps()} />)
+
+    await user.click(screen.getByRole('button', { name: /选择接收者/u }))
+    await user.click(screen.getByRole('button', { name: '清空选择' }))
+    await user.click(screen.getByRole('button', { name: '确定' }))
+
+    expect(screen.getByRole('alert').textContent).toContain('至少选择一位接收者')
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    expect((screen.getByRole('button', { name: '发送给 2 位接收者' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByRole('button', { name: '选择接收者，已选择 2 位' })).not.toBeNull()
   })
 
   test('opens the picker, appends input/drop files, removes by stable ID, and sends', async () => {
@@ -339,10 +367,14 @@ describe('TransferPanel', () => {
     const selection = createSelection('file-progress', file)
     const onFilesAdded = vi.fn()
     const onCancel = vi.fn()
+    const onRetry = vi.fn(async () => undefined)
+    const onDismissActivity = vi.fn()
     const initialProps = createProps({
       files: [selection],
       onFilesAdded,
       onCancel,
+      onRetry,
+      onDismissActivity,
     })
     const { rerender } = render(<TransferPanel {...initialProps} />)
 
@@ -397,9 +429,12 @@ describe('TransferPanel', () => {
     })
     expect(failedProgress.getAttribute('aria-valuenow')).toBe('42')
     expect(failedProgress.getAttribute('style')).toContain('42%')
-    expect((screen.getByRole('button', {
-      name: '文件传输结束，但有接收方未完成',
-    }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByRole('alert').textContent).toContain('传输未完成')
+    expect((screen.getByRole('button', { name: '再次发送' }) as HTMLButtonElement).disabled).toBe(false)
+    await user.click(screen.getByRole('button', { name: '再次发送' }))
+    expect(onRetry).toHaveBeenCalledTimes(1)
+    await user.click(screen.getByRole('button', { name: '关闭结果' }))
+    expect(onDismissActivity).toHaveBeenCalledTimes(1)
   })
 
   test('uses border-only focus and contains no fake transfer machinery', async () => {

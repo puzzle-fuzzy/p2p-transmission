@@ -16,6 +16,7 @@ export type VisitorService = {
   remove(id: string): boolean;
   listExpiredVisitorIds(): string[];
   size(): number;
+  snapshot(): Visitor[];
   toPublic(visitor: Visitor): PublicVisitor;
 };
 
@@ -49,6 +50,15 @@ export const createVisitorService = (options: VisitorServiceOptions = {}): Visit
   }
   const visitorsById = new Map<string, Visitor>();
   const visitorsByToken = new Map<string, Visitor>();
+
+  for (const visitor of options.initialVisitors ?? []) {
+    const restored = { ...visitor };
+    if (visitorsById.has(restored.id) || visitorsByToken.has(restored.token)) {
+      throw new Error("持久化访客标识冲突");
+    }
+    visitorsById.set(restored.id, restored);
+    visitorsByToken.set(restored.token, restored);
+  }
 
   const toPublic = (visitor: Visitor): PublicVisitor => ({
     id: visitor.id,
@@ -131,6 +141,9 @@ export const createVisitorService = (options: VisitorServiceOptions = {}): Visit
     },
     size() {
       return visitorsById.size;
+    },
+    snapshot() {
+      return Array.from(visitorsById.values(), visitor => ({ ...visitor }));
     },
     toPublic,
   };

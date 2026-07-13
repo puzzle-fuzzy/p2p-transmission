@@ -23,6 +23,9 @@ export const createApp = (context: AppContext = createDefaultContext()) =>
       set.headers["cache-control"] = "no-store";
       set.headers["referrer-policy"] = "no-referrer";
     })
+    .onAfterHandle(() => {
+      context.stateStore?.save();
+    })
     .use(cors({
       origin: context.config.corsAllowedOrigins,
       methods: ["GET", "POST", "OPTIONS"],

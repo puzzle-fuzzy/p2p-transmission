@@ -67,6 +67,10 @@ export default function RoomJoin({
 
   return (
     <div className="flex w-full max-w-sm flex-col items-center">
+      <h1 className="w-full text-left text-lg font-normal text-amber-50/80">加入房间</h1>
+      <p className="mt-1 mb-4 w-full text-left text-xs leading-5 text-amber-50/50">
+        输入发送者提供的 6 位房间码，或直接打开邀请链接
+      </p>
       {mode === 'invite' && (
         <div className="mb-4 flex min-h-11 w-full items-center gap-3 rounded-lg bg-white/5 px-4 text-xs leading-5 text-amber-50/70">
           <span

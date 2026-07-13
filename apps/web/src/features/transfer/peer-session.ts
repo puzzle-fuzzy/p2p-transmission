@@ -214,10 +214,10 @@ type IncomingFileBatch = {
 export type PeerSession = {
   syncRoom(room: PublicRoom): void
   handleSignal(message: SignalServerMessage): Promise<void>
-  offerText(text: string): TransferOfferResult
+  offerText(text: string, targetPeerIds?: readonly string[]): TransferOfferResult
   acknowledgeText(peerId: string, transferId: string): boolean
   discardText(peerId: string, transferId: string): boolean
-  offerFiles(files: readonly FileSelection[]): TransferOfferResult
+  offerFiles(files: readonly FileSelection[], targetPeerIds?: readonly string[]): TransferOfferResult
   acceptFiles(peerId: string, transferId: string): boolean
   rejectFiles(peerId: string, transferId: string): boolean
   cancelTransfer(transferId: string): boolean
@@ -590,6 +590,11 @@ export const createPeerSession = ({
       return
     }
 
+    if (batch.batchBytes + frame.payload.byteLength > MAX_FILE_BATCH_BYTES) {
+      failIncomingBatch(entry, batch, 'File batch exceeds the supported memory limit')
+      return
+    }
+
     const copy = new Uint8Array(frame.payload.byteLength)
     copy.set(frame.payload)
     batch.parts.push(copy.buffer)
@@ -634,6 +639,11 @@ export const createPeerSession = ({
         return
       }
       const files = message.files.map(file => ({ ...file, name: sanitizeFileName(file.name) }))
+      const batchTotalBytes = files.reduce((total, file) => total + file.byteLength, 0)
+      if (files.length > MAX_FILE_COUNT || batchTotalBytes > MAX_FILE_BATCH_BYTES) {
+        sendFrame(entry, { v: 2, type: 'transfer:error', transferId: message.transferId, code: 'INVALID_STATE' })
+        return
+      }
       const batch: IncomingFileBatch = {
         peerId: entry.peerId,
         transferId: message.transferId,
@@ -1024,6 +1034,12 @@ export const createPeerSession = ({
   }
 
   const readyEntries = () => Array.from(peers.values()).filter(isOpen)
+  const readyEntriesFor = (targetPeerIds?: readonly string[]) => {
+    const entries = readyEntries()
+    if (targetPeerIds === undefined) return entries
+    const targetSet = new Set(targetPeerIds)
+    return entries.filter(entry => targetSet.has(entry.peerId))
+  }
 
   return {
     syncRoom(room) {
@@ -1041,12 +1057,12 @@ export const createPeerSession = ({
       })
       return signalQueue
     },
-    offerText(text) {
+    offerText(text, targetPeerIds) {
       assertCanOffer()
       if (!text || text.length > MAX_TEXT_CHARACTERS) {
         throw new Error(`Text must contain 1 to ${String(MAX_TEXT_CHARACTERS)} characters`)
       }
-      const entries = readyEntries()
+      const entries = readyEntriesFor(targetPeerIds)
       if (entries.length === 0) throw new Error('No connected receivers')
       const transferId = createId('transfer')
       const transfer: OutgoingTextTransfer = { kind: 'text', peers: new Map() }
@@ -1088,14 +1104,14 @@ export const createPeerSession = ({
       incomingTexts.delete(key)
       return sendFrame(entry, { v: 2, type: 'transfer:error', transferId, code: 'INVALID_STATE' })
     },
-    offerFiles(files) {
+    offerFiles(files, targetPeerIds) {
       assertCanOffer()
       if (files.length === 0 || files.length > MAX_FILE_COUNT) throw new Error('File batch count is invalid')
       const batchTotalBytes = files.reduce((total, selection) => total + selection.file.size, 0)
       if (!Number.isSafeInteger(batchTotalBytes) || batchTotalBytes > MAX_FILE_BATCH_BYTES) {
         throw new Error('File batch is too large')
       }
-      const entries = readyEntries()
+      const entries = readyEntriesFor(targetPeerIds)
       if (entries.length === 0) throw new Error('No connected receivers')
       const transferId = createId('transfer')
       const transfer: OutgoingFileTransfer = { kind: 'file', selections: [...files], peers: new Map(), batchTotalBytes }

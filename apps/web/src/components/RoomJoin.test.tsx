@@ -23,6 +23,13 @@ const renderRoomJoin = (overrides: Partial<React.ComponentProps<typeof RoomJoin>
 }
 
 describe('RoomJoin', () => {
+  test('shows visible room-code guidance for first-time users', () => {
+    renderRoomJoin()
+
+    expect(screen.getByRole('heading', { name: '加入房间' })).not.toBeNull()
+    expect(screen.getByText('输入发送者提供的 6 位房间码，或直接打开邀请链接')).not.toBeNull()
+  })
+
   test('prefills an invitation but waits for explicit confirmation', async () => {
     const user = userEvent.setup()
     const props = renderRoomJoin({ initialCode: '123456', mode: 'invite' })

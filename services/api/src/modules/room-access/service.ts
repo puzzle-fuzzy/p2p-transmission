@@ -19,6 +19,7 @@ import type {
   RoomJoinRequestInspectionResult,
   RoomJoinRequestListResult,
   RoomJoinRequestResult,
+  RoomJoinRequestSnapshot,
 } from "./model";
 
 export type RoomAccessRoomReader = Pick<RoomService, "getInternalRoomSnapshot">;
@@ -31,6 +32,7 @@ export type RoomAccessVisitorReader = Pick<
 export type RoomAccessServiceOptions = {
   rooms: RoomAccessRoomReader;
   visitors: RoomAccessVisitorReader;
+  initialRequests?: readonly RoomJoinRequestSnapshot[];
   now?: () => number;
   createRequestId?: () => string;
   requestTtlMs?: number;
@@ -79,6 +81,7 @@ export type RoomAccessService = {
   ): RoomFinalizeCommitResult;
   cleanupExpiredState(): RoomAccessTransition[];
   removeVisitor(visitorId: string): RoomAccessTransition[];
+  snapshot(): RoomJoinRequestSnapshot[];
   subscribe(listener: (transition: RoomAccessTransition) => void): () => void;
 };
 
@@ -193,6 +196,22 @@ export const createRoomAccessService = (
 
   const roomVisitorKey = (roomCode: string, visitorId: string) =>
     `${roomCode}\u0000${visitorId}`;
+
+  for (const snapshot of options.initialRequests ?? []) {
+    const visitor = options.visitors.getById(snapshot.visitorId);
+    if (!visitor || requests.has(snapshot.requestId)) {
+      throw new Error("持久化入房申请数据无效");
+    }
+    const request: RoomJoinRequest = {
+      ...snapshot,
+      visitor: options.visitors.toPublic(visitor),
+    };
+    requests.set(request.requestId, request);
+    requestsByRoomVisitor.set(
+      roomVisitorKey(request.roomCode, request.visitorId),
+      request.requestId,
+    );
+  }
 
   const toReceipt = (request: RoomJoinRequest): RoomJoinRequestReceipt => ({
     requestId: request.requestId,
@@ -670,6 +689,18 @@ export const createRoomAccessService = (
     commitFinalize,
     cleanupExpiredState,
     removeVisitor,
+    snapshot() {
+      return Array.from(requests.values(), request => ({
+        requestId: request.requestId,
+        roomCode: request.roomCode,
+        visitorId: request.visitorId,
+        senderId: request.senderId,
+        state: request.state,
+        createdAt: request.createdAt,
+        expiresAt: request.expiresAt,
+        revision: request.revision,
+      }));
+    },
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);

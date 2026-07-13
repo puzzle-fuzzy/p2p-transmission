@@ -35,9 +35,15 @@ const connectRealtime = async (serverUrl: URL) => {
   });
   expect(created.status).toBe(200);
   const { token } = await created.json() as { token: string };
+  const ticketResponse = await fetch(new URL("/v1/realtime/tickets", serverUrl), {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  expect(ticketResponse.status).toBe(200);
+  const { ticket } = await ticketResponse.json() as { ticket: string };
   const url = new URL("/v1/realtime", serverUrl);
   url.protocol = "ws:";
-  url.searchParams.set("token", token);
+  url.searchParams.set("ticket", ticket);
 
   const queued: string[] = [];
   const waiting: Array<(message: string) => void> = [];

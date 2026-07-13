@@ -22,6 +22,7 @@ import type {
 
 export type RoomServiceOptions = {
   visitors: VisitorService;
+  initialRooms?: readonly Room[];
   now?: () => number;
   ttlMs?: number;
   attachTimeoutMs?: number;
@@ -58,6 +59,7 @@ export type RoomService = {
   leave(code: string, visitorId: string): RoomTransitionResult;
   removeVisitor(visitorId: string): RoomTransition[];
   cleanupExpiredState(): RoomTransition[];
+  snapshot(): Room[];
 };
 
 type PreparedMutation = {
@@ -158,6 +160,11 @@ export const createRoomService = (options: RoomServiceOptions): RoomService => {
 
   const rooms = new Map<string, Room>();
   const preparedMutations = new WeakMap<RoomMutationPlan, PreparedMutationRecord>();
+
+  for (const room of options.initialRooms ?? []) {
+    if (rooms.has(room.code)) throw new Error("持久化房间标识冲突");
+    rooms.set(room.code, cloneRoom(room));
+  }
 
   const toPublicRoom = (room: Room): PublicRoom => ({
     code: room.code,
@@ -614,5 +621,8 @@ export const createRoomService = (options: RoomServiceOptions): RoomService => {
     leave,
     removeVisitor,
     cleanupExpiredState,
+    snapshot() {
+      return Array.from(rooms.values(), cloneRoom);
+    },
   };
 };

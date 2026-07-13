@@ -2,6 +2,8 @@ node_modules
 dist
 .turbo
 *.tsbuildinfo
+__pycache__/
+*.py[cod]
 
 # Local environment and TURN deployment secrets
 **/.env
@@ -11,3 +13,9 @@ deploy/coturn/.local/
 deploy/coturn/turnserver.conf
 deploy/coturn/**/*.pem
 deploy/coturn/**/*.key
+deploy/.env
+deploy/data/
+deploy/**/*.sqlite
+deploy/**/*.sqlite-*
+apps/web/playwright-report/
+apps/web/test-results/

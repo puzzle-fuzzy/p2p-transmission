@@ -2,6 +2,12 @@ import { isIP } from "node:net";
 
 export type ApiConfig = {
   port: number;
+  databasePath?: string;
+  realtimeTicketTtlMs?: number;
+  realtimeTicketMaxPerVisitor?: number;
+  realtimeMessagesPerSecond?: number;
+  realtimeOutboundQueueMaxMessages?: number;
+  realtimeOutboundQueueMaxBytes?: number;
   stunUrls: string[];
   turn?: {
     urls: string[];
@@ -16,6 +22,12 @@ export type ApiConfig = {
 export type ApiEnvironment = Readonly<Record<string, string | undefined>>;
 
 const DEFAULT_PORT = 3000;
+const DEFAULT_DATABASE_PATH = ":memory:";
+const DEFAULT_REALTIME_TICKET_TTL_SECONDS = 60;
+const DEFAULT_REALTIME_TICKET_MAX_PER_VISITOR = 12;
+const DEFAULT_REALTIME_MESSAGES_PER_SECOND = 30;
+const DEFAULT_REALTIME_OUTBOUND_QUEUE_MAX_MESSAGES = 128;
+const DEFAULT_REALTIME_OUTBOUND_QUEUE_MAX_BYTES = 1_048_576;
 const DEFAULT_TURN_CREDENTIAL_GRACE_SECONDS = 300;
 const DEFAULT_CORS_ALLOWED_ORIGINS = ["http://localhost:5713"];
 
@@ -39,6 +51,27 @@ const parsePort = (value: string | undefined) => {
     throw new Error("PORT must be a whole number between 1 and 65535");
   }
   return port;
+};
+
+const parsePositiveInteger = (
+  value: string | undefined,
+  key: string,
+  defaultValue: number,
+  maximum = Number.MAX_SAFE_INTEGER,
+) => {
+  const raw = value?.trim() ?? String(defaultValue);
+  if (!/^\d+$/u.test(raw)) throw new Error(`${key} must be a positive whole number`);
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maximum) {
+    throw new Error(`${key} is outside the safe range`);
+  }
+  return parsed;
+};
+
+const parseDatabasePath = (value: string | undefined) => {
+  const path = value?.trim() || DEFAULT_DATABASE_PATH;
+  if (path.length > 512) throw new Error("DATABASE_PATH is too long");
+  return path;
 };
 
 const parseBoolean = (
@@ -169,6 +202,37 @@ export const loadApiConfig = (
 
   return {
     port: parsePort(environment.PORT),
+    databasePath: parseDatabasePath(environment.DATABASE_PATH),
+    realtimeTicketTtlMs: parsePositiveInteger(
+      environment.REALTIME_TICKET_TTL_SECONDS,
+      "REALTIME_TICKET_TTL_SECONDS",
+      DEFAULT_REALTIME_TICKET_TTL_SECONDS,
+      3_600,
+    ) * 1_000,
+    realtimeTicketMaxPerVisitor: parsePositiveInteger(
+      environment.REALTIME_TICKET_MAX_PER_VISITOR,
+      "REALTIME_TICKET_MAX_PER_VISITOR",
+      DEFAULT_REALTIME_TICKET_MAX_PER_VISITOR,
+      1_000,
+    ),
+    realtimeMessagesPerSecond: parsePositiveInteger(
+      environment.REALTIME_MESSAGES_PER_SECOND,
+      "REALTIME_MESSAGES_PER_SECOND",
+      DEFAULT_REALTIME_MESSAGES_PER_SECOND,
+      10_000,
+    ),
+    realtimeOutboundQueueMaxMessages: parsePositiveInteger(
+      environment.REALTIME_OUTBOUND_QUEUE_MAX_MESSAGES,
+      "REALTIME_OUTBOUND_QUEUE_MAX_MESSAGES",
+      DEFAULT_REALTIME_OUTBOUND_QUEUE_MAX_MESSAGES,
+      10_000,
+    ),
+    realtimeOutboundQueueMaxBytes: parsePositiveInteger(
+      environment.REALTIME_OUTBOUND_QUEUE_MAX_BYTES,
+      "REALTIME_OUTBOUND_QUEUE_MAX_BYTES",
+      DEFAULT_REALTIME_OUTBOUND_QUEUE_MAX_BYTES,
+      64 * 1_024 * 1_024,
+    ),
     stunUrls,
     ...(turn ? { turn } : {}),
     corsAllowedOrigins: parseCorsOrigins(environment.CORS_ALLOWED_ORIGINS),

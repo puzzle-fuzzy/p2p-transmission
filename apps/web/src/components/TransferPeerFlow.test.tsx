@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { render, screen } from '@testing-library/react'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import '../test/dom'
 import type { PublicVisitor } from '../shared/contracts'
 import TransferPeerFlow from './TransferPeerFlow'
@@ -113,5 +113,29 @@ describe('TransferPeerFlow', () => {
     expect(status.getAttribute('data-phase')).toBe('complete')
     expect(status.querySelector('.transfer-peer-flow__line')).not.toBeNull()
     expect(status.querySelectorAll('.transfer-peer-flow__dot')).toHaveLength(0)
+  })
+
+  test('exposes a keyboard-focusable recipient picker trigger with the selected count', () => {
+    const sender = createVisitor('sender', 'Sender')
+    const receiver = createVisitor('receiver', 'Receiver')
+    const onClick = vi.fn()
+
+    render(
+      <TransferPeerFlow
+        sender={sender}
+        receivers={[receiver]}
+        phase="idle"
+        accessibleLabel="Ready to send"
+        onClick={onClick}
+        selectedCount={1}
+      />,
+    )
+
+    const trigger = screen.getByRole('button', { name: '选择接收者，已选择 1 位' })
+    expect(trigger.getAttribute('title')).toBe('选择接收者')
+    trigger.focus()
+    expect(document.activeElement).toBe(trigger)
+    trigger.click()
+    expect(onClick).toHaveBeenCalledTimes(1)
   })
 })

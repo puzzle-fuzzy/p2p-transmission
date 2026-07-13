@@ -21,11 +21,18 @@ export type RealtimeSocket = {
 };
 
 type RealtimeContext = {
-  config: Pick<ApiConfig, "corsAllowedOrigins">;
+  config: Pick<
+    ApiConfig,
+    | "corsAllowedOrigins"
+    | "realtimeMessagesPerSecond"
+    | "realtimeOutboundQueueMaxMessages"
+    | "realtimeOutboundQueueMaxBytes"
+  >;
   visitors: AppContext["visitors"];
   rooms: AppContext["rooms"];
   roomAccess: Pick<RoomAccessService, "listPendingForSender" | "subscribe">;
   maintenance: Pick<MaintenanceService, "sweepForAdmission" | "subscribe">;
+  stateStore?: { save(): void };
 };
 
 type Connection = {
@@ -33,6 +40,10 @@ type Connection = {
   visitorId: string;
   visitorToken: string;
   rooms: Set<string>;
+  outboundPendingMessages: number;
+  outboundPendingBytes: number;
+  signalWindowStartedAt: number;
+  signalCount: number;
 };
 
 type RealtimeError = {
@@ -46,6 +57,7 @@ type SignalAuthorization =
 
 export type RealtimeHubOptions = {
   maxSockets?: number;
+  now?: () => number;
 };
 
 export type RealtimeHub = {
@@ -77,6 +89,16 @@ const signalNotAllowed = {
 const signalTargetNotInRoom = {
   code: "SIGNAL_TARGET_NOT_IN_ROOM",
   message: "信令目标不在当前房间",
+};
+
+const realtimeRateLimited = {
+  code: "REALTIME_RATE_LIMITED",
+  message: "实时信令发送过于频繁，请稍后重试",
+};
+
+const realtimeBackpressure = {
+  code: "REALTIME_BACKPRESSURE",
+  message: "实时连接发送队列已满",
 };
 
 const roomAccessUnavailable = {
@@ -120,14 +142,52 @@ export const createRealtimeHub = (
   options: RealtimeHubOptions = {},
 ): RealtimeHub => {
   const maxSockets = options.maxSockets ?? DEFAULT_MAX_SOCKETS;
+  const currentTime = options.now ?? Date.now;
+  const maxSignalsPerSecond = context.config.realtimeMessagesPerSecond ?? 30;
+  const maxOutboundMessages = context.config.realtimeOutboundQueueMaxMessages ?? 128;
+  const maxOutboundBytes = context.config.realtimeOutboundQueueMaxBytes ?? 1_048_576;
   assertPositiveSafeInteger(maxSockets, "Realtime socket capacity");
   const allowedOrigins = new Set(context.config.corsAllowedOrigins);
   const connectionsBySocket = new Map<string, Connection>();
   const socketIdsByVisitor = new Map<string, string>();
 
+  assertPositiveSafeInteger(maxSignalsPerSecond, "Realtime signal rate");
+  assertPositiveSafeInteger(maxOutboundMessages, "Realtime outbound queue capacity");
+  assertPositiveSafeInteger(maxOutboundBytes, "Realtime outbound queue bytes");
+
   const currentConnection = (visitorId: string) => {
     const socketId = socketIdsByVisitor.get(visitorId);
     return socketId ? connectionsBySocket.get(socketId) : undefined;
+  };
+
+  const sendBounded = (
+    connection: Connection,
+    message: ServerRealtimeMessage,
+  ) => {
+    const bytes = new TextEncoder().encode(JSON.stringify(message)).byteLength;
+    if (
+      connection.outboundPendingMessages >= maxOutboundMessages
+      || connection.outboundPendingBytes + bytes > maxOutboundBytes
+    ) {
+      sendError(connection.socket, realtimeBackpressure);
+      safeClose(connection.socket);
+      return false;
+    }
+
+    connection.outboundPendingMessages += 1;
+    connection.outboundPendingBytes += bytes;
+    const sent = safeSend(connection.socket, message);
+    queueMicrotask(() => {
+      connection.outboundPendingMessages = Math.max(
+        0,
+        connection.outboundPendingMessages - 1,
+      );
+      connection.outboundPendingBytes = Math.max(
+        0,
+        connection.outboundPendingBytes - bytes,
+      );
+    });
+    return sent;
   };
 
   const sendToAttachedVisitor = (
@@ -137,7 +197,7 @@ export const createRealtimeHub = (
   ) => {
     const connection = currentConnection(visitorId);
     if (!connection?.rooms.has(roomCode)) return false;
-    return safeSend(connection.socket, message);
+    return sendBounded(connection, message);
   };
 
   const publishAccessTransition = (transition: RoomAccessTransition) => {
@@ -185,14 +245,14 @@ export const createRealtimeHub = (
         );
         for (const connection of recipients) {
           if (!participantIds.has(connection.visitorId)) continue;
-          safeSend(connection.socket, transition);
+           sendBounded(connection, transition);
         }
         continue;
       }
 
       for (const connection of recipients) {
         if (connection.visitorId === transition.visitorId) continue;
-        safeSend(connection.socket, transition);
+        sendBounded(connection, transition);
       }
     }
 
@@ -273,7 +333,23 @@ export const createRealtimeHub = (
       : { ok: false, error: signalNotAllowed };
   };
 
+  const consumeSignalBudget = (connection: Connection) => {
+    const timestamp = currentTime();
+    if (timestamp - connection.signalWindowStartedAt >= 1_000) {
+      connection.signalWindowStartedAt = timestamp;
+      connection.signalCount = 0;
+    }
+    if (connection.signalCount >= maxSignalsPerSecond) {
+      sendError(connection.socket, realtimeRateLimited);
+      safeClose(connection.socket);
+      return false;
+    }
+    connection.signalCount += 1;
+    return true;
+  };
+
   const forwardSignal = (connection: Connection, message: SignalClientMessage) => {
+    if (!consumeSignalBudget(connection)) return;
     const authorization = authorizeSignal(connection, message);
     if (!authorization.ok) {
       sendError(connection.socket, authorization.error);
@@ -282,7 +358,7 @@ export const createRealtimeHub = (
 
     touch(connection);
     if (message.type === "signal:offer") {
-      safeSend(authorization.target.socket, {
+      sendBounded(authorization.target, {
         type: "signal:offer",
         roomCode: message.roomCode,
         from: connection.visitorId,
@@ -292,7 +368,7 @@ export const createRealtimeHub = (
       return;
     }
     if (message.type === "signal:answer") {
-      safeSend(authorization.target.socket, {
+      sendBounded(authorization.target, {
         type: "signal:answer",
         roomCode: message.roomCode,
         from: connection.visitorId,
@@ -301,7 +377,7 @@ export const createRealtimeHub = (
       });
       return;
     }
-    safeSend(authorization.target.socket, {
+    sendBounded(authorization.target, {
       type: "signal:ice",
       roomCode: message.roomCode,
       from: connection.visitorId,
@@ -407,6 +483,10 @@ export const createRealtimeHub = (
         visitorId: visitor.id,
         visitorToken: token,
         rooms: new Set(),
+        outboundPendingMessages: 0,
+        outboundPendingBytes: 0,
+        signalWindowStartedAt: currentTime(),
+        signalCount: 0,
       };
       if (previousSocketId) connectionsBySocket.delete(previousSocketId);
       connectionsBySocket.set(socket.id, connection);
@@ -416,7 +496,8 @@ export const createRealtimeHub = (
       }
 
       const publicVisitor = context.visitors.toPublic(touchedVisitor);
-      safeSend(socket, { type: "visitor:ready", visitor: publicVisitor });
+      sendBounded(connection, { type: "visitor:ready", visitor: publicVisitor });
+      context.stateStore?.save();
       return { ok: true, visitor: publicVisitor };
     },
     handleMessage(socketId, message) {
@@ -425,6 +506,7 @@ export const createRealtimeHub = (
 
       if (message.type === "room:attach") {
         attach(connection, message);
+        context.stateStore?.save();
         return;
       }
 
@@ -434,13 +516,16 @@ export const createRealtimeHub = (
         publishTransitions(result.transitions);
         if (!result.ok) {
           sendError(connection.socket, result.error);
+          context.stateStore?.save();
           return;
         }
         touch(connection);
+        context.stateStore?.save();
         return;
       }
 
       forwardSignal(connection, message);
+      context.stateStore?.save();
     },
     disconnect(socketId) {
       const connection = connectionsBySocket.get(socketId);
@@ -453,6 +538,7 @@ export const createRealtimeHub = (
         connection.visitorId,
         Array.from(connection.rooms),
       ));
+      context.stateStore?.save();
     },
   };
 };

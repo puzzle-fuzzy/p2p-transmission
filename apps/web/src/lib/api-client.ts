@@ -36,6 +36,11 @@ export type BoundRoomJoinRequestInput = RoomJoinRequestInput & {
   requestId: string
 }
 
+export type RealtimeTicket = {
+  ticket: string
+  expiresAt: number
+}
+
 type ErrorResponse = {
   error?: ApiError
 }
@@ -198,6 +203,25 @@ export const createVisitor = async (
 ): Promise<VisitorSession> => {
   const response = await request('/v1/visitors', { method: 'POST' }, options)
   if (isVisitorSession(response)) return response
+  throw invalidApiResponse()
+}
+
+export const createRealtimeTicket = async (
+  visitorToken: string,
+  options?: ApiClientOptions,
+): Promise<RealtimeTicket> => {
+  const response = await request('/v1/realtime/tickets', {
+    method: 'POST',
+    headers: bearerHeaders(visitorToken),
+  }, options)
+  if (
+    isRecord(response)
+    && typeof response.ticket === 'string'
+    && response.ticket.length >= 40
+    && isPositiveEpoch(response.expiresAt)
+  ) {
+    return { ticket: response.ticket, expiresAt: response.expiresAt }
+  }
   throw invalidApiResponse()
 }
 

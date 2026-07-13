@@ -6,9 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "e2e": "playwright test",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "vitest run --config vitest.config.ts",
     "typecheck": "tsc -b"
   },
   "dependencies": {
@@ -26,6 +27,7 @@
     "@rolldown/plugin-babel": "^0.2.3",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@playwright/test": "^1.52.0",
     "@types/babel__core": "^7.20.5",
     "@types/node": "^24.13.2",
     "@types/qrcode": "^1.5.6",

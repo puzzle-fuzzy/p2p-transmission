@@ -10,6 +10,7 @@ import IncomingFileRequestDialog, {
   type IncomingFileRequestDialogState,
   type IncomingFileRequestItem,
 } from './components/IncomingFileRequestDialog'
+import AboutDialog from './components/AboutDialog'
 import Loading from './components/Loading'
 import ManualJoinWaiting from './components/ManualJoinWaiting'
 import ReceivedTextDialog, {
@@ -81,6 +82,7 @@ import {
 import {
   ApiClientError,
   cancelRoomJoinRequest,
+  createRealtimeTicket,
   createRoom,
   createRoomJoinRequest,
   createVisitor,
@@ -94,6 +96,7 @@ import {
   resolveBootstrapRtcConfiguration,
   roomIceMode,
 } from './lib/config'
+import { appVersion } from './lib/app-meta'
 import {
   createRealtimeClient,
   type RealtimeClient,
@@ -140,6 +143,10 @@ type FileProgressEvent = Extract<
 >
 
 type FileSpeedData = Record<string, { speed: number; eta: number | undefined }>
+
+type OutgoingPayload =
+  | { kind: 'text'; text: string; peerIds: string[] }
+  | { kind: 'file'; selections: FileSelection[]; peerIds: string[] }
 
 const speedSampleKey = (
   direction: FileProgressEvent['direction'],
@@ -251,6 +258,7 @@ type ReceiverRecoveryIntent = {
 
 function App({ initialNavigation }: AppProps) {
   const [state, dispatch] = useReducer(roomFlowReducer, initialRoomFlowState)
+  const [bootAttempt, setBootAttempt] = useState(0)
   const [joinFlow, dispatchJoinFlow] = useReducer(
     joinFlowReducer,
     initialJoinFlowState,
@@ -284,6 +292,7 @@ function App({ initialNavigation }: AppProps) {
   )
   const [ownerInviteRoomCode, setOwnerInviteRoomCode] = useState<string>()
   const [shareDialog, setShareDialog] = useState<ShareDialogState>()
+  const [aboutOpen, setAboutOpen] = useState(false)
   const [manualActionBusy, setManualActionBusy] = useState(false)
   const [manualReceipt, setManualReceipt] = useState<RoomJoinRequestReceipt>()
   const [receiverRecoveryIntent, setReceiverRecoveryIntent] = useState<
@@ -316,6 +325,7 @@ function App({ initialNavigation }: AppProps) {
   const transferGenerationRef = useRef(0)
   const outgoingOfferInFlightRef = useRef(false)
   const pendingOutgoingEventsRef = useRef<PeerSessionEvent[]>([])
+  const outgoingPayloadRef = useRef<OutgoingPayload | undefined>(undefined)
   const peerRetryCountsRef = useRef(new Map<string, number>())
   const peerRetryTimersRef = useRef(new Set<ReturnType<typeof setTimeout>>())
   const visitorBootstrapPromiseRef = useRef<Promise<VisitorSession> | undefined>(undefined)
@@ -498,32 +508,9 @@ function App({ initialNavigation }: AppProps) {
 
     progressSchedulerRef.current?.clear()
     const identity = `${String(activity.generation)}\u0000${activity.transferId}`
-    if (
-      terminalHoldIdentityRef.current === identity
-      && terminalHoldTimerRef.current !== undefined
-    ) {
-      return
-    }
-
     clearTerminalHold()
     terminalHoldIdentityRef.current = identity
-    terminalHoldTimerRef.current = setTimeout(() => {
-      terminalHoldTimerRef.current = undefined
-      terminalHoldIdentityRef.current = undefined
-      const current = transferUiStateRef.current.activity
-      if (
-        current?.generation !== activity.generation
-        || current.transferId !== activity.transferId
-      ) {
-        return
-      }
-      applyTransferAction({
-        type: 'terminal:clear',
-        generation: activity.generation,
-        transferId: activity.transferId,
-      })
-    }, 400)
-  }, [applyTransferAction, clearTerminalHold])
+  }, [clearTerminalHold])
 
   const resetTransferPresentation = useCallback((
     action: Extract<TransferUiAction, { type: 'room:reset' | 'realtime:disconnected' }>,
@@ -534,6 +521,7 @@ function App({ initialNavigation }: AppProps) {
     textCopyOperationRef.current += 1
     outgoingOfferInFlightRef.current = false
     pendingOutgoingEventsRef.current = []
+    outgoingPayloadRef.current = undefined
     replaceIncomingTexts([])
     replaceIncomingFile()
     replaceFileSelections([])
@@ -557,6 +545,7 @@ function App({ initialNavigation }: AppProps) {
     progressSchedulerRef.current?.clear()
     revokeAllObjectUrls()
     textCopyOperationRef.current += 1
+    outgoingPayloadRef.current = undefined
   }, [clearTerminalHold, revokeAllObjectUrls])
 
   const disposePeerSession = useCallback(() => {
@@ -656,6 +645,7 @@ function App({ initialNavigation }: AppProps) {
       ownerInviteRef.current = undefined
     }
   }, [
+    bootAttempt,
     disposeBrowserTransferResources,
     disposePeerSession,
     disposeRoomLifecycle,
@@ -675,7 +665,10 @@ function App({ initialNavigation }: AppProps) {
     roomRef.current = initialRoom
     setReceiverPanelState({ status: 'waiting' })
 
-    const client = createRealtimeClient({ token: session.token })
+    const client = createRealtimeClient({
+      token: session.token,
+      getRealtimeTicket: async () => (await createRealtimeTicket(session.token)).ticket,
+    })
     realtimeRef.current = client
     let hasOpened = false
 
@@ -1685,19 +1678,27 @@ function App({ initialNavigation }: AppProps) {
     armTerminalHold(next.activity)
   }, [applyTransferAction, armTerminalHold, clearTerminalHold])
 
-  const handleSendText = useCallback(async (text: string) => {
+  const handleSendText = useCallback(async (
+    text: string,
+    peerIds: readonly string[],
+  ) => {
     const peerSession = peerSessionRef.current
     if (!peerSession) throw new Error('点对点连接尚未就绪')
     outgoingOfferInFlightRef.current = true
     pendingOutgoingEventsRef.current = []
     let result: ReturnType<PeerSession['offerText']>
     try {
-      result = peerSession.offerText(text)
+      result = peerSession.offerText(text, peerIds)
     } catch (error) {
       pendingOutgoingEventsRef.current = []
       throw error
     } finally {
       outgoingOfferInFlightRef.current = false
+    }
+    outgoingPayloadRef.current = {
+      kind: 'text',
+      text,
+      peerIds: result.peerIds,
     }
     startActivity(createActivity({
       generation: ++transferGenerationRef.current,
@@ -1735,7 +1736,7 @@ function App({ initialNavigation }: AppProps) {
     setSelectionError('')
   }, [replaceFileSelections])
 
-  const handleSendFiles = useCallback(async () => {
+  const handleSendFiles = useCallback(async (peerIds: readonly string[]) => {
     const peerSession = peerSessionRef.current
     if (!peerSession) throw new Error('点对点连接尚未就绪')
     const selections = fileSelectionsRef.current
@@ -1745,12 +1746,17 @@ function App({ initialNavigation }: AppProps) {
     pendingOutgoingEventsRef.current = []
     let result: ReturnType<PeerSession['offerFiles']>
     try {
-      result = peerSession.offerFiles(selections)
+      result = peerSession.offerFiles(selections, peerIds)
     } catch (error) {
       pendingOutgoingEventsRef.current = []
       throw error
     } finally {
       outgoingOfferInFlightRef.current = false
+    }
+    outgoingPayloadRef.current = {
+      kind: 'file',
+      selections,
+      peerIds: result.peerIds,
     }
     startActivity(createActivity({
       generation: ++transferGenerationRef.current,
@@ -1767,6 +1773,73 @@ function App({ initialNavigation }: AppProps) {
       'info',
     )
   }, [clearFileSpeedPresentation, showToast, startActivity])
+
+  const retryOutgoingTransfer = useCallback(async () => {
+    const payload = outgoingPayloadRef.current
+    const peerSession = peerSessionRef.current
+    if (!payload || !peerSession) throw new Error('没有可重试的传输')
+
+    const readyPeerIds = new Set(peerSession.readyPeerIds())
+    const targetPeerIds = payload.peerIds.filter(peerId => readyPeerIds.has(peerId))
+    if (targetPeerIds.length === 0) {
+      throw new Error('选中的接收者已断开，请重新选择')
+    }
+
+    clearFileSpeedPresentation()
+    outgoingOfferInFlightRef.current = true
+    pendingOutgoingEventsRef.current = []
+    try {
+      if (payload.kind === 'text') {
+        const result = peerSession.offerText(payload.text, targetPeerIds)
+        outgoingPayloadRef.current = {
+          kind: 'text',
+          text: payload.text,
+          peerIds: result.peerIds,
+        }
+        startActivity(createActivity({
+          generation: ++transferGenerationRef.current,
+          transferId: result.transferId,
+          kind: 'text',
+          peerIds: result.peerIds,
+          unsupportedPeerIds: result.unsupportedPeerIds,
+        }))
+        return
+      }
+
+      const result = peerSession.offerFiles(payload.selections, targetPeerIds)
+      outgoingPayloadRef.current = {
+        kind: 'file',
+        selections: payload.selections,
+        peerIds: result.peerIds,
+      }
+      startActivity(createActivity({
+        generation: ++transferGenerationRef.current,
+        transferId: result.transferId,
+        kind: 'file',
+        peerIds: result.peerIds,
+        unsupportedPeerIds: result.unsupportedPeerIds,
+        fileIds: payload.selections.map(selection => selection.fileId),
+      }))
+    } catch (error) {
+      pendingOutgoingEventsRef.current = []
+      throw error
+    } finally {
+      outgoingOfferInFlightRef.current = false
+    }
+  }, [clearFileSpeedPresentation, startActivity])
+
+  const dismissTransferResult = useCallback(() => {
+    const activity = transferUiStateRef.current.activity
+    if (!isTerminalActivity(activity) || !activity) return
+    clearTerminalHold()
+    outgoingPayloadRef.current = undefined
+    clearFileSpeedPresentation()
+    applyTransferAction({
+      type: 'terminal:clear',
+      generation: activity.generation,
+      transferId: activity.transferId,
+    })
+  }, [applyTransferAction, clearFileSpeedPresentation, clearTerminalHold])
 
   const handleCancelTransfer = useCallback(() => {
     const activity = transferUiStateRef.current.activity
@@ -2017,6 +2090,7 @@ function App({ initialNavigation }: AppProps) {
 
         {!roomView
           && state.phase !== 'booting'
+          && state.session
           && !manualWaitingReceipt && (
           <div className="flex w-full max-w-sm flex-col">
             {receiverRecoveryIntent && (
@@ -2031,11 +2105,36 @@ function App({ initialNavigation }: AppProps) {
               initialCode={initialJoinCode}
               mode={joinMode}
               error={joinError || state.error || undefined}
-              onCreateRoom={handleCreateRoom}
-              onSubmit={handleJoinRoom}
-              onCodeEdited={handleRoomCodeEdited}
-            />
+             onCreateRoom={handleCreateRoom}
+             onSubmit={handleJoinRoom}
+             onCodeEdited={handleRoomCodeEdited}
+           />
+            <button
+              type="button"
+              className="mt-5 min-h-11 self-center px-3 text-xs text-amber-50/50 transition-colors hover:text-amber-50/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              onClick={() => setAboutOpen(true)}
+            >
+              关于 P2P Transmission
+            </button>
           </div>
+        )}
+
+        {!roomView && !state.session && state.phase === 'error' && (
+          <section className="flex w-full max-w-sm flex-col items-center text-center" aria-labelledby="boot-error-title">
+            <span className="material-symbols-outlined text-amber-50/40" style={{ fontSize: '28px' }} aria-hidden="true">cloud_off</span>
+            <h1 id="boot-error-title" className="mt-4 text-sm font-normal text-amber-50/80">暂时无法连接服务器</h1>
+            <p role="alert" className="mt-2 text-xs leading-5 text-amber-50/60">请检查网络后重试；当前页面不会创建未建立的会话。</p>
+            <button
+              type="button"
+              className="mt-5 min-h-11 w-full rounded-xl border border-accent bg-accent px-4 text-sm tracking-wider text-white/90 transition-[filter] hover:brightness-110 active:brightness-90 focus-visible:outline-none"
+              onClick={() => {
+                dispatch({ type: 'boot:retry' })
+                setBootAttempt(attempt => attempt + 1)
+              }}
+            >
+              重试连接
+            </button>
+          </section>
         )}
 
         {roomView && (
@@ -2056,7 +2155,7 @@ function App({ initialNavigation }: AppProps) {
                   {canShareOwnerInvite && (
                     <button
                       type="button"
-                      className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-transparent text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
+                       className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-transparent text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
                       onClick={handleOpenShare}
                       aria-label="分享房间"
                       title="分享房间"
@@ -2071,14 +2170,23 @@ function App({ initialNavigation }: AppProps) {
                   <div className="text-amber-50/50">
                     {state.role === 'sender' ? '发送者' : '接收者'}
                   </div>
-                  <div className="mt-0.5 text-amber-50/60">
-                    {state.readyPeerIds.length > 0 ? '点对点已连接' : '正在建立点对点连接'}
-                  </div>
-                </div>
-                {state.role === 'receiver' && (
+                   <div className="mt-0.5 text-amber-50/60">
+                     {state.readyPeerIds.length > 0 ? '点对点已连接' : '正在建立点对点连接'}
+                   </div>
+                 </div>
+                 <button
+                   type="button"
+                   className="flex size-11 shrink-0 items-center justify-center rounded-full border border-transparent text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
+                   onClick={() => setAboutOpen(true)}
+                   aria-label="关于 P2P Transmission"
+                   title="关于 P2P Transmission"
+                 >
+                   <span className="material-symbols-outlined" style={{ fontSize: '17px' }} aria-hidden="true">info</span>
+                 </button>
+                 {state.role === 'receiver' && (
                   <button
                     type="button"
-                    className="flex size-9 shrink-0 items-center justify-center rounded-full border border-transparent text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
+                     className="flex size-11 shrink-0 items-center justify-center rounded-full border border-transparent text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
                     onClick={handleLeaveRoom}
                     aria-label="退出房间"
                     title="退出房间"
@@ -2102,6 +2210,8 @@ function App({ initialNavigation }: AppProps) {
                 onSendText={handleSendText}
                 onSendFiles={handleSendFiles}
                 onCancel={handleCancelTransfer}
+                onRetry={retryOutgoingTransfer}
+                onDismissActivity={dismissTransferResult}
               />
             ) : (
               <ReceiverPanel
@@ -2146,6 +2256,13 @@ function App({ initialNavigation }: AppProps) {
           roomUrl={shareDialog.roomUrl}
           onCopy={handleCopyRoomCode}
           onClose={() => setShareDialog(undefined)}
+        />
+      )}
+
+      {aboutOpen && (
+        <AboutDialog
+          version={appVersion}
+          onClose={() => setAboutOpen(false)}
         />
       )}
 
