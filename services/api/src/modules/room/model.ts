@@ -2,6 +2,7 @@ import type {
   ParticipantRole,
   ParticipantStatus,
   PublicRoom,
+  RoomInviteCapability,
 } from "@p2p/contracts";
 
 export type {
@@ -26,7 +27,9 @@ export type Room = {
   participants: Map<string, Participant>;
   createdAt: number;
   expiresAt: number;
+  /** Membership topology revision; presence/status-only changes do not invalidate admission. */
   revision: number;
+  inviteDigest: Uint8Array;
 };
 
 export type RoomErrorCode =
@@ -35,6 +38,7 @@ export type RoomErrorCode =
   | "ROOM_SENDER_EXISTS"
   | "ROOM_MEMBERSHIP_REQUIRED"
   | "ROOM_EXPIRED"
+  | "ROOM_ACCESS_DENIED"
   | "INVALID_STATE"
   | "CAPACITY_EXCEEDED";
 
@@ -56,6 +60,14 @@ export type RoomMutationPlan = {
 
 export type RoomMutationPlanResult =
   | { ok: true; plan: RoomMutationPlan }
+  | { ok: false; error: RoomError };
+
+export type RoomCreateMutationPlanResult =
+  | {
+      ok: true;
+      plan: RoomMutationPlan;
+      invite: RoomInviteCapability;
+    }
   | { ok: false; error: RoomError };
 
 export type RoomTransition =

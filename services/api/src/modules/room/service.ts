@@ -1,7 +1,12 @@
+import { isRoomInviteToken } from "@p2p/contracts";
 import {
   createRandomId,
   createRoomCode as defaultCreateCode,
 } from "../../shared/ids";
+import {
+  createNodeRoomInviteCrypto,
+  type RoomInviteCrypto,
+} from "../../shared/room-invite-crypto";
 import { minutes, now as defaultNow } from "../../shared/time";
 import type { VisitorService } from "../visitor/service";
 import type {
@@ -9,6 +14,7 @@ import type {
   ParticipantRole,
   PublicRoom,
   Room,
+  RoomCreateMutationPlanResult,
   RoomError,
   RoomMutationPlan,
   RoomMutationPlanResult,
@@ -26,10 +32,26 @@ export type RoomServiceOptions = {
   maxReceivers?: number;
   createCode?: () => string;
   createPlanId?: () => string;
+  inviteCrypto?: RoomInviteCrypto;
 };
 
 export type RoomService = {
-  prepareCreate(senderToken: string): RoomMutationPlanResult;
+  prepareCreate(senderToken: string): RoomCreateMutationPlanResult;
+  prepareInviteJoin(
+    code: string,
+    visitorToken: string,
+    inviteToken: string,
+  ): RoomMutationPlanResult;
+  prepareReceiverRecovery(
+    code: string,
+    visitorToken: string,
+  ): RoomMutationPlanResult;
+  prepareApprovedReceiverJoin(
+    code: string,
+    visitorToken: string,
+  ): RoomMutationPlanResult;
+  getInternalRoomSnapshot(code: string): RoomResult;
+  /** @deprecated Remove with the legacy role-selectable HTTP join route. */
   prepareJoin(
     code: string,
     visitorToken: string,
@@ -45,8 +67,11 @@ export type RoomService = {
   leave(code: string, visitorId: string): RoomTransitionResult;
   removeVisitor(visitorId: string): RoomTransition[];
   cleanupExpiredState(): RoomTransition[];
+  /** @deprecated Use prepareCreate() and preserve its invitation capability. */
   createRoom(senderToken: string): RoomResult;
+  /** @deprecated Remove with the legacy role-selectable HTTP join route. */
   joinRoom(code: string, visitorToken: string, role?: ParticipantRole): RoomResult;
+  /** @deprecated Use getInternalRoomSnapshot() from trusted services only. */
   getRoom(code: string): RoomResult;
   leaveRoom(code: string, visitorId: string): RoomResult;
   cleanupExpiredRooms(): void;
@@ -61,6 +86,12 @@ type PreparedMutation = {
   role: ParticipantRole;
   code: string;
   room?: Room;
+  admission: "create" | "invite" | "recovery" | "approved" | "legacy";
+};
+
+type PreparedMutationRecord = {
+  mutation: PreparedMutation;
+  fingerprint: string;
 };
 
 const visitorNotFound = {
@@ -76,6 +107,11 @@ const roomNotFound = {
 const roomExpired = {
   code: "ROOM_EXPIRED" as const,
   message: "房间已过期",
+};
+
+const roomAccessDenied = {
+  code: "ROOM_ACCESS_DENIED" as const,
+  message: "房间链接无效或已过期",
 };
 
 const roomSenderExists = {
@@ -115,6 +151,7 @@ const cloneParticipant = (participant: Participant): Participant => ({
 
 const cloneRoom = (room: Room): Room => ({
   ...room,
+  inviteDigest: new Uint8Array(room.inviteDigest),
   receivers: new Set(room.receivers),
   participants: new Map(Array.from(room.participants, ([visitorId, participant]) => [
     visitorId,
@@ -130,13 +167,15 @@ export const createRoomService = (options: RoomServiceOptions): RoomService => {
   const maxReceivers = options.maxReceivers ?? 20;
   const createCode = options.createCode ?? defaultCreateCode;
   const createPlanId = options.createPlanId ?? (() => createRandomId("room-plan"));
+  // Kept as a secure migration default until every composition root passes the adapter.
+  const inviteCrypto = options.inviteCrypto ?? createNodeRoomInviteCrypto();
   assertPositiveSafeInteger(ttlMs, "Room TTL");
   assertPositiveSafeInteger(attachTimeoutMs, "Attach timeout");
   assertPositiveSafeInteger(maxRooms, "Room capacity");
   assertPositiveSafeInteger(maxReceivers, "Receiver capacity");
 
   const rooms = new Map<string, Room>();
-  const preparedMutations = new WeakMap<RoomMutationPlan, PreparedMutation>();
+  const preparedMutations = new WeakMap<RoomMutationPlan, PreparedMutationRecord>();
 
   const toPublicRoom = (room: Room): PublicRoom => ({
     code: room.code,
@@ -215,7 +254,7 @@ export const createRoomService = (options: RoomServiceOptions): RoomService => {
   const makePlan = (
     mutation: PreparedMutation,
     room: PublicRoom,
-  ): RoomMutationPlanResult => {
+  ): RoomMutationPlan => {
     const plan: RoomMutationPlan = {
       id: mutation.id,
       revision: mutation.revision,
@@ -224,19 +263,30 @@ export const createRoomService = (options: RoomServiceOptions): RoomService => {
       role: mutation.role,
       room,
     };
-    preparedMutations.set(plan, mutation);
-    return { ok: true, plan };
+    preparedMutations.set(plan, {
+      mutation,
+      fingerprint: JSON.stringify(plan),
+    });
+    return plan;
   };
 
   const isPlanUnchanged = (
     plan: RoomMutationPlan,
-    mutation: PreparedMutation,
-  ) => plan.id === mutation.id
-    && plan.revision === mutation.revision
-    && plan.kind === mutation.kind
-    && plan.visitorId === mutation.visitorId
-    && plan.role === mutation.role
-    && plan.room.code === mutation.code;
+    record: PreparedMutationRecord,
+  ) => {
+    const { mutation } = record;
+    try {
+      return record.fingerprint === JSON.stringify(plan)
+        && plan.id === mutation.id
+        && plan.revision === mutation.revision
+        && plan.kind === mutation.kind
+        && plan.visitorId === mutation.visitorId
+        && plan.role === mutation.role
+        && plan.room.code === mutation.code;
+    } catch {
+      return false;
+    }
+  };
 
   const leftTransition = (roomCode: string, visitorId: string): RoomTransition => ({
     type: "participant:left",
@@ -265,7 +315,7 @@ export const createRoomService = (options: RoomServiceOptions): RoomService => {
     return leftTransition(room.code, visitorId);
   };
 
-  const prepareCreate = (senderToken: string): RoomMutationPlanResult => {
+  const prepareCreate = (senderToken: string): RoomCreateMutationPlanResult => {
     const sender = options.visitors.getByToken(senderToken);
     if (!sender) return { ok: false, error: visitorNotFound };
     if (rooms.size >= maxRooms) return { ok: false, error: roomCapacityExceeded };
@@ -273,6 +323,10 @@ export const createRoomService = (options: RoomServiceOptions): RoomService => {
     let code = createCode();
     while (rooms.has(code)) code = createCode();
     const timestamp = currentTime();
+    const inviteToken = inviteCrypto.createToken();
+    if (!isRoomInviteToken(inviteToken)) {
+      throw new Error("Room invite crypto returned an invalid token");
+    }
     const room: Room = {
       code,
       senderId: sender.id,
@@ -281,10 +335,11 @@ export const createRoomService = (options: RoomServiceOptions): RoomService => {
       createdAt: timestamp,
       expiresAt: timestamp + ttlMs,
       revision: 0,
+      inviteDigest: new Uint8Array(inviteCrypto.digest(inviteToken)),
     };
     addParticipant(room, sender.id, "sender", timestamp);
 
-    return makePlan({
+    const plan = makePlan({
       id: createPlanId(),
       revision: 0,
       kind: "create",
@@ -293,7 +348,94 @@ export const createRoomService = (options: RoomServiceOptions): RoomService => {
       role: "sender",
       code,
       room,
+      admission: "create",
     }, toPublicRoom(room));
+    return {
+      ok: true,
+      plan,
+      invite: {
+        token: inviteToken,
+        expiresAt: room.expiresAt,
+      },
+    };
+  };
+
+  const prepareReceiverMutation = (
+    room: Room,
+    visitorToken: string,
+    visitorId: string,
+    admission: PreparedMutation["admission"],
+  ): RoomMutationPlanResult => {
+    const policyError = validateJoin(room, visitorId, "receiver");
+    if (policyError) return { ok: false, error: policyError };
+
+    const preview = cloneRoom(room);
+    if (!preview.participants.has(visitorId)) {
+      addParticipant(preview, visitorId, "receiver", currentTime());
+    }
+    const plan = makePlan({
+      id: createPlanId(),
+      revision: room.revision,
+      kind: "join",
+      visitorId,
+      visitorToken,
+      role: "receiver",
+      code: room.code,
+      admission,
+    }, toPublicRoom(preview));
+    return { ok: true, plan };
+  };
+
+  const prepareInviteJoin = (
+    code: string,
+    visitorToken: string,
+    inviteToken: string,
+  ): RoomMutationPlanResult => {
+    const visitor = options.visitors.getByToken(visitorToken);
+    if (!visitor) return { ok: false, error: visitorNotFound };
+    const room = rooms.get(code);
+    if (
+      !room
+      || room.expiresAt <= currentTime()
+      || !isRoomInviteToken(inviteToken)
+    ) {
+      return { ok: false, error: roomAccessDenied };
+    }
+    const candidateDigest = inviteCrypto.digest(inviteToken);
+    if (!inviteCrypto.equals(room.inviteDigest, candidateDigest)) {
+      return { ok: false, error: roomAccessDenied };
+    }
+    return prepareReceiverMutation(room, visitorToken, visitor.id, "invite");
+  };
+
+  const prepareReceiverRecovery = (
+    code: string,
+    visitorToken: string,
+  ): RoomMutationPlanResult => {
+    const visitor = options.visitors.getByToken(visitorToken);
+    if (!visitor) return { ok: false, error: visitorNotFound };
+    const room = rooms.get(code);
+    const participant = room?.participants.get(visitor.id);
+    if (
+      !room
+      || room.expiresAt <= currentTime()
+      || participant?.role !== "receiver"
+    ) {
+      return { ok: false, error: roomAccessDenied };
+    }
+    return prepareReceiverMutation(room, visitorToken, visitor.id, "recovery");
+  };
+
+  const prepareApprovedReceiverJoin = (
+    code: string,
+    visitorToken: string,
+  ): RoomMutationPlanResult => {
+    const visitor = options.visitors.getByToken(visitorToken);
+    if (!visitor) return { ok: false, error: visitorNotFound };
+    const room = rooms.get(code);
+    if (!room) return { ok: false, error: roomNotFound };
+    if (room.expiresAt <= currentTime()) return { ok: false, error: roomExpired };
+    return prepareReceiverMutation(room, visitorToken, visitor.id, "approved");
   };
 
   const prepareJoin = (
@@ -313,7 +455,7 @@ export const createRoomService = (options: RoomServiceOptions): RoomService => {
     if (!preview.participants.has(visitor.id)) {
       addParticipant(preview, visitor.id, role, currentTime());
     }
-    return makePlan({
+    const plan = makePlan({
       id: createPlanId(),
       revision: room.revision,
       kind: "join",
@@ -321,14 +463,17 @@ export const createRoomService = (options: RoomServiceOptions): RoomService => {
       visitorToken,
       role,
       code,
+      admission: "legacy",
     }, toPublicRoom(preview));
+    return { ok: true, plan };
   };
 
   const commit = (plan: RoomMutationPlan): RoomResult => {
-    const mutation = preparedMutations.get(plan);
-    if (!mutation) return failure(invalidState);
+    const record = preparedMutations.get(plan);
+    if (!record) return failure(invalidState);
     preparedMutations.delete(plan);
-    if (!isPlanUnchanged(plan, mutation)) return failure(invalidState);
+    if (!isPlanUnchanged(plan, record)) return failure(invalidState);
+    const { mutation } = record;
     const visitor = options.visitors.getByToken(mutation.visitorToken);
     if (!visitor || visitor.id !== mutation.visitorId) return failure(visitorNotFound);
 
@@ -348,8 +493,13 @@ export const createRoomService = (options: RoomServiceOptions): RoomService => {
     const room = rooms.get(mutation.code);
     if (!room) return failure(roomNotFound);
     if (room.expiresAt <= currentTime()) return failure(roomExpired);
+    if (mutation.admission === "recovery") {
+      const participant = room.participants.get(mutation.visitorId);
+      if (participant?.role !== "receiver") return failure(roomAccessDenied);
+    }
     const policyError = validateJoin(room, mutation.visitorId, mutation.role);
     if (policyError) return failure(policyError);
+    if (room.revision !== mutation.revision) return failure(invalidState);
     const existing = room.participants.get(mutation.visitorId);
     if (!existing) {
       addParticipant(room, mutation.visitorId, mutation.role, currentTime());
@@ -388,7 +538,6 @@ export const createRoomService = (options: RoomServiceOptions): RoomService => {
 
     participant.status = "online";
     participant.attachDeadlineAt = undefined;
-    room.revision += 1;
     const publicRoom = toPublicRoom(room);
     return {
       ok: true,
@@ -413,7 +562,6 @@ export const createRoomService = (options: RoomServiceOptions): RoomService => {
       if (!participant || participant.status === "connecting") continue;
       participant.status = "connecting";
       participant.attachDeadlineAt = currentTime() + attachTimeoutMs;
-      room.revision += 1;
       transitions.push(participantsTransition(room));
     }
     return transitions;
@@ -495,8 +643,19 @@ export const createRoomService = (options: RoomServiceOptions): RoomService => {
     return transitions;
   };
 
+  const getInternalRoomSnapshot = (code: string): RoomResult => {
+    const room = rooms.get(code);
+    if (!room) return failure(roomNotFound);
+    if (room.expiresAt <= currentTime()) return failure(roomExpired);
+    return publicRoomResult(room);
+  };
+
   return {
     prepareCreate,
+    prepareInviteJoin,
+    prepareReceiverRecovery,
+    prepareApprovedReceiverJoin,
+    getInternalRoomSnapshot,
     prepareJoin,
     commit,
     attach,
@@ -512,12 +671,7 @@ export const createRoomService = (options: RoomServiceOptions): RoomService => {
       const prepared = prepareJoin(code, visitorToken, role);
       return prepared.ok ? commit(prepared.plan) : prepared;
     },
-    getRoom(code) {
-      const room = rooms.get(code);
-      if (!room) return failure(roomNotFound);
-      if (room.expiresAt <= currentTime()) return failure(roomExpired);
-      return publicRoomResult(room);
-    },
+    getRoom: getInternalRoomSnapshot,
     leaveRoom(code, visitorId) {
       const result = leave(code, visitorId);
       return result.ok ? { ok: true, room: result.room } : failure(result.error);

@@ -12,6 +12,13 @@ const createServices = (overrides: ServiceOverrides = {}) => {
   let visitorIndex = 0;
   let roomIndex = 0;
   let planIndex = 0;
+  let inviteIndex = 0;
+  const createdInviteTokens: string[] = [];
+  const digestedInviteTokens: string[] = [];
+  const comparedInviteDigests: Array<{
+    left: Uint8Array;
+    right: Uint8Array;
+  }> = [];
   const visitors = createVisitorService({
     now: () => time,
     maxVisitors: 10_000,
@@ -28,6 +35,25 @@ const createServices = (overrides: ServiceOverrides = {}) => {
     maxRooms: overrides.maxRooms,
     createCode: () => String(100_000 + ++roomIndex),
     createPlanId: () => `plan_${String(++planIndex)}`,
+    inviteCrypto: {
+      createToken: () => {
+        const token = `inv_${String(++inviteIndex).padStart(43, "A")}`;
+        createdInviteTokens.push(token);
+        return token;
+      },
+      digest: token => {
+        digestedInviteTokens.push(token);
+        return new TextEncoder().encode(`digest:${token}`);
+      },
+      equals: (left, right) => {
+        comparedInviteDigests.push({
+          left: new Uint8Array(left),
+          right: new Uint8Array(right),
+        });
+        return left.byteLength === right.byteLength
+          && left.every((value, index) => value === right[index]);
+      },
+    },
   });
 
   return {
@@ -37,21 +63,34 @@ const createServices = (overrides: ServiceOverrides = {}) => {
     setTime: (value: number) => {
       time = value;
     },
+    inviteCryptoCalls: {
+      createdInviteTokens,
+      digestedInviteTokens,
+      comparedInviteDigests,
+    },
   };
+};
+
+const createAuthorizedRoom = (
+  services: ReturnType<typeof createServices>,
+  senderToken: string,
+) => {
+  const prepared = services.rooms.prepareCreate(senderToken);
+  if (!prepared.ok) throw new Error(`expected room plan: ${prepared.error.code}`);
+  const committed = services.rooms.commit(prepared.plan);
+  if (!committed.ok) throw new Error(`expected room: ${committed.error.code}`);
+  return { room: committed.room, invite: prepared.invite };
 };
 
 const createRoom = (
   services: ReturnType<typeof createServices>,
   senderToken: string,
-) => {
-  const result = services.rooms.createRoom(senderToken);
-  if (!result.ok) throw new Error(`expected room: ${result.error.code}`);
-  return result.room;
-};
+) => createAuthorizedRoom(services, senderToken).room;
 
-describe("room service prepared mutations", () => {
-  test("prepares without mutating live rooms and commits a create plan once", () => {
-    const { visitors, rooms } = createServices();
+describe("room service authorized prepared mutations", () => {
+  test("creates one invitation capability while keeping secrets out of public state", () => {
+    const services = createServices();
+    const { visitors, rooms } = services;
     const sender = visitors.createVisitor();
 
     const prepared = rooms.prepareCreate(sender.token);
@@ -63,13 +102,32 @@ describe("room service prepared mutations", () => {
       visitorId: sender.id,
       role: "sender",
     });
+    expect(prepared.invite).toEqual({
+      token: services.inviteCryptoCalls.createdInviteTokens[0],
+      expiresAt: prepared.plan.room.expiresAt,
+    });
+    expect(services.inviteCryptoCalls.createdInviteTokens).toEqual([
+      prepared.invite.token,
+    ]);
+    expect(services.inviteCryptoCalls.digestedInviteTokens).toEqual([
+      prepared.invite.token,
+    ]);
     expect(prepared.plan.room.participants).toEqual([{
       visitor: visitors.toPublic(sender),
       role: "sender",
       joinedAt: 10_000,
       status: "connecting",
     }]);
-    expect(rooms.getRoom(prepared.plan.room.code)).toMatchObject({
+    expect(JSON.stringify(prepared.plan)).not.toContain(prepared.invite.token);
+    expect(Object.keys(prepared.plan.room).sort()).toEqual([
+      "code",
+      "createdAt",
+      "expiresAt",
+      "participants",
+      "receivers",
+      "senderId",
+    ]);
+    expect(rooms.getInternalRoomSnapshot(prepared.plan.room.code)).toMatchObject({
       ok: false,
       error: { code: "ROOM_NOT_FOUND" },
     });
@@ -82,83 +140,279 @@ describe("room service prepared mutations", () => {
     });
   });
 
-  test("keeps join plans immutable and commits compatible concurrent receiver joins", () => {
+  test("keeps invitation, recovery, and internal approval admission separate", () => {
     const services = createServices();
     const sender = services.visitors.createVisitor();
-    const receiverOne = services.visitors.createVisitor();
-    const receiverTwo = services.visitors.createVisitor();
-    const room = createRoom(services, sender.token);
-
-    const first = services.rooms.prepareJoin(room.code, receiverOne.token, "receiver");
-    const stale = services.rooms.prepareJoin(room.code, receiverTwo.token, "receiver");
-    if (!first.ok || !stale.ok) throw new Error("expected join plans");
-    expect(services.rooms.getRoom(room.code)).toMatchObject({
-      ok: true,
-      room: { receivers: [] },
-    });
-    expect(first.plan.room.receivers).toEqual([receiverOne.id]);
-    expect(stale.plan.room.receivers).toEqual([receiverTwo.id]);
-
-    expect(services.rooms.commit(first.plan)).toMatchObject({
-      ok: true,
-      room: { receivers: [receiverOne.id] },
-    });
-    expect(services.rooms.commit(stale.plan)).toMatchObject({
-      ok: true,
-      room: { receivers: [receiverOne.id, receiverTwo.id] },
-    });
-    expect(services.rooms.getRoom(room.code)).toMatchObject({
-      ok: true,
-      room: { receivers: [receiverOne.id, receiverTwo.id] },
-    });
-  });
-
-  test("rejects forged plans and rechecks sender and receiver policy", () => {
-    const services = createServices();
-    const sender = services.visitors.createVisitor();
+    const otherSender = services.visitors.createVisitor();
     const receiver = services.visitors.createVisitor();
-    const secondSender = services.visitors.createVisitor();
-    const room = createRoom(services, sender.token);
-    const prepared = services.rooms.prepareJoin(room.code, receiver.token, "receiver");
-    if (!prepared.ok) throw new Error("expected join plan");
+    const stranger = services.visitors.createVisitor();
+    const first = createAuthorizedRoom(services, sender.token);
+    const second = createAuthorizedRoom(services, otherSender.token);
 
-    expect(services.rooms.commit({
-      ...prepared.plan,
-      id: "forged",
-      role: "sender",
-    })).toMatchObject({
-      ok: false,
-      error: { code: "INVALID_STATE" },
+    const invited = services.rooms.prepareInviteJoin(
+      first.room.code,
+      receiver.token,
+      first.invite.token,
+    );
+    if (!invited.ok) throw new Error("expected invitation join plan");
+    expect(invited.plan).toMatchObject({
+      kind: "join",
+      role: "receiver",
+      visitorId: receiver.id,
+      room: { receivers: [receiver.id] },
     });
-    expect(services.rooms.prepareJoin(room.code, secondSender.token, "sender")).toEqual({
+    expect(Object.keys(invited.plan).sort()).toEqual([
+      "id",
+      "kind",
+      "revision",
+      "role",
+      "room",
+      "visitorId",
+    ]);
+    expect(JSON.stringify(invited.plan)).not.toContain(first.invite.token);
+    expect(services.rooms.commit(invited.plan)).toMatchObject({
+      ok: true,
+      room: { receivers: [receiver.id] },
+    });
+    expect(services.rooms.prepareInviteJoin(
+      first.room.code,
+      receiver.token,
+      second.invite.token,
+    )).toEqual({
       ok: false,
       error: {
-        code: "ROOM_SENDER_EXISTS",
-        message: "房间已经有发送者",
+        code: "ROOM_ACCESS_DENIED",
+        message: "房间链接无效或已过期",
       },
+    });
+    expect(services.rooms.prepareReceiverRecovery(
+      first.room.code,
+      receiver.token,
+    ).ok).toBe(true);
+    expect(services.rooms.prepareReceiverRecovery(
+      first.room.code,
+      sender.token,
+    )).toMatchObject({ ok: false, error: { code: "ROOM_ACCESS_DENIED" } });
+    expect(services.rooms.prepareReceiverRecovery(
+      first.room.code,
+      stranger.token,
+    )).toMatchObject({ ok: false, error: { code: "ROOM_ACCESS_DENIED" } });
+
+    const approved = services.rooms.prepareApprovedReceiverJoin(
+      first.room.code,
+      stranger.token,
+    );
+    if (!approved.ok) throw new Error("expected approved join plan");
+    expect(services.rooms.commit(approved.plan)).toMatchObject({
+      ok: true,
+      room: { receivers: [receiver.id, stranger.id] },
     });
   });
 
-  test("allows exactly twenty receivers and rejects the twenty-first without mutation", () => {
+  test("maps malformed, wrong, cross-room, missing, and expired invitations uniformly", () => {
     const services = createServices();
     const sender = services.visitors.createVisitor();
-    const room = createRoom(services, sender.token);
+    const secondSender = services.visitors.createVisitor();
+    const receiver = services.visitors.createVisitor();
+    const first = createAuthorizedRoom(services, sender.token);
+    const second = createAuthorizedRoom(services, secondSender.token);
+    const expected = {
+      ok: false as const,
+      error: {
+        code: "ROOM_ACCESS_DENIED" as const,
+        message: "房间链接无效或已过期",
+      },
+    };
+
+    expect(services.rooms.prepareInviteJoin(
+      first.room.code,
+      receiver.token,
+      "inv_short",
+    )).toEqual(expected);
+    expect(services.rooms.prepareInviteJoin(
+      first.room.code,
+      receiver.token,
+      second.invite.token,
+    )).toEqual(expected);
+    expect(services.rooms.prepareInviteJoin(
+      second.room.code,
+      receiver.token,
+      first.invite.token,
+    )).toEqual(expected);
+    expect(services.rooms.prepareInviteJoin(
+      "999999",
+      receiver.token,
+      first.invite.token,
+    )).toEqual(expected);
+    services.setTime(first.room.expiresAt);
+    expect(services.rooms.prepareInviteJoin(
+      first.room.code,
+      receiver.token,
+      first.invite.token,
+    )).toEqual(expected);
+    expect(services.rooms.prepareReceiverRecovery(
+      first.room.code,
+      receiver.token,
+    )).toEqual(expected);
+  });
+
+  test("allows the same invitation to admit twenty receivers and rejects the twenty-first", () => {
+    const services = createServices();
+    const sender = services.visitors.createVisitor();
+    const { room, invite } = createAuthorizedRoom(services, sender.token);
 
     for (let index = 0; index < 20; index += 1) {
       const receiver = services.visitors.createVisitor();
-      const joined = services.rooms.joinRoom(room.code, receiver.token, "receiver");
-      expect(joined.ok).toBe(true);
+      const prepared = services.rooms.prepareInviteJoin(
+        room.code,
+        receiver.token,
+        invite.token,
+      );
+      if (!prepared.ok) throw new Error("expected invitation join plan");
+      expect(services.rooms.commit(prepared.plan).ok).toBe(true);
     }
     const overflow = services.visitors.createVisitor();
-    expect(services.rooms.prepareJoin(room.code, overflow.token, "receiver")).toEqual({
+    expect(services.rooms.prepareInviteJoin(
+      room.code,
+      overflow.token,
+      invite.token,
+    )).toEqual({
       ok: false,
       error: {
         code: "CAPACITY_EXCEEDED",
         message: "房间接收者数量已达上限",
       },
     });
-    const current = services.rooms.getRoom(room.code);
+    const current = services.rooms.getInternalRoomSnapshot(room.code);
     expect(current.ok && current.room.receivers).toHaveLength(20);
+  });
+
+  test("consumes opaque plans once and rechecks mutation, identity, expiry, capacity, and revision", () => {
+    const forgedServices = createServices();
+    const forgedSender = forgedServices.visitors.createVisitor();
+    const forgedReceiver = forgedServices.visitors.createVisitor();
+    const forgedRoom = createAuthorizedRoom(forgedServices, forgedSender.token);
+    const authentic = forgedServices.rooms.prepareApprovedReceiverJoin(
+      forgedRoom.room.code,
+      forgedReceiver.token,
+    );
+    if (!authentic.ok) throw new Error("expected join plan");
+    expect(forgedServices.rooms.commit({ ...authentic.plan })).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_STATE" },
+    });
+    authentic.plan.room.receivers.push("mutated");
+    expect(forgedServices.rooms.commit(authentic.plan)).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_STATE" },
+    });
+    authentic.plan.room.receivers.pop();
+    expect(forgedServices.rooms.commit(authentic.plan)).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_STATE" },
+    });
+
+    const identityServices = createServices();
+    const identitySender = identityServices.visitors.createVisitor();
+    const identityReceiver = identityServices.visitors.createVisitor();
+    const identityRoom = createRoom(identityServices, identitySender.token);
+    const identityPlan = identityServices.rooms.prepareApprovedReceiverJoin(
+      identityRoom.code,
+      identityReceiver.token,
+    );
+    if (!identityPlan.ok) throw new Error("expected identity plan");
+    identityServices.visitors.remove(identityReceiver.id);
+    expect(identityServices.rooms.commit(identityPlan.plan)).toMatchObject({
+      ok: false,
+      error: { code: "VISITOR_NOT_FOUND" },
+    });
+
+    const expiryServices = createServices({ ttlMs: 1_000 });
+    const expirySender = expiryServices.visitors.createVisitor();
+    const expiryReceiver = expiryServices.visitors.createVisitor();
+    const expiryRoom = createRoom(expiryServices, expirySender.token);
+    const expiryPlan = expiryServices.rooms.prepareApprovedReceiverJoin(
+      expiryRoom.code,
+      expiryReceiver.token,
+    );
+    if (!expiryPlan.ok) throw new Error("expected expiry plan");
+    expiryServices.setTime(expiryRoom.expiresAt);
+    expect(expiryServices.rooms.commit(expiryPlan.plan)).toMatchObject({
+      ok: false,
+      error: { code: "ROOM_EXPIRED" },
+    });
+
+    const concurrentServices = createServices({ maxReceivers: 1 });
+    const concurrentSender = concurrentServices.visitors.createVisitor();
+    const firstReceiver = concurrentServices.visitors.createVisitor();
+    const secondReceiver = concurrentServices.visitors.createVisitor();
+    const concurrentRoom = createRoom(concurrentServices, concurrentSender.token);
+    const firstPlan = concurrentServices.rooms.prepareApprovedReceiverJoin(
+      concurrentRoom.code,
+      firstReceiver.token,
+    );
+    const stalePlan = concurrentServices.rooms.prepareApprovedReceiverJoin(
+      concurrentRoom.code,
+      secondReceiver.token,
+    );
+    if (!firstPlan.ok || !stalePlan.ok) throw new Error("expected concurrent plans");
+    expect(concurrentServices.rooms.commit(firstPlan.plan).ok).toBe(true);
+    expect(concurrentServices.rooms.commit(stalePlan.plan)).toMatchObject({
+      ok: false,
+      error: { code: "CAPACITY_EXCEEDED" },
+    });
+
+    const revisionServices = createServices();
+    const revisionSender = revisionServices.visitors.createVisitor();
+    const revisionFirst = revisionServices.visitors.createVisitor();
+    const revisionSecond = revisionServices.visitors.createVisitor();
+    const revisionRoom = createRoom(revisionServices, revisionSender.token);
+    const revisionFirstPlan = revisionServices.rooms.prepareApprovedReceiverJoin(
+      revisionRoom.code,
+      revisionFirst.token,
+    );
+    const revisionStalePlan = revisionServices.rooms.prepareApprovedReceiverJoin(
+      revisionRoom.code,
+      revisionSecond.token,
+    );
+    if (!revisionFirstPlan.ok || !revisionStalePlan.ok) {
+      throw new Error("expected revision plans");
+    }
+    expect(revisionServices.rooms.commit(revisionFirstPlan.plan).ok).toBe(true);
+    expect(revisionServices.rooms.commit(revisionStalePlan.plan)).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_STATE" },
+    });
+  });
+
+  test("preserves the invitation digest through previews and destroys access on close", () => {
+    const services = createServices();
+    const sender = services.visitors.createVisitor();
+    const firstReceiver = services.visitors.createVisitor();
+    const secondReceiver = services.visitors.createVisitor();
+    const { room, invite } = createAuthorizedRoom(services, sender.token);
+
+    expect(services.rooms.prepareInviteJoin(
+      room.code,
+      firstReceiver.token,
+      invite.token,
+    ).ok).toBe(true);
+    const secondPreview = services.rooms.prepareInviteJoin(
+      room.code,
+      secondReceiver.token,
+      invite.token,
+    );
+    expect(secondPreview.ok).toBe(true);
+    expect(services.inviteCryptoCalls.comparedInviteDigests).toHaveLength(2);
+    expect(services.rooms.leave(room.code, sender.id).ok).toBe(true);
+    expect(services.rooms.prepareInviteJoin(
+      room.code,
+      secondReceiver.token,
+      invite.token,
+    )).toMatchObject({
+      ok: false,
+      error: { code: "ROOM_ACCESS_DENIED" },
+    });
   });
 
   test("allows exactly two thousand live rooms and rejects the next prepare", () => {

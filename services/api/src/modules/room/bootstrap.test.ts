@@ -79,7 +79,14 @@ describe("room bootstrap orchestration", () => {
       rooms: {
         prepareCreate(token: string) {
           calls.push(`prepare:${token}`);
-          return { ok: true as const, plan };
+          return {
+            ok: true as const,
+            plan,
+            invite: {
+              token: `inv_${"A".repeat(43)}`,
+              expiresAt: room.expiresAt,
+            },
+          };
         },
         prepareJoin() {
           throw new Error("unexpected join");
