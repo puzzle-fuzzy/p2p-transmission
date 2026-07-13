@@ -78,6 +78,44 @@ describe('visitor-session', () => {
     expect(window.name).not.toBe(firstTabName)
   })
 
+  test('shares the product tab suffix with room recovery and survives same-tab refresh', () => {
+    window.name = 'p2p-transmission:tab-a'
+
+    saveVisitorSession(session)
+
+    const key = 'p2p.visitorSession:p2p-transmission:tab-a'
+    expect(window.sessionStorage.getItem(key)).toContain('tok_1')
+    expect(window.localStorage.getItem(key)).toBeNull()
+    expect(loadVisitorSession()).toEqual(session)
+
+    window.name = 'p2p-transmission:tab-b'
+    expect(loadVisitorSession()).toBeUndefined()
+  })
+
+  test('persists only the visitor-session allowlist from a structurally compatible object', () => {
+    window.name = 'p2p-transmission:tab-a'
+    const compatibleSession = {
+      ...session,
+      inviteToken: 'inv_secret',
+      requestId: 'req_secret',
+      visitor: {
+        ...session.visitor,
+        internalSecret: 'visitor_secret',
+      },
+    }
+
+    saveVisitorSession(compatibleSession)
+
+    const raw = window.sessionStorage.getItem(
+      'p2p.visitorSession:p2p-transmission:tab-a',
+    )
+    expect(raw).not.toBeNull()
+    expect(JSON.parse(raw ?? '')).toEqual(session)
+    expect(raw).not.toContain('inviteToken')
+    expect(raw).not.toContain('requestId')
+    expect(raw).not.toContain('internalSecret')
+  })
+
   test('clears saved visitor session', () => {
     const storage = createMemoryStorage()
     saveVisitorSession(session, storage)

@@ -1,7 +1,7 @@
 import type { VisitorSession } from '../shared/contracts'
+import { getTabStorageKey } from './tab-session'
 
 const VISITOR_SESSION_KEY = 'p2p.visitorSession'
-const VISITOR_TAB_NAME_PREFIX = 'p2p-transmission:'
 
 export type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 
@@ -11,22 +11,8 @@ const getDefaultStorage = (): StorageLike | undefined => {
   return window.sessionStorage
 }
 
-const createBrowserId = () => {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-    return crypto.randomUUID()
-  }
-
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
-}
-
 const getDefaultSessionKey = () => {
-  if (typeof window === 'undefined') return VISITOR_SESSION_KEY
-
-  if (!window.name.startsWith(VISITOR_TAB_NAME_PREFIX)) {
-    window.name = `${VISITOR_TAB_NAME_PREFIX}${createBrowserId()}`
-  }
-
-  return `${VISITOR_SESSION_KEY}:${window.name}`
+  return getTabStorageKey(VISITOR_SESSION_KEY)
 }
 
 const isVisitorSession = (value: unknown): value is VisitorSession => {
@@ -67,7 +53,18 @@ export const saveVisitorSession = (
 ) => {
   const resolvedStorage = storage ?? getDefaultStorage()
   const key = storage ? VISITOR_SESSION_KEY : getDefaultSessionKey()
-  resolvedStorage?.setItem(key, JSON.stringify(session))
+  const persistedSession: VisitorSession = {
+    token: session.token,
+    visitor: {
+      id: session.visitor.id,
+      avatarSeed: session.visitor.avatarSeed,
+      displayName: session.visitor.displayName,
+      createdAt: session.visitor.createdAt,
+      lastSeenAt: session.visitor.lastSeenAt,
+    },
+  }
+
+  resolvedStorage?.setItem(key, JSON.stringify(persistedSession))
 }
 
 export const clearVisitorSession = (
