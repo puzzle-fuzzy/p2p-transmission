@@ -1,4 +1,5 @@
 import type { ParticipantRole, PublicRoom, PublicVisitor } from './model'
+import type { RoomAccessServerMessage } from './room-access'
 
 export type SessionDescriptionDto =
   | { type: 'offer'; sdp: string }
@@ -68,5 +69,6 @@ export type ServerRealtimeMessage =
   | { type: 'visitor:ready'; visitor: PublicVisitor }
   | { type: 'room:participants'; room: PublicRoom }
   | { type: 'participant:left'; roomCode: string; visitorId: string }
+  | RoomAccessServerMessage
   | SignalServerMessage
   | { type: 'error'; code: string; message: string }

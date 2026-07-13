@@ -98,5 +98,11 @@ describe('ICE bootstrap contracts', () => {
   test('rejects malformed rooms and unknown bootstrap keys', () => {
     expect(isRoomSessionBootstrap({ room: { ...room, code: '123' } })).toBe(false)
     expect(isRoomSessionBootstrap({ room, secret: 'nope' })).toBe(false)
+    expect(isRoomSessionBootstrap({
+      room,
+      invite: { token: `inv_${'A'.repeat(43)}`, expiresAt: room.expiresAt },
+    })).toBe(false)
+    expect(isRoomSessionBootstrap({ room, inviteToken: `inv_${'A'.repeat(43)}` })).toBe(false)
+    expect(isRoomSessionBootstrap({ room, requestId: 'request_1' })).toBe(false)
   })
 })

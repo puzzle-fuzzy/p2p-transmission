@@ -16,6 +16,28 @@ export {
   isRtcConfigurationDto,
   isRtcIceServerDto,
 } from './ice'
+export {
+  isReceiverJoinBody,
+  isRoomAccessServerMessage,
+  isRoomInviteCapability,
+  isRoomInviteToken,
+  isRoomJoinRequestReceipt,
+  isRoomJoinRequestState,
+  isRoomJoinRequestSummary,
+  isRoomOwnerBootstrap,
+  MAX_ROOM_INVITE_TOKEN_INPUT_LENGTH,
+  MAX_ROOM_JOIN_REQUEST_ID_LENGTH,
+} from './room-access'
+export type {
+  ReceiverAdmission,
+  ReceiverJoinBody,
+  RoomAccessServerMessage,
+  RoomInviteCapability,
+  RoomJoinRequestReceipt,
+  RoomJoinRequestState,
+  RoomJoinRequestSummary,
+  RoomOwnerBootstrap,
+} from './room-access'
 export type {
   RoomBootstrapRequest,
   RoomIceMode,
