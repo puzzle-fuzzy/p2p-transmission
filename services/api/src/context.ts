@@ -8,6 +8,10 @@ import {
   type RateLimitService,
 } from "./modules/rate-limit/service";
 import {
+  createRoomAccessService,
+  type RoomAccessService,
+} from "./modules/room-access/service";
+import {
   createRoomBootstrapService,
   type RoomBootstrapService,
 } from "./modules/room/bootstrap";
@@ -18,11 +22,13 @@ import {
   createClientIpResolver,
   type ClientIpResolver,
 } from "./shared/client-ip";
+import { createNodeRoomInviteCrypto } from "./shared/room-invite-crypto";
 
 export type AppContext = {
   config: ApiConfig;
   visitors: VisitorService;
   rooms: RoomService;
+  roomAccess: RoomAccessService;
   rateLimits: RateLimitService;
   turn: TurnService;
   maintenance: MaintenanceService;
@@ -34,11 +40,14 @@ export const createDefaultContext = (
   config: ApiConfig = loadApiConfig(),
 ): AppContext => {
   const visitors = createVisitorService();
-  const rooms = createRoomService({ visitors });
+  const inviteCrypto = createNodeRoomInviteCrypto();
+  const rooms = createRoomService({ visitors, inviteCrypto });
+  const roomAccess = createRoomAccessService({ rooms, visitors });
   const rateLimits = createRateLimitService();
   const turn = createTurnService(config);
   const maintenance = createMaintenanceService({
     rooms,
+    roomAccess,
     visitors,
     rateLimits,
   });
@@ -46,6 +55,7 @@ export const createDefaultContext = (
     maintenance,
     visitors,
     rooms,
+    roomAccess,
     rateLimits,
     turn,
   });
@@ -58,6 +68,7 @@ export const createDefaultContext = (
     config,
     visitors,
     rooms,
+    roomAccess,
     rateLimits,
     turn,
     maintenance,

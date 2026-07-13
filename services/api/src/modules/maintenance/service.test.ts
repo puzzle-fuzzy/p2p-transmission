@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { createRoomAccessService } from "../room-access/service";
 import type { RoomTransition } from "../room/model";
+import { createRoomService } from "../room/service";
+import { createVisitorService } from "../visitor/service";
+import { createNodeRoomInviteCrypto } from "../../shared/room-invite-crypto";
 import type { MaintenanceEvent } from "./model";
 import {
   createMaintenanceService,
@@ -38,6 +42,28 @@ const createHarness = () => {
       return [left(`room-${visitorId}`, visitorId)];
     },
   };
+  const roomAccess = {
+    cleanupExpiredState() {
+      calls.push("roomAccess.cleanup");
+      return [{
+        type: "room:join-request-resolved" as const,
+        senderId: "sender",
+        roomCode: "100001",
+        requestId: "request-cleanup",
+        state: "expired" as const,
+      }];
+    },
+    removeVisitor(visitorId: string) {
+      calls.push(`roomAccess.remove:${visitorId}`);
+      return [{
+        type: "room:join-request-resolved" as const,
+        senderId: "sender",
+        roomCode: "100001",
+        requestId: `request-${visitorId}`,
+        state: "expired" as const,
+      }];
+    },
+  };
   const visitors = {
     listExpiredVisitorIds() {
       calls.push("visitors.list");
@@ -61,6 +87,7 @@ const createHarness = () => {
     scheduler,
     maintenance: createMaintenanceService({
       rooms,
+      roomAccess,
       visitors,
       rateLimits,
       scheduler,
@@ -85,10 +112,13 @@ describe("maintenance service", () => {
     expect(published).toEqual([events]);
     expect(calls).toEqual([
       "rooms.cleanup",
+      "roomAccess.cleanup",
       "visitors.list",
       "rooms.remove:visitor-a",
-      "rooms.remove:visitor-b",
+      "roomAccess.remove:visitor-a",
       "visitors.remove:visitor-a",
+      "rooms.remove:visitor-b",
+      "roomAccess.remove:visitor-b",
       "visitors.remove:visitor-b",
       "rateLimits.sweep",
     ]);
@@ -100,7 +130,7 @@ describe("maintenance service", () => {
     expect(maintenance.sweepRooms()).toEqual([
       left("100001", "room-expired"),
     ]);
-    expect(calls).toEqual(["rooms.cleanup"]);
+    expect(calls).toEqual(["rooms.cleanup", "roomAccess.cleanup"]);
   });
 
   test("cascades visitor removals before deleting visitors and rate keys", () => {
@@ -115,8 +145,10 @@ describe("maintenance service", () => {
     expect(calls).toEqual([
       "visitors.list",
       "rooms.remove:visitor-a",
-      "rooms.remove:visitor-b",
+      "roomAccess.remove:visitor-a",
       "visitors.remove:visitor-a",
+      "rooms.remove:visitor-b",
+      "roomAccess.remove:visitor-b",
       "visitors.remove:visitor-b",
       "rateLimits.sweep",
     ]);
@@ -148,6 +180,10 @@ describe("maintenance service", () => {
   test("does not notify subscribers for an empty sweep", () => {
     const maintenance = createMaintenanceService({
       rooms: {
+        cleanupExpiredState: () => [],
+        removeVisitor: () => [],
+      },
+      roomAccess: {
         cleanupExpiredState: () => [],
         removeVisitor: () => [],
       },
@@ -189,10 +225,13 @@ describe("maintenance service", () => {
     visitorTimer?.callback();
     expect(calls).toEqual([
       "rooms.cleanup",
+      "roomAccess.cleanup",
       "visitors.list",
       "rooms.remove:visitor-a",
-      "rooms.remove:visitor-b",
+      "roomAccess.remove:visitor-a",
       "visitors.remove:visitor-a",
+      "rooms.remove:visitor-b",
+      "roomAccess.remove:visitor-b",
       "visitors.remove:visitor-b",
       "rateLimits.sweep",
     ]);
@@ -205,7 +244,81 @@ describe("maintenance service", () => {
 
     roomTimer?.callback();
     visitorTimer?.callback();
-    expect(calls).toHaveLength(7);
+    expect(calls).toHaveLength(10);
     expect(notifications).toHaveLength(2);
+  });
+
+  test("expires requests after room cleanup without republishing access transitions", () => {
+    let now = 1_000;
+    let visitorIndex = 0;
+    const visitors = createVisitorService({
+      now: () => now,
+      createId: () => `visitor-${++visitorIndex}`,
+      createToken: () => `token-${visitorIndex}`,
+      createAvatarSeed: () => `avatar-${visitorIndex}`,
+    });
+    const sender = visitors.tryCreateVisitor();
+    const receiver = visitors.tryCreateVisitor();
+    if (!sender.ok || !receiver.ok) throw new Error("visitor setup failed");
+    const rooms = createRoomService({
+      visitors,
+      inviteCrypto: createNodeRoomInviteCrypto(),
+      now: () => now,
+      ttlMs: 10,
+      attachTimeoutMs: 100,
+      createCode: () => "100001",
+      createPlanId: () => crypto.randomUUID(),
+    });
+    const created = rooms.prepareCreate(sender.visitor.token);
+    if (!created.ok) throw new Error("room setup failed");
+    expect(rooms.commit(created.plan).ok).toBe(true);
+    expect(rooms.attach("100001", sender.visitor.id, "sender").ok).toBe(true);
+
+    const roomAccess = createRoomAccessService({
+      rooms,
+      visitors,
+      now: () => now,
+      requestTtlMs: 1_000,
+      createRequestId: () => "request-1",
+    });
+    expect(roomAccess.createOrGetPending("100001", receiver.visitor.token)).toEqual({
+      ok: true,
+      receipt: {
+        requestId: "request-1",
+        state: "pending",
+        expiresAt: 2_000,
+      },
+    });
+
+    const accessTransitions: string[] = [];
+    roomAccess.subscribe(() => {
+      throw new Error("subscriber failure");
+    });
+    roomAccess.subscribe(transition => accessTransitions.push(transition.type));
+    const maintenance = createMaintenanceService({
+      rooms,
+      roomAccess,
+      visitors,
+      rateLimits: { sweep: () => 0 },
+    });
+    const maintenanceEvents: Array<readonly MaintenanceEvent[]> = [];
+    maintenance.subscribe(events => maintenanceEvents.push(events));
+
+    now = 1_010;
+    expect(maintenance.sweepRooms()).toEqual([
+      left("100001", sender.visitor.id),
+    ]);
+    expect(accessTransitions).toEqual(["room:join-request-resolved"]);
+    expect(maintenanceEvents).toEqual([[
+      left("100001", sender.visitor.id),
+    ]]);
+    expect(roomAccess.readReceipt(
+      "100001",
+      "request-1",
+      receiver.visitor.token,
+    )).toMatchObject({
+      ok: true,
+      receipt: { state: "expired" },
+    });
   });
 });

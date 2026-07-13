@@ -1,4 +1,5 @@
 import type { RateLimitService } from "../rate-limit/service";
+import type { RoomAccessService } from "../room-access/service";
 import type { RoomService } from "../room/service";
 import type { VisitorService } from "../visitor/service";
 import type {
@@ -14,6 +15,7 @@ export type MaintenanceScheduler = {
 
 export type MaintenanceServiceOptions = {
   rooms: Pick<RoomService, "cleanupExpiredState" | "removeVisitor">;
+  roomAccess: Pick<RoomAccessService, "cleanupExpiredState" | "removeVisitor">;
   visitors: Pick<VisitorService, "listExpiredVisitorIds" | "remove">;
   rateLimits: Pick<RateLimitService, "sweep">;
   scheduler?: MaintenanceScheduler;
@@ -33,6 +35,7 @@ const defaultScheduler: MaintenanceScheduler = {
 
 export const createMaintenanceService = ({
   rooms,
+  roomAccess,
   visitors,
   rateLimits,
   scheduler = defaultScheduler,
@@ -48,10 +51,22 @@ export const createMaintenanceService = ({
     return events;
   };
 
+  const collectRooms = (): MaintenanceEvent[] => {
+    const transitions = rooms.cleanupExpiredState();
+    // RoomAccessService publishes its own targeted, non-secret transitions.
+    roomAccess.cleanupExpiredState();
+    return transitions;
+  };
+
   const collectVisitorsAndRateKeys = (): MaintenanceEvent[] => {
     const visitorIds = Array.from(new Set(visitors.listExpiredVisitorIds())).sort();
-    const transitions = visitorIds.flatMap(visitorId => rooms.removeVisitor(visitorId));
-    for (const visitorId of visitorIds) visitors.remove(visitorId);
+    const transitions: MaintenanceEvent[] = [];
+    for (const visitorId of visitorIds) {
+      transitions.push(...rooms.removeVisitor(visitorId));
+      // Access transitions are already published by RoomAccessService.
+      roomAccess.removeVisitor(visitorId);
+      visitors.remove(visitorId);
+    }
     rateLimits.sweep();
     return [
       ...transitions,
@@ -65,12 +80,12 @@ export const createMaintenanceService = ({
   return {
     sweepForAdmission() {
       return publish([
-        ...rooms.cleanupExpiredState(),
+        ...collectRooms(),
         ...collectVisitorsAndRateKeys(),
       ]);
     },
     sweepRooms() {
-      return publish(rooms.cleanupExpiredState());
+      return publish(collectRooms());
     },
     sweepVisitorsAndRateKeys() {
       return publish(collectVisitorsAndRateKeys());
@@ -89,7 +104,7 @@ export const createMaintenanceService = ({
       started = true;
       try {
         roomTimer = scheduler.setInterval(() => {
-          if (started) publish(rooms.cleanupExpiredState());
+          if (started) publish(collectRooms());
         }, ROOM_SWEEP_INTERVAL_MS);
         visitorTimer = scheduler.setInterval(() => {
           if (started) publish(collectVisitorsAndRateKeys());

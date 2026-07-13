@@ -4,10 +4,12 @@ import type { AppContext } from "./context";
 import { createApp } from "./app";
 import { createMaintenanceService } from "./modules/maintenance/service";
 import { createRateLimitService } from "./modules/rate-limit/service";
+import { createRoomAccessService } from "./modules/room-access/service";
 import { createRoomBootstrapService } from "./modules/room/bootstrap";
 import { createRoomService } from "./modules/room/service";
 import { createTurnService } from "./modules/turn/service";
 import { createVisitorService } from "./modules/visitor/service";
+import { createNodeRoomInviteCrypto } from "./shared/room-invite-crypto";
 
 type HarnessOptions = {
   maxRooms?: number;
@@ -47,18 +49,30 @@ const createTestHarness = ({
   });
   const rooms = createRoomService({
     visitors,
+    inviteCrypto: createNodeRoomInviteCrypto(),
     now: () => 1_000,
     maxRooms,
     createCode: () => String(234_560 + ++roomIndex),
     createPlanId: () => `plan_${String(roomIndex)}_${crypto.randomUUID()}`,
   });
+  const roomAccess = createRoomAccessService({
+    rooms,
+    visitors,
+    now: () => 1_000,
+  });
   const rateLimits = createRateLimitService({ now: () => 1_000 });
   const turn = createTurnService(config, { now: () => 1_000 });
-  const maintenance = createMaintenanceService({ rooms, visitors, rateLimits });
+  const maintenance = createMaintenanceService({
+    rooms,
+    roomAccess,
+    visitors,
+    rateLimits,
+  });
   const roomBootstrap = createRoomBootstrapService({
     maintenance,
     visitors,
     rooms,
+    roomAccess,
     rateLimits,
     turn,
   });
@@ -66,6 +80,7 @@ const createTestHarness = ({
     config,
     visitors,
     rooms,
+    roomAccess,
     rateLimits,
     turn,
     maintenance,
