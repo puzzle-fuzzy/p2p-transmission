@@ -2110,9 +2110,13 @@ describe('App transfer integration', () => {
     const user = userEvent.setup()
     render(<App initialNavigation={absentNavigation} />)
 
-    await user.click(await screen.findByRole('button', {
+    const aboutButton = await screen.findByRole('button', {
       name: '关于 P2P Transmission',
-    }))
+    })
+    expect(aboutButton.className).toContain('cursor-pointer')
+    expect(aboutButton.className).toContain('underline')
+    expect(aboutButton.className).toContain('underline-offset-4')
+    await user.click(aboutButton)
 
     const dialog = screen.getByRole('dialog', {
       name: '关于 P2P Transmission',

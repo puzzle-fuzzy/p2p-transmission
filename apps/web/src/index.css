@@ -12,6 +12,13 @@
   --color-amber-50: #fff8e7;
 }
 
+button:not(:disabled),
+a[href],
+[role="button"]:not([aria-disabled="true"]),
+label:has(input:not(:disabled)) {
+  cursor: pointer;
+}
+
 @font-face {
   font-family: "Material Symbols Outlined";
   font-style: normal;

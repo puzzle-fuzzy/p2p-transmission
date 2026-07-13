@@ -2111,7 +2111,7 @@ function App({ initialNavigation }: AppProps) {
            />
             <button
               type="button"
-              className="mt-5 min-h-11 self-center px-3 text-xs text-amber-50/50 transition-colors hover:text-amber-50/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              className="mt-5 min-h-11 cursor-pointer self-center px-3 text-xs text-amber-50/50 underline decoration-amber-50/30 underline-offset-4 transition-colors hover:text-amber-50/80 hover:decoration-amber-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               onClick={() => setAboutOpen(true)}
             >
               关于 P2P Transmission
@@ -2176,7 +2176,7 @@ function App({ initialNavigation }: AppProps) {
                  </div>
                  <button
                    type="button"
-                   className="flex size-11 shrink-0 items-center justify-center rounded-full border border-transparent text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
+                   className="flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-full border border-transparent text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
                    onClick={() => setAboutOpen(true)}
                    aria-label="关于 P2P Transmission"
                    title="关于 P2P Transmission"
