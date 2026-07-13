@@ -155,7 +155,21 @@ describe('TransferPanel', () => {
 
     const textTab = screen.getByRole('tab', { name: '传输文本' })
     const fileTab = screen.getByRole('tab', { name: '传输文件' })
+    const tablist = screen.getByRole('tablist', { name: '传输类型' })
+    const slider = () => tablist.querySelector('[data-testid="transfer-tab-slider"]')
+
     expect(textTab.getAttribute('aria-selected')).toBe('true')
+    expect(tablist.getAttribute('data-active-tab')).toBe('text')
+    expect(slider()?.getAttribute('aria-hidden')).toBe('true')
+    expect(slider()?.className).toContain('translate-x-0')
+
+    await user.click(fileTab)
+    expect(tablist.getAttribute('data-active-tab')).toBe('file')
+    expect(slider()?.className).toContain('translate-x-full')
+
+    await user.click(textTab)
+    expect(tablist.getAttribute('data-active-tab')).toBe('text')
+    expect(slider()?.className).toContain('translate-x-0')
 
     textTab.focus()
     await user.keyboard('{ArrowRight}')

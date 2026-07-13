@@ -225,10 +225,16 @@ export default function TransferPanel({
     >
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div
-          className="flex w-full rounded-xl bg-white/5 p-1 sm:w-auto"
+          className="relative grid w-full grid-cols-2 rounded-xl bg-white/5 p-1 sm:w-auto sm:min-w-64"
           role="tablist"
           aria-label="传输类型"
+          data-active-tab={tab}
         >
+          <span
+            data-testid="transfer-tab-slider"
+            aria-hidden="true"
+            className={`pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-lg bg-white/10 transition-transform duration-200 ease-out motion-reduce:transition-none ${tab === 'file' ? 'translate-x-full' : 'translate-x-0'}`}
+          />
           <button
             ref={textTabRef}
             id={`${tabId}-text-tab`}
@@ -238,9 +244,9 @@ export default function TransferPanel({
             aria-controls={`${tabId}-text-panel`}
             tabIndex={tab === 'text' ? 0 : -1}
             disabled={locked}
-            className={`min-h-11 flex-1 rounded-lg border border-transparent px-4 text-sm transition-colors focus-visible:border-accent focus-visible:outline-none disabled:cursor-not-allowed sm:flex-none ${
+            className={`relative z-10 min-h-11 rounded-lg border border-transparent px-4 text-sm transition-colors focus-visible:border-accent focus-visible:outline-none disabled:cursor-not-allowed ${
               tab === 'text'
-                ? 'bg-white/10 text-amber-50/80'
+                ? 'text-amber-50/80'
                 : 'text-amber-50/60 hover:text-amber-50/80'
             }`}
             onClick={() => selectTab('text')}
@@ -257,9 +263,9 @@ export default function TransferPanel({
             aria-controls={`${tabId}-file-panel`}
             tabIndex={tab === 'file' ? 0 : -1}
             disabled={locked}
-            className={`min-h-11 flex-1 rounded-lg border border-transparent px-4 text-sm transition-colors focus-visible:border-accent focus-visible:outline-none disabled:cursor-not-allowed sm:flex-none ${
+            className={`relative z-10 min-h-11 rounded-lg border border-transparent px-4 text-sm transition-colors focus-visible:border-accent focus-visible:outline-none disabled:cursor-not-allowed ${
               tab === 'file'
-                ? 'bg-white/10 text-amber-50/80'
+                ? 'text-amber-50/80'
                 : 'text-amber-50/60 hover:text-amber-50/80'
             }`}
             onClick={() => selectTab('file')}
