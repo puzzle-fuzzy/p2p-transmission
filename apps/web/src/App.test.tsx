@@ -12,6 +12,7 @@ import type { OutgoingActivity } from './features/transfer/ui-state'
 import type {
   PublicRoom,
   PublicVisitor,
+  RoomJoinRequestSummary,
   ServerRealtimeMessage,
   VisitorSession,
 } from './shared/contracts'
@@ -22,6 +23,11 @@ const boundary = vi.hoisted(() => ({
   createRoom: vi.fn(),
   createVisitor: vi.fn(),
   joinRoom: vi.fn(),
+  createRoomJoinRequest: vi.fn(),
+  getRoomJoinRequest: vi.fn(),
+  decideRoomJoinRequest: vi.fn(),
+  finalizeRoomJoinRequest: vi.fn(),
+  cancelRoomJoinRequest: vi.fn(),
   createRealtimeClient: vi.fn(),
   createPeerSession: vi.fn(),
   loadVisitorSession: vi.fn(),
@@ -48,6 +54,11 @@ vi.mock('./lib/api-client', () => ({
   createRoom: boundary.createRoom,
   createVisitor: boundary.createVisitor,
   joinRoom: boundary.joinRoom,
+  createRoomJoinRequest: boundary.createRoomJoinRequest,
+  getRoomJoinRequest: boundary.getRoomJoinRequest,
+  decideRoomJoinRequest: boundary.decideRoomJoinRequest,
+  finalizeRoomJoinRequest: boundary.finalizeRoomJoinRequest,
+  cancelRoomJoinRequest: boundary.cancelRoomJoinRequest,
 }))
 
 vi.mock('./lib/realtime-client', () => ({
@@ -105,7 +116,7 @@ vi.mock('./components/RoomJoin', () => ({
   }) => (
     <div>
       <button type="button" onClick={() => { void onCreateRoom() }}>创建测试房间</button>
-      <button type="button" onClick={() => { void onSubmit(initialCode ?? '012345') }}>
+      <button type="button" onClick={() => { void onSubmit(initialCode || '012345') }}>
         {mode === 'invite' ? '加入测试房间' : '请求加入测试房间'}
       </button>
       <button type="button" onClick={onCodeEdited}>编辑测试房间码</button>
@@ -129,6 +140,41 @@ vi.mock('./components/ShareDialog', () => ({
       </div>
     )
   },
+}))
+
+vi.mock('./components/ManualJoinWaiting', () => ({
+  default: (props: {
+    roomCode: string
+    error?: string
+    onCancel(): void
+    onChangeRoom(): void
+    onRetry?(): void
+  }) => (
+    <div data-testid="manual-waiting" data-room-code={props.roomCode}>
+      <span>{props.error}</span>
+      <button type="button" onClick={props.onCancel}>取消测试申请</button>
+      <button type="button" onClick={props.onChangeRoom}>更换测试房间</button>
+      {props.onRetry && <button type="button" onClick={props.onRetry}>重试测试申请</button>}
+    </div>
+  ),
+}))
+
+vi.mock('./components/SenderJoinRequestDialog', () => ({
+  default: (props: {
+    request: { requestId: string; visitor: PublicVisitor }
+    remainingCount: number
+    pendingDecision?: 'approve' | 'reject'
+    onApprove(requestId: string): void
+    onReject(requestId: string): void
+  }) => (
+    <div role="dialog" aria-label="发送者加入申请">
+      <span>{props.request.visitor.displayName}</span>
+      <span data-testid="remaining-requests">{props.remainingCount}</span>
+      <span data-testid="pending-decision">{props.pendingDecision ?? ''}</span>
+      <button type="button" onClick={() => props.onReject(props.request.requestId)}>拒绝测试申请</button>
+      <button type="button" onClick={() => props.onApprove(props.request.requestId)}>允许测试申请</button>
+    </div>
+  ),
 }))
 
 type MockTransferPanelProps = {
@@ -417,6 +463,20 @@ const roomForReceiver = (activeReceiver: PublicVisitor): PublicRoom => ({
   ],
 })
 
+const pendingReceipt = {
+  requestId: 'request-1',
+  state: 'pending' as const,
+  expiresAt: Date.now() + 90_000,
+}
+
+const joinRequestSummary: RoomJoinRequestSummary = {
+  requestId: pendingReceipt.requestId,
+  roomCode: room.code,
+  visitor: receiver,
+  createdAt: 1,
+  expiresAt: pendingReceipt.expiresAt,
+}
+
 const sessionFor = (activeVisitor: PublicVisitor): VisitorSession => ({
   token: `token-${activeVisitor.id}`,
   visitor: activeVisitor,
@@ -492,6 +552,17 @@ beforeEach(() => {
   boundary.createPeerSession.mockReturnValue(peerSession)
   boundary.createRoom.mockResolvedValue({ room, invite: ownerInvite })
   boundary.joinRoom.mockResolvedValue({ room })
+  boundary.createRoomJoinRequest.mockResolvedValue(pendingReceipt)
+  boundary.getRoomJoinRequest.mockResolvedValue(pendingReceipt)
+  boundary.decideRoomJoinRequest.mockResolvedValue({
+    ...pendingReceipt,
+    state: 'approved',
+  })
+  boundary.finalizeRoomJoinRequest.mockResolvedValue({ room })
+  boundary.cancelRoomJoinRequest.mockResolvedValue({
+    ...pendingReceipt,
+    state: 'cancelled',
+  })
   boundary.createVisitor.mockResolvedValue(sessionFor(sender))
   boundary.loadVisitorSession.mockReturnValue(sessionFor(sender))
   boundary.loadRoomSession.mockReturnValue(undefined)
@@ -526,10 +597,12 @@ beforeEach(() => {
   })
   Object.defineProperty(window, 'requestAnimationFrame', {
     configurable: true,
+    writable: true,
     value: requestFrame,
   })
   Object.defineProperty(window, 'cancelAnimationFrame', {
     configurable: true,
+    writable: true,
     value: cancelFrame,
   })
 })
@@ -701,7 +774,11 @@ describe('App transfer integration', () => {
     expect(screen.getByTestId('join-mode').textContent).toBe('manual')
     await user.click(screen.getByRole('button', { name: '请求加入测试房间' }))
     expect(boundary.joinRoom).not.toHaveBeenCalled()
-    expect(boundary.createVisitor).not.toHaveBeenCalled()
+    expect(boundary.createVisitor).toHaveBeenCalledTimes(1)
+    expect(boundary.createRoomJoinRequest).toHaveBeenCalledWith({
+      roomCode: room.code,
+      visitorToken: 'token-receiver',
+    })
   })
 
   test('replaces an invite visitor at most once after VISITOR_NOT_FOUND', async () => {
@@ -912,6 +989,300 @@ describe('App transfer integration', () => {
       message: 'membership lost',
     }))
     expect(screen.queryByRole('button', { name: '分享房间' })).toBeNull()
+  })
+
+  test('reuses one manual visitor after a lost 202 and finalizes an authoritative approval', async () => {
+    const user = userEvent.setup()
+    boundary.createVisitor.mockResolvedValueOnce(sessionFor(receiver))
+    boundary.createRoomJoinRequest
+      .mockRejectedValueOnce(new Error('response lost'))
+      .mockResolvedValueOnce({ ...pendingReceipt, state: 'approved' })
+
+    render(<App initialNavigation={absentNavigation} />)
+
+    await user.click(await screen.findByRole('button', { name: '请求加入测试房间' }))
+    await waitFor(() => expect(boundary.showToast).toHaveBeenCalledWith('response lost'))
+    await user.click(screen.getByRole('button', { name: '请求加入测试房间' }))
+    await waitFor(() => expect(boundary.createRealtimeClient).toHaveBeenCalledTimes(1))
+
+    expect(boundary.createVisitor).toHaveBeenCalledTimes(1)
+    expect(boundary.createRoomJoinRequest).toHaveBeenCalledTimes(2)
+    expect(boundary.createRoomJoinRequest).toHaveBeenLastCalledWith({
+      roomCode: room.code,
+      visitorToken: 'token-receiver',
+    })
+    expect(boundary.finalizeRoomJoinRequest).toHaveBeenCalledWith({
+      roomCode: room.code,
+      requestId: pendingReceipt.requestId,
+      visitorToken: 'token-receiver',
+      iceMode: 'off',
+    })
+  })
+
+  test('retains the pending manual receipt for an UNKNOWN_API_ERROR', async () => {
+    const user = userEvent.setup()
+    boundary.createVisitor.mockResolvedValueOnce(sessionFor(receiver))
+    boundary.getRoomJoinRequest.mockRejectedValueOnce(
+      new ApiClientError('unknown poll response', 'UNKNOWN_API_ERROR', 400),
+    )
+
+    render(<App initialNavigation={absentNavigation} />)
+
+    await user.click(await screen.findByRole('button', { name: '请求加入测试房间' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '重试测试申请' })).not.toBeNull())
+    expect(screen.getByTestId('manual-waiting').dataset.roomCode).toBe(room.code)
+
+    await user.click(screen.getByRole('button', { name: '重试测试申请' }))
+    await waitFor(() => expect(boundary.getRoomJoinRequest).toHaveBeenCalledTimes(2))
+    expect(boundary.createVisitor).toHaveBeenCalledTimes(1)
+    expect(boundary.createRoomJoinRequest).toHaveBeenCalledTimes(1)
+  })
+
+  test('polls a pending manual request without overlap and finalizes approval', async () => {
+    boundary.createVisitor.mockResolvedValueOnce(sessionFor(receiver))
+    boundary.getRoomJoinRequest
+      .mockResolvedValueOnce(pendingReceipt)
+      .mockResolvedValueOnce({ ...pendingReceipt, state: 'approved' })
+    const user = userEvent.setup()
+    render(<App initialNavigation={absentNavigation} />)
+
+    await user.click(await screen.findByRole('button', { name: '请求加入测试房间' }))
+    await waitFor(() => expect(screen.getByTestId('manual-waiting')).not.toBeNull())
+    expect(boundary.getRoomJoinRequest).toHaveBeenCalledTimes(1)
+
+    await waitFor(
+      () => expect(boundary.createRealtimeClient).toHaveBeenCalledTimes(1),
+      { timeout: 3_000 },
+    )
+    expect(boundary.getRoomJoinRequest).toHaveBeenCalledTimes(2)
+  })
+
+  test('cancels with the bound visitor before returning to the retained room code', async () => {
+    const user = userEvent.setup()
+    boundary.createVisitor.mockResolvedValueOnce(sessionFor(receiver))
+    render(<App initialNavigation={absentNavigation} />)
+
+    await user.click(await screen.findByRole('button', { name: '请求加入测试房间' }))
+    await waitFor(() => expect(screen.getByTestId('manual-waiting')).not.toBeNull())
+    await user.click(screen.getByRole('button', { name: '取消测试申请' }))
+
+    await waitFor(() => expect(screen.queryByTestId('manual-waiting')).toBeNull())
+    expect(boundary.cancelRoomJoinRequest).toHaveBeenCalledWith({
+      roomCode: room.code,
+      requestId: pendingReceipt.requestId,
+      visitorToken: 'token-receiver',
+    })
+    expect(screen.getByTestId('initial-room-code').textContent).toBe(room.code)
+  })
+
+  test('recovers a lost finalize response with the same visitor and no mint', async () => {
+    const user = userEvent.setup()
+    boundary.createVisitor.mockResolvedValueOnce(sessionFor(receiver))
+    boundary.createRoomJoinRequest.mockResolvedValueOnce({
+      ...pendingReceipt,
+      state: 'approved',
+    })
+    boundary.finalizeRoomJoinRequest.mockRejectedValueOnce(
+      new ApiClientError('receipt removed', 'ROOM_JOIN_REQUEST_NOT_FOUND', 404),
+    )
+    render(<App initialNavigation={absentNavigation} />)
+
+    await user.click(await screen.findByRole('button', { name: '请求加入测试房间' }))
+    await waitFor(() => expect(boundary.createRealtimeClient).toHaveBeenCalledTimes(1))
+
+    expect(boundary.createVisitor).toHaveBeenCalledTimes(1)
+    expect(boundary.joinRoom).toHaveBeenCalledWith({
+      roomCode: room.code,
+      visitorToken: 'token-receiver',
+      iceMode: 'off',
+      admission: { kind: 'recovery' },
+    })
+  })
+
+  test('retains finalized authority when strict recovery fails over the network', async () => {
+    const user = userEvent.setup()
+    boundary.createVisitor.mockResolvedValueOnce(sessionFor(receiver))
+    boundary.createRoomJoinRequest.mockResolvedValueOnce({
+      ...pendingReceipt,
+      state: 'approved',
+    })
+    boundary.finalizeRoomJoinRequest.mockRejectedValueOnce(
+      new ApiClientError('receipt removed', 'ROOM_JOIN_REQUEST_NOT_FOUND', 404),
+    )
+    boundary.joinRoom
+      .mockRejectedValueOnce(new Error('recovery network failed'))
+      .mockResolvedValueOnce({ room })
+    render(<App initialNavigation={absentNavigation} />)
+
+    await user.click(await screen.findByRole('button', { name: '请求加入测试房间' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '重试测试申请' })).not.toBeNull())
+    expect(screen.getByTestId('manual-waiting').dataset.roomCode).toBe(room.code)
+    await user.click(screen.getByRole('button', { name: '重试测试申请' }))
+    await waitFor(() => expect(boundary.createRealtimeClient).toHaveBeenCalledTimes(1))
+
+    expect(boundary.createVisitor).toHaveBeenCalledTimes(1)
+    expect(boundary.createRoomJoinRequest).toHaveBeenCalledTimes(1)
+    expect(boundary.joinRoom).toHaveBeenCalledTimes(2)
+  })
+
+  test('retries strict recovery after an UNKNOWN_API_ERROR with the same visitor', async () => {
+    const user = userEvent.setup()
+    boundary.createVisitor.mockResolvedValueOnce(sessionFor(receiver))
+    boundary.createRoomJoinRequest.mockResolvedValueOnce({
+      ...pendingReceipt,
+      state: 'approved',
+    })
+    boundary.finalizeRoomJoinRequest.mockRejectedValueOnce(
+      new ApiClientError('receipt removed', 'ROOM_JOIN_REQUEST_NOT_FOUND', 404),
+    )
+    boundary.joinRoom
+      .mockRejectedValueOnce(
+        new ApiClientError('unknown recovery response', 'UNKNOWN_API_ERROR', 400),
+      )
+      .mockResolvedValueOnce({ room })
+    render(<App initialNavigation={absentNavigation} />)
+
+    await user.click(await screen.findByRole('button', { name: '请求加入测试房间' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '重试测试申请' })).not.toBeNull())
+    await user.click(screen.getByRole('button', { name: '重试测试申请' }))
+    await waitFor(() => expect(boundary.createRealtimeClient).toHaveBeenCalledTimes(1))
+
+    expect(boundary.createVisitor).toHaveBeenCalledTimes(1)
+    expect(boundary.createRoomJoinRequest).toHaveBeenCalledTimes(1)
+    expect(boundary.joinRoom).toHaveBeenCalledTimes(2)
+    expect(boundary.joinRoom).toHaveBeenLastCalledWith({
+      roomCode: room.code,
+      visitorToken: 'token-receiver',
+      iceMode: 'off',
+      admission: { kind: 'recovery' },
+    })
+  })
+
+  test('uses strict recovery when an authoritative replay is already finalized', async () => {
+    const user = userEvent.setup()
+    boundary.createVisitor.mockResolvedValueOnce(sessionFor(receiver))
+    boundary.createRoomJoinRequest.mockResolvedValueOnce({
+      ...pendingReceipt,
+      state: 'finalized',
+    })
+    render(<App initialNavigation={absentNavigation} />)
+
+    await user.click(await screen.findByRole('button', { name: '请求加入测试房间' }))
+    await waitFor(() => expect(boundary.createRealtimeClient).toHaveBeenCalledTimes(1))
+
+    expect(boundary.finalizeRoomJoinRequest).not.toHaveBeenCalled()
+    expect(boundary.joinRoom).toHaveBeenCalledWith({
+      roomCode: room.code,
+      visitorToken: 'token-receiver',
+      iceMode: 'off',
+      admission: { kind: 'recovery' },
+    })
+    expect(boundary.createVisitor).toHaveBeenCalledTimes(1)
+  })
+
+  test('keeps the fixed waiting context when cancellation returns a deterministic 4xx', async () => {
+    const user = userEvent.setup()
+    boundary.createVisitor.mockResolvedValueOnce(sessionFor(receiver))
+    boundary.cancelRoomJoinRequest.mockRejectedValueOnce(
+      new ApiClientError('request conflict', 'ROOM_JOIN_REQUEST_INVALID_STATE', 409),
+    )
+    render(<App initialNavigation={absentNavigation} />)
+
+    await user.click(await screen.findByRole('button', { name: '请求加入测试房间' }))
+    await waitFor(() => expect(screen.getByTestId('manual-waiting')).not.toBeNull())
+    await user.click(screen.getByRole('button', { name: '取消测试申请' }))
+    await waitFor(() => expect(boundary.showToast).toHaveBeenCalledWith('request conflict'))
+
+    expect(screen.getByTestId('manual-waiting').dataset.roomCode).toBe(room.code)
+    await user.click(screen.getByRole('button', { name: '取消测试申请' }))
+    await waitFor(() => expect(screen.queryByTestId('manual-waiting')).toBeNull())
+
+    expect(boundary.createVisitor).toHaveBeenCalledTimes(1)
+    expect(boundary.createRoomJoinRequest).toHaveBeenCalledTimes(1)
+    expect(boundary.cancelRoomJoinRequest).toHaveBeenCalledTimes(2)
+    expect(boundary.cancelRoomJoinRequest).toHaveBeenLastCalledWith({
+      roomCode: room.code,
+      requestId: pendingReceipt.requestId,
+      visitorToken: 'token-receiver',
+    })
+    expect(screen.getByTestId('initial-room-code').textContent).toBe(room.code)
+  })
+
+  test('keeps waiting when change-room cancellation fails and resets only after success', async () => {
+    const user = userEvent.setup()
+    boundary.createVisitor.mockResolvedValueOnce(sessionFor(receiver))
+    boundary.cancelRoomJoinRequest.mockRejectedValueOnce(new Error('cancel failed'))
+    render(<App initialNavigation={absentNavigation} />)
+
+    await user.click(await screen.findByRole('button', { name: '请求加入测试房间' }))
+    await waitFor(() => expect(screen.getByTestId('manual-waiting')).not.toBeNull())
+    await user.click(screen.getByRole('button', { name: '更换测试房间' }))
+    await waitFor(() => expect(boundary.showToast).toHaveBeenCalledWith('cancel failed'))
+    expect(screen.getByTestId('manual-waiting').dataset.roomCode).toBe(room.code)
+
+    await user.click(screen.getByRole('button', { name: '更换测试房间' }))
+    await waitFor(() => expect(screen.queryByTestId('manual-waiting')).toBeNull())
+    expect(screen.getByTestId('initial-room-code').textContent).toBe('')
+    expect(boundary.cancelRoomJoinRequest).toHaveBeenCalledTimes(2)
+    expect(boundary.cancelRoomJoinRequest).toHaveBeenLastCalledWith({
+      roomCode: room.code,
+      requestId: pendingReceipt.requestId,
+      visitorToken: 'token-receiver',
+    })
+  })
+
+  test('queues sender requests from realtime and keeps a failed decision visible', async () => {
+    const user = await enterRoom('sender')
+    const secondRequest: RoomJoinRequestSummary = {
+      ...joinRequestSummary,
+      requestId: 'request-2',
+      visitor: receiverTwo,
+      createdAt: 2,
+    }
+    act(() => realtime.emitMessage({
+      type: 'room:join-requests',
+      roomCode: room.code,
+      requests: [secondRequest, joinRequestSummary],
+    }))
+    act(() => realtime.emitMessage({
+      type: 'room:join-requested',
+      request: joinRequestSummary,
+    }))
+
+    expect(screen.getByRole('dialog', { name: '发送者加入申请' }).textContent)
+      .toContain(receiver.displayName)
+    expect(screen.getByTestId('remaining-requests').textContent).toBe('1')
+    boundary.decideRoomJoinRequest.mockRejectedValueOnce(new Error('decision failed'))
+    await user.click(screen.getByRole('button', { name: '允许测试申请' }))
+    await waitFor(() => expect(boundary.showToast).toHaveBeenCalledWith('decision failed'))
+    expect(screen.getByRole('dialog', { name: '发送者加入申请' }).textContent)
+      .toContain(receiver.displayName)
+
+    await user.click(screen.getByRole('button', { name: '允许测试申请' }))
+    await waitFor(() => expect(screen.getByRole('dialog', { name: '发送者加入申请' }).textContent)
+      .toContain(receiverTwo.displayName))
+    expect(boundary.decideRoomJoinRequest).toHaveBeenLastCalledWith({
+      roomCode: room.code,
+      requestId: pendingReceipt.requestId,
+      visitorToken: 'token-sender',
+      decision: 'approve',
+    })
+  })
+
+  test('ignores sender-only room access events while attached as a receiver', async () => {
+    await enterRoom('receiver')
+
+    act(() => realtime.emitMessage({
+      type: 'room:join-requests',
+      roomCode: room.code,
+      requests: [joinRequestSummary],
+    }))
+    act(() => realtime.emitMessage({
+      type: 'room:join-requested',
+      request: joinRequestSummary,
+    }))
+
+    expect(screen.queryByRole('dialog', { name: '发送者加入申请' })).toBeNull()
   })
 
   test('passes only ready room receivers to the transfer panel', async () => {

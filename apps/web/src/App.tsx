@@ -11,6 +11,7 @@ import IncomingFileRequestDialog, {
   type IncomingFileRequestItem,
 } from './components/IncomingFileRequestDialog'
 import Loading from './components/Loading'
+import ManualJoinWaiting from './components/ManualJoinWaiting'
 import ReceivedTextDialog, {
   type ReceivedTextCopyStatus,
 } from './components/ReceivedTextDialog'
@@ -21,6 +22,7 @@ import RoomCodeCopyButton from './components/RoomCodeCopyButton'
 import RoomExpiryCountdown from './components/RoomExpiryCountdown'
 import RoomJoin from './components/RoomJoin'
 import ShareDialog from './components/ShareDialog'
+import SenderJoinRequestDialog from './components/SenderJoinRequestDialog'
 import TransferPanel from './components/TransferPanel'
 import ToastViewport from './components/ui/Toast'
 import { useToast } from './components/ui/useToast'
@@ -28,6 +30,18 @@ import {
   initialRoomFlowState,
   roomFlowReducer,
 } from './features/room/state'
+import {
+  initialJoinFlowState,
+  joinFlowReducer,
+} from './features/room/join-state'
+import {
+  createJoinRequestPoller,
+  type JoinRequestPoller,
+} from './features/room/join-request-poller'
+import {
+  initialRoomAccessState,
+  roomAccessReducer,
+} from './features/room/room-access-state'
 import type { RoomNavigationSnapshot } from './features/room/room-navigation'
 import {
   createRoomSessionLifecycle,
@@ -64,8 +78,13 @@ import {
 } from './features/transfer/ui-state'
 import {
   ApiClientError,
+  cancelRoomJoinRequest,
   createRoom,
+  createRoomJoinRequest,
   createVisitor,
+  decideRoomJoinRequest,
+  finalizeRoomJoinRequest,
+  getRoomJoinRequest,
   joinRoom,
 } from './lib/api-client'
 import {
@@ -96,6 +115,7 @@ import type {
   PublicRoom,
   PublicVisitor,
   RoomInviteCapability,
+  RoomJoinRequestReceipt,
   RoomSessionBootstrap,
   VisitorSession,
 } from './shared/contracts'
@@ -213,8 +233,25 @@ type ShareDialogState = {
   roomUrl: string
 }
 
+type ManualJoinIntent = {
+  roomCode: string
+  generation: number
+  session?: VisitorSession
+  requestId?: string
+  expiresAt?: number
+  strictRecoveryAttempted: boolean
+}
+
 function App({ initialNavigation }: AppProps) {
   const [state, dispatch] = useReducer(roomFlowReducer, initialRoomFlowState)
+  const [joinFlow, dispatchJoinFlow] = useReducer(
+    joinFlowReducer,
+    initialJoinFlowState,
+  )
+  const [roomAccess, dispatchRoomAccess] = useReducer(
+    roomAccessReducer,
+    initialRoomAccessState,
+  )
   const [transferUiState, setTransferUiState] = useState<TransferUiState>(
     initialTransferUiState,
   )
@@ -240,6 +277,11 @@ function App({ initialNavigation }: AppProps) {
   )
   const [ownerInviteRoomCode, setOwnerInviteRoomCode] = useState<string>()
   const [shareDialog, setShareDialog] = useState<ShareDialogState>()
+  const [manualActionBusy, setManualActionBusy] = useState(false)
+  const [manualReceipt, setManualReceipt] = useState<RoomJoinRequestReceipt>()
+  const [manualRoomCode, setManualRoomCode] = useState(
+    initialNavigation.legacyRoomCode ?? '',
+  )
   const {
     toast: toastState,
     show: showToast,
@@ -276,6 +318,23 @@ function App({ initialNavigation }: AppProps) {
   const inviteJoinSessionRef = useRef<VisitorSession | undefined>(undefined)
   const inviteVisitorReplacementAttemptedRef = useRef(false)
   const ownerInviteRef = useRef<OwnerInvite | undefined>(undefined)
+  const manualJoinIntentRef = useRef<ManualJoinIntent | undefined>(undefined)
+  const joinRequestPollerRef = useRef<JoinRequestPoller | undefined>(undefined)
+  const applyManualReceiptRef = useRef<(
+    receipt: RoomJoinRequestReceipt,
+    intent: ManualJoinIntent,
+  ) => void>(() => undefined)
+  const finalizeManualRef = useRef<(
+    intent: ManualJoinIntent,
+    receipt: RoomJoinRequestReceipt,
+  ) => void>(() => undefined)
+  const recoverManualRef = useRef<(
+    intent: ManualJoinIntent,
+    receipt: RoomJoinRequestReceipt,
+  ) => void>(() => undefined)
+  const startManualPollerRef = useRef<(
+    intent: ManualJoinIntent,
+  ) => void>(() => undefined)
   const speedTrackerRef = useRef<SpeedTracker>(createSpeedTracker())
 
   const replaceFileSelections = useCallback((selections: FileSelection[]) => {
@@ -512,6 +571,15 @@ function App({ initialNavigation }: AppProps) {
     setShareDialog(undefined)
   }, [])
 
+  const resetManualIntent = useCallback(() => {
+    joinRequestPollerRef.current?.stop()
+    joinRequestPollerRef.current = undefined
+    manualJoinIntentRef.current = undefined
+    setManualActionBusy(false)
+    setManualReceipt(undefined)
+    dispatchJoinFlow({ type: 'join:reset' })
+  }, [])
+
   const disposeRoomResources = useCallback(() => {
     disposeRoomLifecycle()
     const realtime = realtimeRef.current
@@ -520,9 +588,11 @@ function App({ initialNavigation }: AppProps) {
     disposePeerSession()
     roomRef.current = undefined
     clearOwnerInvite()
+    resetManualIntent()
+    dispatchRoomAccess({ type: 'reset' })
     clearRoomSession()
     resetTransferPresentation({ type: 'room:reset' })
-  }, [clearOwnerInvite, disposePeerSession, disposeRoomLifecycle, resetTransferPresentation])
+  }, [clearOwnerInvite, disposePeerSession, disposeRoomLifecycle, resetManualIntent, resetTransferPresentation])
 
   useEffect(() => {
     const bootGeneration = operationGenerationRef.current
@@ -561,6 +631,9 @@ function App({ initialNavigation }: AppProps) {
       disposeRoomLifecycle()
       disposePeerSession()
       disposeBrowserTransferResources()
+      joinRequestPollerRef.current?.stop()
+      joinRequestPollerRef.current = undefined
+      manualJoinIntentRef.current = undefined
       ownerInviteRef.current = undefined
     }
   }, [
@@ -849,13 +922,26 @@ function App({ initialNavigation }: AppProps) {
 
       if (message.type === 'visitor:ready') return
 
-      // Sender admission events are integrated in the next orchestration step.
-      // They must not fall through to the generic realtime error branch.
-      if (
-        message.type === 'room:join-requests'
-        || message.type === 'room:join-requested'
-        || message.type === 'room:join-request-resolved'
-      ) return
+      if (message.type === 'room:join-requests') {
+        if (role === 'sender' && message.roomCode === initialRoom.code) {
+          dispatchRoomAccess({ type: 'snapshot', requests: message.requests })
+        }
+        return
+      }
+
+      if (message.type === 'room:join-requested') {
+        if (role === 'sender' && message.request.roomCode === initialRoom.code) {
+          dispatchRoomAccess({ type: 'requested', request: message.request })
+        }
+        return
+      }
+
+      if (message.type === 'room:join-request-resolved') {
+        if (role === 'sender' && message.roomCode === initialRoom.code) {
+          dispatchRoomAccess({ type: 'resolved', requestId: message.requestId })
+        }
+        return
+      }
 
       if (
         message.type === 'signal:offer'
@@ -1159,11 +1245,6 @@ function App({ initialNavigation }: AppProps) {
     }
   }, [clearInviteIntent, connectRealtime, showToast, state.session])
 
-  const handleJoinRoom = useCallback(
-    (code: string) => joinInvitedRoom(code),
-    [joinInvitedRoom],
-  )
-
   const recoverReceiverRoom = useCallback(async (
     session: VisitorSession,
     roomCode: string,
@@ -1239,6 +1320,314 @@ function App({ initialNavigation }: AppProps) {
     showToast('检测到上次加入的房间，正在重新连接…', 'info')
     void recoverReceiverRoom(state.session, roomSession.roomCode)
   }, [state.phase, state.session, recoverReceiverRoom, showToast])
+
+  const returnToManualForm = useCallback((
+    intent: ManualJoinIntent,
+    message = '',
+  ) => {
+    if (manualJoinIntentRef.current !== intent) return
+    joinRequestPollerRef.current?.stop()
+    joinRequestPollerRef.current = undefined
+    manualJoinIntentRef.current = undefined
+    setManualActionBusy(false)
+    setManualReceipt(undefined)
+    dispatchJoinFlow({ type: 'join:reset' })
+    setJoinError(message)
+    if (intent.session) dispatch({ type: 'visitor:ready', session: intent.session })
+  }, [])
+
+  const completeManualJoin = useCallback((
+    intent: ManualJoinIntent,
+    bootstrap: RoomSessionBootstrap,
+  ) => {
+    const session = intent.session
+    if (
+      !session
+      || manualJoinIntentRef.current !== intent
+      || operationGenerationRef.current !== intent.generation
+    ) return
+    const iceMode = getClientIceMode()
+    const rtcConfiguration = resolveBootstrapRtcConfiguration(iceMode, bootstrap)
+    assertBootstrapMembership(bootstrap, session.visitor.id, 'receiver')
+    roomRef.current = bootstrap.room
+    dispatch({ type: 'room:joined', room: bootstrap.room })
+    connectRealtime(
+      session,
+      bootstrap,
+      'receiver',
+      rtcConfiguration,
+      intent.generation,
+    )
+    saveRoomSession({
+      roomCode: bootstrap.room.code,
+      role: 'receiver',
+      expiresAt: bootstrap.room.expiresAt,
+    })
+    setJoinError('')
+  }, [connectRealtime])
+
+  const failManualOperation = useCallback((
+    intent: ManualJoinIntent,
+    receipt: RoomJoinRequestReceipt | undefined,
+    error: unknown,
+  ) => {
+    if (manualJoinIntentRef.current !== intent) return
+    const message = error instanceof Error ? error.message : '加入房间失败'
+    const retryable = !(error instanceof ApiClientError)
+      || error.code === 'UNKNOWN_API_ERROR'
+      || error.status === 429
+      || error.status >= 500
+    if (!retryable) {
+      returnToManualForm(intent, message)
+      showToast(message)
+      return
+    }
+    if (receipt) setManualReceipt(receipt)
+    if (receipt) dispatchJoinFlow({ type: 'manual:receipt', receipt })
+    dispatchJoinFlow({
+      type: 'join:error',
+      roomCode: intent.roomCode,
+      code: error instanceof ApiClientError ? error.code : 'NETWORK_ERROR',
+      message,
+      retryable: true,
+    })
+    setManualActionBusy(false)
+    setJoinError(message)
+    showToast(message)
+  }, [returnToManualForm, showToast])
+
+  const recoverFinalizedManualJoin = useCallback(async (
+    intent: ManualJoinIntent,
+    receipt: RoomJoinRequestReceipt,
+  ) => {
+    const session = intent.session
+    if (
+      !session
+      || manualJoinIntentRef.current !== intent
+      || intent.strictRecoveryAttempted
+    ) return
+    intent.strictRecoveryAttempted = true
+    setManualActionBusy(true)
+    try {
+      const iceMode = getClientIceMode()
+      const bootstrap = await joinRoom({
+        roomCode: intent.roomCode,
+        visitorToken: session.token,
+        iceMode: roomIceMode(iceMode),
+        admission: { kind: 'recovery' },
+      })
+      completeManualJoin(intent, bootstrap)
+    } catch (error) {
+      if (manualJoinIntentRef.current !== intent) return
+      const retryable = !(error instanceof ApiClientError)
+        || error.code === 'UNKNOWN_API_ERROR'
+        || error.status === 429
+        || error.status >= 500
+      if (retryable) intent.strictRecoveryAttempted = false
+      failManualOperation(intent, receipt, error)
+    }
+  }, [completeManualJoin, failManualOperation])
+  recoverManualRef.current = (intent, receipt) => {
+    void recoverFinalizedManualJoin(intent, receipt)
+  }
+
+  const finalizeManualJoin = useCallback(async (
+    intent: ManualJoinIntent,
+    receipt: RoomJoinRequestReceipt,
+  ) => {
+    const session = intent.session
+    if (!session || manualJoinIntentRef.current !== intent) return
+    joinRequestPollerRef.current?.stop()
+    joinRequestPollerRef.current = undefined
+    setManualActionBusy(true)
+    try {
+      const iceMode = getClientIceMode()
+      const bootstrap = await finalizeRoomJoinRequest({
+        roomCode: intent.roomCode,
+        requestId: receipt.requestId,
+        visitorToken: session.token,
+        iceMode: roomIceMode(iceMode),
+      })
+      completeManualJoin(intent, bootstrap)
+    } catch (error) {
+      if (manualJoinIntentRef.current !== intent) return
+      if (
+        error instanceof ApiClientError
+        && error.code === 'ROOM_JOIN_REQUEST_NOT_FOUND'
+        && !intent.strictRecoveryAttempted
+      ) {
+        recoverManualRef.current(intent, {
+          ...receipt,
+          state: 'finalized',
+        })
+        return
+      }
+      failManualOperation(intent, receipt, error)
+    }
+  }, [completeManualJoin, failManualOperation])
+  finalizeManualRef.current = (intent, receipt) => {
+    void finalizeManualJoin(intent, receipt)
+  }
+
+  const applyManualReceipt = useCallback((
+    receipt: RoomJoinRequestReceipt,
+    intent: ManualJoinIntent,
+  ) => {
+    if (manualJoinIntentRef.current !== intent) return
+    const wasBound = intent.requestId !== undefined
+    intent.requestId = receipt.requestId
+    intent.expiresAt = receipt.expiresAt
+    setManualReceipt(receipt)
+    dispatchJoinFlow(wasBound
+      ? { type: 'manual:receipt', receipt }
+      : { type: 'manual:awaiting', roomCode: intent.roomCode, receipt })
+    setManualActionBusy(false)
+
+    if (receipt.state === 'pending') {
+      if (!joinRequestPollerRef.current) startManualPollerRef.current(intent)
+      return
+    }
+    if (receipt.state === 'approved') {
+      finalizeManualRef.current(intent, receipt)
+      return
+    }
+    if (receipt.state === 'finalized') {
+      recoverManualRef.current(intent, receipt)
+      return
+    }
+    const message = receipt.state === 'rejected'
+      ? '发送者拒绝了加入申请'
+      : receipt.state === 'expired'
+        ? '加入申请已过期'
+        : '加入申请已取消'
+    returnToManualForm(intent, message)
+    showToast(message, 'info')
+  }, [returnToManualForm, showToast])
+  applyManualReceiptRef.current = applyManualReceipt
+
+  const startManualPoller = useCallback((intent: ManualJoinIntent) => {
+    const session = intent.session
+    const requestId = intent.requestId
+    if (!session || !requestId || manualJoinIntentRef.current !== intent) return
+    joinRequestPollerRef.current?.stop()
+    const poller = createJoinRequestPoller({
+      read: () => getRoomJoinRequest({
+        roomCode: intent.roomCode,
+        requestId,
+        visitorToken: session.token,
+      }),
+      onReceipt: receipt => applyManualReceiptRef.current(receipt, intent),
+      onError: error => failManualOperation(
+        intent,
+        {
+          requestId,
+          state: 'pending',
+          expiresAt: intent.expiresAt ?? Date.now(),
+        },
+        error,
+      ),
+    })
+    joinRequestPollerRef.current = poller
+    poller.start()
+  }, [failManualOperation])
+  startManualPollerRef.current = startManualPoller
+
+  const requestManualJoin = useCallback(async (code: string) => {
+    if (!state.session) return
+    setManualRoomCode(code)
+    setJoinError('')
+    let intent = manualJoinIntentRef.current
+    if (!intent || intent.roomCode !== code) {
+      resetManualIntent()
+      intent = {
+        roomCode: code,
+        generation: ++operationGenerationRef.current,
+        strictRecoveryAttempted: false,
+      }
+      manualJoinIntentRef.current = intent
+    }
+    dispatchJoinFlow({ type: 'manual:requesting', roomCode: code })
+    setManualActionBusy(true)
+    try {
+      if (!intent.session) {
+        const session = await createVisitor()
+        if (manualJoinIntentRef.current !== intent) return
+        intent.session = session
+        saveVisitorSession(session)
+        dispatch({ type: 'visitor:ready', session })
+      }
+      const receipt = await createRoomJoinRequest({
+        roomCode: code,
+        visitorToken: intent.session.token,
+      })
+      applyManualReceiptRef.current(receipt, intent)
+    } catch (error) {
+      failManualOperation(intent, undefined, error)
+    }
+  }, [failManualOperation, resetManualIntent, state.session])
+
+  const handleJoinRoom = useCallback((code: string) => {
+    if (inviteIntentRef.current) return joinInvitedRoom(code)
+    return requestManualJoin(code)
+  }, [joinInvitedRoom, requestManualJoin])
+
+  const retryManualJoin = useCallback(() => {
+    const intent = manualJoinIntentRef.current
+    if (!intent) return
+    setJoinError('')
+    const receipt = manualReceipt
+    if (!receipt) {
+      void requestManualJoin(intent.roomCode)
+      return
+    }
+    if (receipt.state === 'pending') {
+      startManualPollerRef.current(intent)
+      return
+    }
+    if (receipt.state === 'approved') {
+      finalizeManualRef.current(intent, receipt)
+      return
+    }
+    if (receipt.state === 'finalized') {
+      recoverManualRef.current(intent, receipt)
+    }
+  }, [manualReceipt, requestManualJoin])
+
+  const cancelManualJoin = useCallback(async (changeRoom: boolean) => {
+    const intent = manualJoinIntentRef.current
+    const session = intent?.session
+    const receipt = manualReceipt
+    if (!intent || !session || !receipt) return
+    joinRequestPollerRef.current?.stop()
+    setManualActionBusy(true)
+    try {
+      const cancelled = await cancelRoomJoinRequest({
+        roomCode: intent.roomCode,
+        requestId: receipt.requestId,
+        visitorToken: session.token,
+      })
+      if (manualJoinIntentRef.current !== intent) return
+      if (cancelled.state === 'cancelled') {
+        if (changeRoom) setManualRoomCode('')
+        returnToManualForm(intent)
+        return
+      }
+      applyManualReceiptRef.current(cancelled, intent)
+    } catch (error) {
+      if (manualJoinIntentRef.current !== intent) return
+      const message = error instanceof Error ? error.message : '取消加入申请失败'
+      dispatchJoinFlow({
+        type: 'join:error',
+        roomCode: intent.roomCode,
+        code: error instanceof ApiClientError ? error.code : 'NETWORK_ERROR',
+        message,
+        retryable: true,
+      })
+      setManualActionBusy(false)
+      setJoinError(message)
+      showToast(message)
+    }
+  }, [manualReceipt, returnToManualForm, showToast])
 
   const startActivity = useCallback((activity: OutgoingActivity) => {
     clearTerminalHold()
@@ -1492,6 +1881,36 @@ function App({ initialNavigation }: AppProps) {
     }
   }, [showToast])
 
+  const decideSenderJoinRequest = useCallback(async (
+    requestId: string,
+    decision: 'approve' | 'reject',
+  ) => {
+    const session = state.session
+    const room = roomRef.current
+    if (!session || !room || state.role !== 'sender' || roomAccess.decision) return
+    dispatchRoomAccess({ type: 'decision:start', requestId, decision })
+    try {
+      const receipt = await decideRoomJoinRequest({
+        roomCode: room.code,
+        requestId,
+        visitorToken: session.token,
+        decision,
+      })
+      if (
+        roomRef.current?.code !== room.code
+        || state.role !== 'sender'
+      ) return
+      if (receipt.state === 'pending') {
+        dispatchRoomAccess({ type: 'decision:finish', requestId })
+      } else {
+        dispatchRoomAccess({ type: 'resolved', requestId })
+      }
+    } catch (error) {
+      dispatchRoomAccess({ type: 'decision:finish', requestId })
+      showToast(error instanceof Error ? error.message : '处理加入申请失败')
+    }
+  }, [roomAccess.decision, showToast, state.role, state.session])
+
   const handleOpenShare = useCallback(() => {
     const room = roomRef.current
     const ownerInvite = ownerInviteRef.current
@@ -1520,18 +1939,44 @@ function App({ initialNavigation }: AppProps) {
   const roomReceivers = receiversFromRoom(roomView?.room)
   const readyPeerIdSet = new Set(state.readyPeerIds)
   const connectedReceivers = roomReceivers.filter(receiver => readyPeerIdSet.has(receiver.id))
-  const initialJoinCode = initialInvite?.roomCode ?? initialNavigation.legacyRoomCode
+  const initialJoinCode = initialInvite?.roomCode
+    ?? manualRoomCode
+    ?? initialNavigation.legacyRoomCode
   const canShareOwnerInvite = state.role === 'sender'
     && ownerInviteRoomCode === roomView?.room.code
+  const manualWaitingReceipt = manualReceipt
+  const manualWaitingVisitor = manualJoinIntentRef.current?.session?.visitor
+    ?? state.session?.visitor
+  const senderJoinRequest = roomAccess.requests[0]
 
   return (
     <div className="min-h-svh bg-surface px-4 py-6 text-amber-50 sm:flex sm:items-center sm:justify-center">
       <main className="mx-auto flex min-h-[calc(100svh-3rem)] w-full items-center justify-center sm:min-h-0">
         {state.phase === 'booting' && <Loading />}
 
-        {!roomView && state.phase !== 'booting' && (
+        {!roomView
+          && state.phase !== 'booting'
+          && manualWaitingReceipt
+          && manualWaitingVisitor && (
+          <ManualJoinWaiting
+            visitor={manualWaitingVisitor}
+            roomCode={manualJoinIntentRef.current?.roomCode ?? manualRoomCode}
+            expiresAt={manualWaitingReceipt.expiresAt}
+            busy={manualActionBusy}
+            error={joinFlow.status.kind === 'error'
+              ? joinFlow.status.message
+              : undefined}
+            onCancel={() => { void cancelManualJoin(false) }}
+            onChangeRoom={() => { void cancelManualJoin(true) }}
+            onRetry={joinFlow.status.kind === 'error' ? retryManualJoin : undefined}
+          />
+        )}
+
+        {!roomView
+          && state.phase !== 'booting'
+          && !manualWaitingReceipt && (
           <RoomJoin
-            busy={state.phase === 'joining'}
+            busy={state.phase === 'joining' || manualActionBusy}
             initialCode={initialJoinCode}
             mode={joinMode}
             error={joinError || state.error || undefined}
@@ -1649,6 +2094,24 @@ function App({ initialNavigation }: AppProps) {
           roomUrl={shareDialog.roomUrl}
           onCopy={handleCopyRoomCode}
           onClose={() => setShareDialog(undefined)}
+        />
+      )}
+
+      {roomView?.room.code === senderJoinRequest?.roomCode
+        && state.role === 'sender'
+        && senderJoinRequest && (
+        <SenderJoinRequestDialog
+          request={senderJoinRequest}
+          remainingCount={Math.max(0, roomAccess.requests.length - 1)}
+          pendingDecision={roomAccess.decision?.requestId === senderJoinRequest.requestId
+            ? roomAccess.decision.decision
+            : undefined}
+          onApprove={requestId => {
+            void decideSenderJoinRequest(requestId, 'approve')
+          }}
+          onReject={requestId => {
+            void decideSenderJoinRequest(requestId, 'reject')
+          }}
         />
       )}
     </div>
