@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type {
   ClientRealtimeMessage,
+  RoomAccessServerMessage,
   ServerRealtimeMessage,
   SignalServerMessage,
 } from "@p2p/contracts";
 import { createMaintenanceService } from "../maintenance/service";
+import { createRoomAccessService } from "../room-access/service";
 import { createRoomService } from "../room/service";
 import { createVisitorService } from "../visitor/service";
 import {
@@ -14,6 +16,7 @@ import {
 } from "./hub";
 
 const ALLOWED_ORIGIN = "http://localhost:5713";
+const TEST_INVITE_TOKEN = `inv_${"A".repeat(43)}`;
 
 const createSocket = (
   id: string,
@@ -54,6 +57,12 @@ const signalMessages = (messages: readonly ServerRealtimeMessage[]) =>
     || message.type === "signal:answer"
     || message.type === "signal:ice");
 
+const accessMessages = (messages: readonly ServerRealtimeMessage[]) =>
+  messages.filter((message): message is RoomAccessServerMessage =>
+    message.type === "room:join-requests"
+    || message.type === "room:join-requested"
+    || message.type === "room:join-request-resolved");
+
 const leftMessages = (messages: readonly ServerRealtimeMessage[], visitorId?: string) =>
   messages.filter(message =>
     message.type === "participant:left"
@@ -63,11 +72,14 @@ type HarnessOptions = {
   maxSockets?: number;
   maxVisitors?: number;
   idleTtlMs?: number;
+  failAccessSnapshots?: boolean;
 };
 
 const createHarness = (options: HarnessOptions = {}) => {
   let timestamp = 0;
   let visitorIndex = 0;
+  let roomIndex = 345_677;
+  let requestIndex = 0;
   const now = () => timestamp;
   const visitors = createVisitorService({
     now,
@@ -81,10 +93,23 @@ const createHarness = (options: HarnessOptions = {}) => {
     visitors,
     now,
     attachTimeoutMs: 15_000,
-    createCode: () => "345678",
+    createCode: () => String(++roomIndex),
+    inviteCrypto: {
+      createToken: () => TEST_INVITE_TOKEN,
+      digest: () => new Uint8Array([1]),
+      equals: (left, right) => left.length === right.length
+        && left.every((value, index) => value === right[index]),
+    },
+  });
+  const roomAccess = createRoomAccessService({
+    rooms,
+    visitors,
+    now,
+    createRequestId: () => `request_${String(++requestIndex).padStart(3, "0")}`,
   });
   const maintenance = createMaintenanceService({
     rooms,
+    roomAccess,
     visitors,
     rateLimits: { sweep: () => 0 },
   });
@@ -92,12 +117,25 @@ const createHarness = (options: HarnessOptions = {}) => {
     config: { corsAllowedOrigins: [ALLOWED_ORIGIN] },
     visitors,
     rooms,
+    roomAccess: options.failAccessSnapshots
+      ? {
+          listPendingForSender: () => ({
+            ok: false,
+            error: {
+              code: "ROOM_JOIN_REQUEST_NOT_FOUND" as const,
+              message: "sensitive internal snapshot failure",
+            },
+          }),
+          subscribe: roomAccess.subscribe,
+        }
+      : roomAccess,
     maintenance,
   }, { maxSockets: options.maxSockets });
 
   return {
     visitors,
     rooms,
+    roomAccess,
     maintenance,
     hub,
     setNow(value: number) {
@@ -136,7 +174,7 @@ const attach = (
 ) => hub.handleMessage(socketId, { type: "room:attach", roomCode, role });
 
 const participantStatus = (harness: Harness, roomCode: string, visitorId: string) => {
-  const result = harness.rooms.getRoom(roomCode);
+  const result = harness.rooms.getInternalRoomSnapshot(roomCode);
   if (!result.ok) return undefined;
   return result.room.participants.find(
     participant => participant.visitor.id === visitorId,
@@ -168,7 +206,7 @@ describe("realtime hub attach and resume", () => {
 
     attach(harness.hub, outsiderSocket.socket.id, created.room.code, "receiver");
     expect(latestErrorCode(outsiderSocket.sent)).toBe("ROOM_MEMBERSHIP_REQUIRED");
-    const roomAfterAttach = harness.rooms.getRoom(created.room.code);
+    const roomAfterAttach = harness.rooms.getInternalRoomSnapshot(created.room.code);
     expect(roomAfterAttach.ok && roomAfterAttach.room.participants
       .some(participant => participant.visitor.id === outsider.id)).toBe(false);
 
@@ -450,5 +488,265 @@ describe("realtime hub attach and resume", () => {
       roomCode: created.room.code,
     });
     expect(leftMessages(healthy.sent, sender.id)).toHaveLength(1);
+  });
+});
+
+describe("realtime hub room access notifications", () => {
+  test("sender attach always receives one canonical snapshot while receivers receive none", () => {
+    const harness = createHarness();
+    const sender = harness.visitors.createVisitor();
+    const receiver = harness.visitors.createVisitor();
+    const waitingA = harness.visitors.createVisitor();
+    const waitingB = harness.visitors.createVisitor();
+    const created = harness.rooms.createRoom(sender.token);
+    if (!created.ok) throw new Error("expected room");
+    const joined = harness.rooms.joinRoom(created.room.code, receiver.token, "receiver");
+    if (!joined.ok) throw new Error("expected receiver membership");
+    const firstSenderSocket = createSocket("socket_sender_first");
+    const receiverSocket = createSocket("socket_receiver");
+    connect(harness.hub, firstSenderSocket.socket, sender.token);
+    connect(harness.hub, receiverSocket.socket, receiver.token);
+    attach(harness.hub, firstSenderSocket.socket.id, created.room.code, "sender");
+    attach(harness.hub, receiverSocket.socket.id, created.room.code, "receiver");
+
+    expect(accessMessages(firstSenderSocket.sent)).toEqual([{
+      type: "room:join-requests",
+      roomCode: created.room.code,
+      requests: [],
+    }]);
+    expect(accessMessages(receiverSocket.sent)).toEqual([]);
+
+    harness.setNow(200);
+    const pendingA = harness.roomAccess.createOrGetPending(
+      created.room.code,
+      waitingA.token,
+    );
+    harness.setNow(100);
+    const pendingB = harness.roomAccess.createOrGetPending(
+      created.room.code,
+      waitingB.token,
+    );
+    if (!pendingA.ok || !pendingB.ok) throw new Error("expected pending requests");
+
+    const replacement = createSocket("socket_sender_replacement");
+    connect(harness.hub, replacement.socket, sender.token);
+    attach(harness.hub, replacement.socket.id, created.room.code, "sender");
+
+    expect(accessMessages(replacement.sent)).toEqual([{
+      type: "room:join-requests",
+      roomCode: created.room.code,
+      requests: [
+        expect.objectContaining({ requestId: pendingB.receipt.requestId }),
+        expect.objectContaining({ requestId: pendingA.receipt.requestId }),
+      ],
+    }]);
+    const serialized = JSON.stringify(accessMessages(replacement.sent));
+    expect(serialized).not.toContain(waitingA.token);
+    expect(serialized).not.toContain(waitingB.token);
+    expect(serialized).not.toContain(TEST_INVITE_TOKEN);
+  });
+
+  test("incremental events target only the current sender attached to that room", () => {
+    const harness = createHarness();
+    const senderA = harness.visitors.createVisitor();
+    const senderB = harness.visitors.createVisitor();
+    const receiverA = harness.visitors.createVisitor();
+    const waitingA = harness.visitors.createVisitor();
+    const waitingB = harness.visitors.createVisitor();
+    const roomA = harness.rooms.createRoom(senderA.token);
+    const roomB = harness.rooms.createRoom(senderB.token);
+    if (!roomA.ok || !roomB.ok) throw new Error("expected rooms");
+    const receiverJoin = harness.rooms.joinRoom(roomA.room.code, receiverA.token, "receiver");
+    if (!receiverJoin.ok) throw new Error("expected receiver membership");
+
+    const oldSenderSocket = createSocket("socket_sender_a_old");
+    const senderBSocket = createSocket("socket_sender_b");
+    const receiverSocket = createSocket("socket_receiver_a");
+    const unattachedSocket = createSocket("socket_unattached");
+    connect(harness.hub, oldSenderSocket.socket, senderA.token);
+    connect(harness.hub, senderBSocket.socket, senderB.token);
+    connect(harness.hub, receiverSocket.socket, receiverA.token);
+    connect(harness.hub, unattachedSocket.socket, waitingB.token);
+    attach(harness.hub, oldSenderSocket.socket.id, roomA.room.code, "sender");
+    attach(harness.hub, senderBSocket.socket.id, roomB.room.code, "sender");
+    attach(harness.hub, receiverSocket.socket.id, roomA.room.code, "receiver");
+    const baseline = {
+      oldSender: accessMessages(oldSenderSocket.sent).length,
+      senderB: accessMessages(senderBSocket.sent).length,
+      receiver: accessMessages(receiverSocket.sent).length,
+      unattached: accessMessages(unattachedSocket.sent).length,
+    };
+
+    const pendingA = harness.roomAccess.createOrGetPending(roomA.room.code, waitingA.token);
+    if (!pendingA.ok) throw new Error("expected pending request");
+    expect(accessMessages(oldSenderSocket.sent).slice(baseline.oldSender)).toEqual([{
+      type: "room:join-requested",
+      request: expect.objectContaining({ requestId: pendingA.receipt.requestId }),
+    }]);
+    expect(accessMessages(senderBSocket.sent)).toHaveLength(baseline.senderB);
+    expect(accessMessages(receiverSocket.sent)).toHaveLength(baseline.receiver);
+    expect(accessMessages(unattachedSocket.sent)).toHaveLength(baseline.unattached);
+
+    const replacement = createSocket("socket_sender_a_new");
+    connect(harness.hub, replacement.socket, senderA.token);
+    const cancelled = harness.roomAccess.cancel(
+      roomA.room.code,
+      pendingA.receipt.requestId,
+      waitingA.token,
+    );
+    if (!cancelled.ok) throw new Error("expected cancellation");
+    expect(accessMessages(oldSenderSocket.sent)).toHaveLength(baseline.oldSender + 1);
+    expect(accessMessages(replacement.sent)).toEqual([]);
+
+    attach(harness.hub, replacement.socket.id, roomA.room.code, "sender");
+    expect(accessMessages(replacement.sent)).toEqual([{
+      type: "room:join-requests",
+      roomCode: roomA.room.code,
+      requests: [],
+    }]);
+    const pendingB = harness.roomAccess.createOrGetPending(roomA.room.code, waitingB.token);
+    if (!pendingB.ok) throw new Error("expected second pending request");
+    expect(accessMessages(replacement.sent).slice(-1)).toEqual([{
+      type: "room:join-requested",
+      request: expect.objectContaining({ requestId: pendingB.receipt.requestId }),
+    }]);
+
+    harness.hub.disconnect(replacement.socket.id);
+    const resolvedAfterDisconnect = harness.roomAccess.cancel(
+      roomA.room.code,
+      pendingB.receipt.requestId,
+      waitingB.token,
+    );
+    if (!resolvedAfterDisconnect.ok) throw new Error("expected cancellation");
+    expect(accessMessages(replacement.sent).slice(-1)[0]?.type).toBe("room:join-requested");
+  });
+
+  test("all access resolution states are delivered without bearer secrets", () => {
+    const harness = createHarness();
+    const sender = harness.visitors.createVisitor();
+    const created = harness.rooms.createRoom(sender.token);
+    if (!created.ok) throw new Error("expected room");
+    const senderSocket = createSocket("socket_sender");
+    connect(harness.hub, senderSocket.socket, sender.token);
+    attach(harness.hub, senderSocket.socket.id, created.room.code, "sender");
+
+    const createRequest = () => {
+      const visitor = harness.visitors.createVisitor();
+      const request = harness.roomAccess.createOrGetPending(created.room.code, visitor.token);
+      if (!request.ok) throw new Error("expected pending request");
+      return { visitor, receipt: request.receipt };
+    };
+
+    const approved = createRequest();
+    harness.roomAccess.decide(
+      created.room.code,
+      approved.receipt.requestId,
+      sender.token,
+      "approve",
+    );
+    const rejected = createRequest();
+    harness.roomAccess.decide(
+      created.room.code,
+      rejected.receipt.requestId,
+      sender.token,
+      "reject",
+    );
+    const cancelled = createRequest();
+    harness.roomAccess.cancel(
+      created.room.code,
+      cancelled.receipt.requestId,
+      cancelled.visitor.token,
+    );
+    const expired = createRequest();
+    harness.setNow(expired.receipt.expiresAt);
+    harness.roomAccess.cleanupExpiredState();
+
+    harness.setNow(expired.receipt.expiresAt + 1);
+    const finalized = createRequest();
+    const approvedForFinalize = harness.roomAccess.decide(
+      created.room.code,
+      finalized.receipt.requestId,
+      sender.token,
+      "approve",
+    );
+    if (!approvedForFinalize.ok) throw new Error("expected approval");
+    const accessPlan = harness.roomAccess.prepareFinalize(
+      created.room.code,
+      finalized.receipt.requestId,
+      finalized.visitor.token,
+    );
+    if (!accessPlan.ok || accessPlan.mode !== "commit") {
+      throw new Error("expected finalize plan");
+    }
+    const roomPlan = harness.rooms.prepareApprovedReceiverJoin(
+      created.room.code,
+      finalized.visitor.token,
+    );
+    if (!roomPlan.ok) throw new Error("expected room plan");
+    const commit = harness.roomAccess.commitFinalize(
+      accessPlan.plan,
+      () => harness.rooms.commit(roomPlan.plan),
+    );
+    if (!commit.ok) throw new Error("expected finalize commit");
+
+    const resolved = accessMessages(senderSocket.sent).filter(
+      (message): message is Extract<RoomAccessServerMessage, {
+        type: "room:join-request-resolved";
+      }> => message.type === "room:join-request-resolved",
+    );
+    expect(resolved.map(message => message.state)).toEqual([
+      "approved",
+      "rejected",
+      "cancelled",
+      "expired",
+      "expired",
+      "approved",
+      "finalized",
+    ]);
+    const serialized = JSON.stringify(accessMessages(senderSocket.sent));
+    for (const token of [
+      approved.visitor.token,
+      rejected.visitor.token,
+      cancelled.visitor.token,
+      expired.visitor.token,
+      finalized.visitor.token,
+    ]) {
+      expect(serialized).not.toContain(token);
+    }
+    expect(serialized).not.toContain(TEST_INVITE_TOKEN);
+  });
+
+  test("snapshot failure stays generic and does not detach valid sender membership", () => {
+    const harness = createHarness({ failAccessSnapshots: true });
+    const sender = harness.visitors.createVisitor();
+    const created = harness.rooms.createRoom(sender.token);
+    if (!created.ok) throw new Error("expected room");
+    const senderSocket = createSocket("socket_sender");
+    connect(harness.hub, senderSocket.socket, sender.token);
+
+    attach(harness.hub, senderSocket.socket.id, created.room.code, "sender");
+
+    expect(participantStatus(harness, created.room.code, sender.id)).toBe("online");
+    expect(accessMessages(senderSocket.sent)).toEqual([]);
+    expect(latestErrorCode(senderSocket.sent)).toBe("ROOM_ACCESS_UNAVAILABLE");
+    expect(JSON.stringify(senderSocket.sent)).not.toContain(
+      "sensitive internal snapshot failure",
+    );
+  });
+
+  test("a throwing sender socket cannot escape the access subscriber", () => {
+    const harness = createHarness();
+    const sender = harness.visitors.createVisitor();
+    const waiting = harness.visitors.createVisitor();
+    const created = harness.rooms.createRoom(sender.token);
+    if (!created.ok) throw new Error("expected room");
+    const broken = createSocket("socket_broken_sender", { throwOnSend: true });
+    connect(harness.hub, broken.socket, sender.token);
+    attach(harness.hub, broken.socket.id, created.room.code, "sender");
+
+    expect(() => harness.roomAccess.createOrGetPending(
+      created.room.code,
+      waiting.token,
+    )).not.toThrow();
   });
 });

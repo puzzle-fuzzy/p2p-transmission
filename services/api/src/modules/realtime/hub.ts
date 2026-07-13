@@ -1,6 +1,8 @@
 import type { ApiConfig } from "../../config";
 import type { AppContext } from "../../context";
 import type { MaintenanceEvent, MaintenanceService } from "../maintenance/model";
+import type { RoomAccessTransition } from "../room-access/model";
+import type { RoomAccessService } from "../room-access/service";
 import type { RoomTransition } from "../room/model";
 import type {
   ClientRealtimeMessage,
@@ -22,6 +24,7 @@ type RealtimeContext = {
   config: Pick<ApiConfig, "corsAllowedOrigins">;
   visitors: AppContext["visitors"];
   rooms: AppContext["rooms"];
+  roomAccess: Pick<RoomAccessService, "listPendingForSender" | "subscribe">;
   maintenance: Pick<MaintenanceService, "sweepForAdmission" | "subscribe">;
 };
 
@@ -74,6 +77,11 @@ const signalNotAllowed = {
 const signalTargetNotInRoom = {
   code: "SIGNAL_TARGET_NOT_IN_ROOM",
   message: "信令目标不在当前房间",
+};
+
+const roomAccessUnavailable = {
+  code: "ROOM_ACCESS_UNAVAILABLE",
+  message: "暂时无法读取加入申请",
 };
 
 const safeSend = (socket: RealtimeSocket, message: ServerRealtimeMessage) => {
@@ -130,6 +138,24 @@ export const createRealtimeHub = (
     const connection = currentConnection(visitorId);
     if (!connection?.rooms.has(roomCode)) return false;
     return safeSend(connection.socket, message);
+  };
+
+  const publishAccessTransition = (transition: RoomAccessTransition) => {
+    const roomCode = transition.type === "room:join-requested"
+      ? transition.request.roomCode
+      : transition.roomCode;
+    const message: ServerRealtimeMessage = transition.type === "room:join-requested"
+      ? {
+          type: transition.type,
+          request: transition.request,
+        }
+      : {
+          type: transition.type,
+          roomCode: transition.roomCode,
+          requestId: transition.requestId,
+          state: transition.state,
+        };
+    sendToAttachedVisitor(transition.senderId, roomCode, message);
   };
 
   const transitionRoomCode = (transition: RoomTransition) =>
@@ -202,7 +228,7 @@ export const createRealtimeHub = (
     connection: Connection,
     message: SignalClientMessage,
   ): SignalAuthorization => {
-    const roomResult = context.rooms.getRoom(message.roomCode);
+    const roomResult = context.rooms.getInternalRoomSnapshot(message.roomCode);
     if (!roomResult.ok) return roomResult;
     if (!connection.rooms.has(message.roomCode)) {
       return { ok: false, error: signalNotAllowed };
@@ -310,9 +336,25 @@ export const createRealtimeHub = (
         room: result.room,
       });
     }
+
+    if (message.role !== "sender") return;
+    const requests = context.roomAccess.listPendingForSender(
+      message.roomCode,
+      connection.visitorToken,
+    );
+    if (!requests.ok) {
+      sendError(connection.socket, roomAccessUnavailable);
+      return;
+    }
+    sendToAttachedVisitor(connection.visitorId, message.roomCode, {
+      type: "room:join-requests",
+      roomCode: message.roomCode,
+      requests: requests.requests,
+    });
   };
 
   context.maintenance.subscribe(events => consumeMaintenanceEvents(events));
+  context.roomAccess.subscribe(transition => publishAccessTransition(transition));
 
   return {
     connect(socket, token) {

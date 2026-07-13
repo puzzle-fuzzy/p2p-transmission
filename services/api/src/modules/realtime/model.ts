@@ -3,6 +3,7 @@ import type { PublicVisitor } from '@p2p/contracts'
 export type {
   ClientRealtimeMessage,
   IceCandidateDto,
+  RoomAccessServerMessage,
   ServerRealtimeMessage,
   SessionDescriptionDto,
   SignalClientMessage,
