@@ -360,6 +360,7 @@ visitor:  20/minute
 Manual request creation uses:
 
 ```text
+instance: 300/minute
 IP:       10/minute
 visitor:   3/minute
 room:     10/minute
