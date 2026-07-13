@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { StrictMode } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import './test/dom'
+import type { RoomNavigationSnapshot } from './features/room/room-navigation'
 import type { FileSelection } from './features/transfer/file-selection'
 import type { PeerSessionEvent } from './features/transfer/peer-session'
 import type { OutgoingActivity } from './features/transfer/ui-state'
@@ -14,6 +15,7 @@ import type {
   ServerRealtimeMessage,
   VisitorSession,
 } from './shared/contracts'
+import { ApiClientError } from './lib/api-client'
 import App from './App'
 
 const boundary = vi.hoisted(() => ({
@@ -25,16 +27,22 @@ const boundary = vi.hoisted(() => ({
   loadVisitorSession: vi.fn(),
   saveVisitorSession: vi.fn(),
   clearVisitorSession: vi.fn(),
+  loadRoomSession: vi.fn(),
+  saveRoomSession: vi.fn(),
+  clearRoomSession: vi.fn(),
+  renderShareDialog: vi.fn(),
   showToast: vi.fn(),
 }))
 
 vi.mock('./lib/api-client', () => ({
   ApiClientError: class ApiClientError extends Error {
     code: string
+    status: number
 
-    constructor(code: string, message: string) {
+    constructor(message: string, code: string, status: number) {
       super(message)
       this.code = code
+      this.status = status
     }
   },
   createRoom: boundary.createRoom,
@@ -54,6 +62,12 @@ vi.mock('./lib/visitor-session', () => ({
   loadVisitorSession: boundary.loadVisitorSession,
   saveVisitorSession: boundary.saveVisitorSession,
   clearVisitorSession: boundary.clearVisitorSession,
+}))
+
+vi.mock('./lib/room-session', () => ({
+  loadRoomSession: boundary.loadRoomSession,
+  saveRoomSession: boundary.saveRoomSession,
+  clearRoomSession: boundary.clearRoomSession,
 }))
 
 vi.mock('./lib/config', () => ({
@@ -76,19 +90,45 @@ vi.mock('./components/Loading', () => ({ default: () => <div>loading</div> }))
 vi.mock('./components/RoomJoin', () => ({
   default: ({
     initialCode,
+    mode,
+    error,
     onCreateRoom,
-    onJoinRoom,
+    onSubmit,
+    onCodeEdited,
   }: {
     initialCode?: string
+    mode: 'invite' | 'manual'
+    error?: string
     onCreateRoom(): Promise<void>
-    onJoinRoom(code: string): Promise<void>
+    onSubmit(code: string): Promise<void>
+    onCodeEdited(): void
   }) => (
     <div>
       <button type="button" onClick={() => { void onCreateRoom() }}>创建测试房间</button>
-      <button type="button" onClick={() => { void onJoinRoom(initialCode ?? '012345') }}>加入测试房间</button>
+      <button type="button" onClick={() => { void onSubmit(initialCode ?? '012345') }}>
+        {mode === 'invite' ? '加入测试房间' : '请求加入测试房间'}
+      </button>
+      <button type="button" onClick={onCodeEdited}>编辑测试房间码</button>
       <output data-testid="initial-room-code">{initialCode ?? ''}</output>
+      <output data-testid="join-mode">{mode}</output>
+      <output data-testid="join-error">{error ?? ''}</output>
     </div>
   ),
+}))
+
+vi.mock('./components/ShareDialog', () => ({
+  default: (props: {
+    roomCode: string
+    roomUrl: string
+    onClose(): void
+  }) => {
+    boundary.renderShareDialog(props)
+    return (
+      <div role="dialog" aria-label="分享测试房间">
+        <button type="button" onClick={props.onClose}>关闭测试分享</button>
+      </div>
+    )
+  },
 }))
 
 type MockTransferPanelProps = {
@@ -349,6 +389,34 @@ const room: PublicRoom = {
   expiresAt: Date.now() + 30 * 60 * 1_000,
 }
 
+const inviteToken = `inv_${'A'.repeat(43)}`
+const ownerInvite = {
+  token: inviteToken,
+  expiresAt: room.expiresAt,
+}
+const absentNavigation: RoomNavigationSnapshot = Object.freeze({
+  fragment: Object.freeze({ kind: 'absent' }),
+})
+const invitationNavigation: RoomNavigationSnapshot = Object.freeze({
+  fragment: Object.freeze({
+    kind: 'invite',
+    intent: Object.freeze({
+      kind: 'invite',
+      roomCode: room.code,
+      inviteToken,
+    }),
+  }),
+})
+
+const roomForReceiver = (activeReceiver: PublicVisitor): PublicRoom => ({
+  ...room,
+  receivers: [activeReceiver.id],
+  participants: [
+    room.participants[0]!,
+    { visitor: activeReceiver, role: 'receiver', joinedAt: 1, status: 'online' },
+  ],
+})
+
 const sessionFor = (activeVisitor: PublicVisitor): VisitorSession => ({
   token: `token-${activeVisitor.id}`,
   visitor: activeVisitor,
@@ -374,7 +442,9 @@ const enterRoom = async (role: 'sender' | 'receiver') => {
   const activeVisitor = role === 'sender' ? sender : receiver
   boundary.loadVisitorSession.mockReturnValue(sessionFor(activeVisitor))
   boundary.createVisitor.mockResolvedValue(sessionFor(activeVisitor))
-  const rendered = render(<App />)
+  const rendered = render(
+    <App initialNavigation={role === 'receiver' ? invitationNavigation : absentNavigation} />,
+  )
   unmountApp = rendered.unmount
 
   await user.click(await screen.findByRole('button', {
@@ -412,16 +482,19 @@ const receivingProgress = (
 })
 
 beforeEach(() => {
+  vi.resetAllMocks()
   window.localStorage.clear()
+  window.sessionStorage.clear()
   window.history.replaceState({}, '', '/')
   realtime = new FakeRealtimeClient()
   peerSession = new FakePeerSession()
   boundary.createRealtimeClient.mockReturnValue(realtime)
   boundary.createPeerSession.mockReturnValue(peerSession)
-  boundary.createRoom.mockResolvedValue({ room })
+  boundary.createRoom.mockResolvedValue({ room, invite: ownerInvite })
   boundary.joinRoom.mockResolvedValue({ room })
   boundary.createVisitor.mockResolvedValue(sessionFor(sender))
   boundary.loadVisitorSession.mockReturnValue(sessionFor(sender))
+  boundary.loadRoomSession.mockReturnValue(undefined)
 
   clipboardWrite = vi.fn(async () => undefined)
   Object.defineProperty(navigator, 'clipboard', {
@@ -471,7 +544,7 @@ describe('App transfer integration', () => {
     boundary.createVisitor.mockReturnValue(pendingVisitor)
     const rendered = render(
       <StrictMode>
-        <App />
+        <App initialNavigation={absentNavigation} />
       </StrictMode>,
     )
 
@@ -493,7 +566,7 @@ describe('App transfer integration', () => {
     })
     boundary.createRoom.mockReturnValueOnce(pendingBootstrap)
     const user = userEvent.setup()
-    const rendered = render(<App />)
+    const rendered = render(<App initialNavigation={absentNavigation} />)
 
     await user.click(await screen.findByRole('button', { name: '创建测试房间' }))
     await waitFor(() => expect(boundary.createRoom).toHaveBeenCalledTimes(1))
@@ -515,7 +588,7 @@ describe('App transfer integration', () => {
     }
     boundary.createRoom.mockResolvedValueOnce({ room: invalidRoom })
     const user = userEvent.setup()
-    render(<App />)
+    render(<App initialNavigation={absentNavigation} />)
 
     await user.click(await screen.findByRole('button', { name: '创建测试房间' }))
     await waitFor(() => expect(boundary.showToast).toHaveBeenCalledWith(
@@ -528,7 +601,7 @@ describe('App transfer integration', () => {
   test('bootstraps ICE before realtime and attaches membership before creating peers', async () => {
     boundary.loadVisitorSession.mockReturnValue(sessionFor(sender))
     const user = userEvent.setup()
-    render(<App />)
+    render(<App initialNavigation={absentNavigation} />)
 
     await user.click(await screen.findByRole('button', { name: '创建测试房间' }))
     await waitFor(() => expect(boundary.createRealtimeClient).toHaveBeenCalledTimes(1))
@@ -552,95 +625,258 @@ describe('App transfer integration', () => {
     }))
   })
 
-  test('mints a fresh visitor identity before joining as a receiver', async () => {
+  test('preserves a valid invitation snapshot through StrictMode and waits for confirmation', async () => {
     boundary.loadVisitorSession.mockReturnValue(sessionFor(sender))
+    boundary.loadRoomSession.mockReturnValue({
+      roomCode: '654321',
+      role: 'receiver',
+      expiresAt: Date.now() + 60_000,
+    })
     boundary.createVisitor.mockResolvedValueOnce(sessionFor(receiver))
     const user = userEvent.setup()
-    render(<App />)
+    render(
+      <StrictMode>
+        <App initialNavigation={invitationNavigation} />
+      </StrictMode>,
+    )
+
+    expect((await screen.findByTestId('initial-room-code')).textContent).toBe(room.code)
+    expect(screen.getByTestId('join-mode').textContent).toBe('invite')
+    expect(boundary.joinRoom).not.toHaveBeenCalled()
+    expect(boundary.clearRoomSession).toHaveBeenCalledTimes(1)
 
     await user.click(await screen.findByRole('button', { name: '加入测试房间' }))
     await waitFor(() => expect(boundary.createRealtimeClient).toHaveBeenCalledTimes(1))
 
     expect(boundary.createVisitor).toHaveBeenCalledTimes(1)
     expect(boundary.saveVisitorSession).toHaveBeenCalledWith(sessionFor(receiver))
-    expect(boundary.joinRoom).toHaveBeenCalledWith(
-      '012345',
-      'token-receiver',
-      'receiver',
-      'off',
-    )
+    expect(boundary.joinRoom).toHaveBeenCalledWith({
+      roomCode: room.code,
+      visitorToken: 'token-receiver',
+      iceMode: 'off',
+      admission: { kind: 'invite', inviteToken },
+    })
   })
 
-  test('prefills a valid shared room link but waits for explicit join', async () => {
-    window.history.replaceState({}, '', '/?room=654321')
-    boundary.createVisitor.mockResolvedValueOnce(sessionFor(receiver))
-    const user = userEvent.setup()
-
-    render(<App />)
-
-    expect((await screen.findByTestId('initial-room-code')).textContent).toBe('654321')
-    expect(boundary.joinRoom).not.toHaveBeenCalled()
-
-    await user.click(screen.getByRole('button', { name: '加入测试房间' }))
-    await waitFor(() => expect(boundary.joinRoom).toHaveBeenCalledWith(
-      '654321',
-      'token-receiver',
-      'receiver',
-      'off',
-    ))
-  })
-
-  test('recovers one persisted receiver room without clearing it before bootstrap completes', async () => {
-    const persisted = {
+  test('invalid fragments suppress recovery while legacy query data stays manual-only', async () => {
+    boundary.loadRoomSession.mockReturnValue({
       roomCode: room.code,
       role: 'receiver',
       expiresAt: Date.now() + 60_000,
+    })
+    const invalidNavigation: RoomNavigationSnapshot = {
+      fragment: { kind: 'invalid' },
+      legacyRoomCode: '654321',
     }
-    window.localStorage.setItem('p2p.roomSession', JSON.stringify(persisted))
+
+    const { unmount } = render(<App initialNavigation={invalidNavigation} />)
+
+    expect((await screen.findByTestId('join-error')).textContent)
+      .toBe('邀请链接无效或已过期')
+    expect(screen.getByTestId('join-mode').textContent).toBe('manual')
+    expect(screen.getByTestId('initial-room-code').textContent).toBe('654321')
+    expect(boundary.joinRoom).not.toHaveBeenCalled()
+
+    unmount()
+    boundary.loadRoomSession.mockReturnValue(undefined)
+    const legacyNavigation: RoomNavigationSnapshot = {
+      fragment: { kind: 'absent' },
+      legacyRoomCode: '654321',
+    }
+    render(<App initialNavigation={legacyNavigation} />)
+
+    expect((await screen.findByTestId('initial-room-code')).textContent).toBe('654321')
+    expect(screen.getByTestId('join-mode').textContent).toBe('manual')
+  })
+
+  test('editing an invitation destroys its capability and cannot use direct join', async () => {
+    const user = userEvent.setup()
+    boundary.createVisitor.mockResolvedValueOnce(sessionFor(receiver))
+
+    render(<App initialNavigation={invitationNavigation} />)
+
+    expect((await screen.findByTestId('join-mode')).textContent).toBe('invite')
+    expect(boundary.joinRoom).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: '编辑测试房间码' }))
+    expect(screen.getByTestId('join-mode').textContent).toBe('manual')
+    await user.click(screen.getByRole('button', { name: '请求加入测试房间' }))
+    expect(boundary.joinRoom).not.toHaveBeenCalled()
+    expect(boundary.createVisitor).not.toHaveBeenCalled()
+  })
+
+  test('replaces an invite visitor at most once after VISITOR_NOT_FOUND', async () => {
+    const user = userEvent.setup()
+    boundary.createVisitor
+      .mockResolvedValueOnce(sessionFor(receiver))
+      .mockResolvedValueOnce(sessionFor(receiverTwo))
+    boundary.joinRoom
+      .mockRejectedValueOnce(new ApiClientError('访客已失效', 'VISITOR_NOT_FOUND', 401))
+      .mockResolvedValueOnce({ room: roomForReceiver(receiverTwo) })
+
+    render(<App initialNavigation={invitationNavigation} />)
+
+    await user.click(await screen.findByRole('button', { name: '加入测试房间' }))
+    await waitFor(() => expect(boundary.createRealtimeClient).toHaveBeenCalledTimes(1))
+
+    expect(boundary.createVisitor).toHaveBeenCalledTimes(2)
+    expect(boundary.joinRoom).toHaveBeenNthCalledWith(1, {
+      roomCode: room.code,
+      visitorToken: 'token-receiver',
+      iceMode: 'off',
+      admission: { kind: 'invite', inviteToken },
+    })
+    expect(boundary.joinRoom).toHaveBeenNthCalledWith(2, {
+      roomCode: room.code,
+      visitorToken: 'token-receiver-2',
+      iceMode: 'off',
+      admission: { kind: 'invite', inviteToken },
+    })
+  })
+
+  test('retains invitation identity and authority after a network failure', async () => {
+    const user = userEvent.setup()
+    boundary.createVisitor.mockResolvedValueOnce(sessionFor(receiver))
+    boundary.joinRoom
+      .mockRejectedValueOnce(new Error('network unavailable'))
+      .mockResolvedValueOnce({ room })
+
+    render(<App initialNavigation={invitationNavigation} />)
+
+    await user.click(await screen.findByRole('button', { name: '加入测试房间' }))
+    await waitFor(() => expect(boundary.showToast).toHaveBeenCalledWith('network unavailable'))
+    expect(screen.getByTestId('join-mode').textContent).toBe('invite')
+    await user.click(screen.getByRole('button', { name: '加入测试房间' }))
+    await waitFor(() => expect(boundary.createRealtimeClient).toHaveBeenCalledTimes(1))
+
+    expect(boundary.createVisitor).toHaveBeenCalledTimes(1)
+    expect(boundary.joinRoom).toHaveBeenCalledTimes(2)
+    expect(boundary.joinRoom).toHaveBeenLastCalledWith({
+      roomCode: room.code,
+      visitorToken: 'token-receiver',
+      iceMode: 'off',
+      admission: { kind: 'invite', inviteToken },
+    })
+  })
+
+  test('clears a deterministically denied invitation without direct fallback', async () => {
+    const user = userEvent.setup()
+    boundary.createVisitor.mockResolvedValueOnce(sessionFor(receiver))
+    boundary.joinRoom.mockRejectedValueOnce(
+      new ApiClientError('denied', 'ROOM_ACCESS_DENIED', 404),
+    )
+
+    render(<App initialNavigation={invitationNavigation} />)
+
+    await user.click(await screen.findByRole('button', { name: '加入测试房间' }))
+    await waitFor(() => expect(screen.getByTestId('join-mode').textContent).toBe('manual'))
+    expect(screen.getByTestId('join-error').textContent).toBe('邀请链接无效或已过期')
+    expect(boundary.joinRoom).toHaveBeenCalledTimes(1)
+    expect(boundary.createVisitor).toHaveBeenCalledTimes(1)
+  })
+
+  test('uses strict same-tab recovery without minting or replacing identity', async () => {
+    const persisted = {
+      roomCode: room.code,
+      role: 'receiver' as const,
+      expiresAt: Date.now() + 60_000,
+    }
     boundary.loadVisitorSession.mockReturnValue(sessionFor(receiver))
+    boundary.loadRoomSession.mockReturnValue(persisted)
     let resolveJoin!: (value: { room: PublicRoom }) => void
     const pendingJoin = new Promise<{ room: PublicRoom }>(resolve => {
       resolveJoin = resolve
     })
     boundary.joinRoom.mockReturnValueOnce(pendingJoin)
 
-    render(<App />)
+    render(<App initialNavigation={absentNavigation} />)
 
-    await waitFor(() => expect(boundary.joinRoom).toHaveBeenCalledWith(
-      room.code,
-      'token-receiver',
-      'receiver',
-      'off',
-    ))
+    await waitFor(() => expect(boundary.joinRoom).toHaveBeenCalledWith({
+      roomCode: room.code,
+      visitorToken: 'token-receiver',
+      iceMode: 'off',
+      admission: { kind: 'recovery' },
+    }))
     expect(boundary.createVisitor).not.toHaveBeenCalled()
-    expect(JSON.parse(window.localStorage.getItem('p2p.roomSession') ?? 'null')).toEqual(persisted)
+    expect(boundary.clearRoomSession).not.toHaveBeenCalled()
 
     await act(async () => {
       resolveJoin({ room })
       await pendingJoin
     })
     await waitFor(() => expect(boundary.createRealtimeClient).toHaveBeenCalledTimes(1))
-    expect(JSON.parse(window.localStorage.getItem('p2p.roomSession') ?? 'null')).toEqual({
+    expect(boundary.saveRoomSession).toHaveBeenCalledWith({
       roomCode: room.code,
       role: 'receiver',
       expiresAt: room.expiresAt,
     })
   })
 
+  test('a visitor minted during boot clears stale recovery instead of claiming it', async () => {
+    boundary.loadVisitorSession.mockReturnValue(undefined)
+    boundary.loadRoomSession.mockReturnValue({
+      roomCode: room.code,
+      role: 'receiver',
+      expiresAt: Date.now() + 60_000,
+    })
+    boundary.createVisitor.mockResolvedValueOnce(sessionFor(receiver))
+
+    render(<App initialNavigation={absentNavigation} />)
+
+    await waitFor(() => expect(boundary.clearRoomSession).toHaveBeenCalledTimes(1))
+    expect(boundary.createVisitor).toHaveBeenCalledTimes(1)
+    expect(boundary.joinRoom).not.toHaveBeenCalled()
+  })
+
+  test('recovery VISITOR_NOT_FOUND clears stale authority and never mints', async () => {
+    boundary.loadVisitorSession.mockReturnValue(sessionFor(receiver))
+    boundary.loadRoomSession.mockReturnValue({
+      roomCode: room.code,
+      role: 'receiver',
+      expiresAt: Date.now() + 60_000,
+    })
+    boundary.joinRoom.mockRejectedValueOnce(
+      new ApiClientError('访客已失效', 'VISITOR_NOT_FOUND', 401),
+    )
+
+    render(<App initialNavigation={absentNavigation} />)
+
+    await waitFor(() => expect(boundary.clearRoomSession).toHaveBeenCalledTimes(1))
+    expect(boundary.clearVisitorSession).toHaveBeenCalledTimes(1)
+    expect(boundary.createVisitor).not.toHaveBeenCalled()
+  })
+
+  test('a recovery network failure retains the same-tab recovery record', async () => {
+    boundary.loadVisitorSession.mockReturnValue(sessionFor(receiver))
+    boundary.loadRoomSession.mockReturnValue({
+      roomCode: room.code,
+      role: 'receiver',
+      expiresAt: Date.now() + 60_000,
+    })
+    boundary.joinRoom.mockRejectedValueOnce(new Error('network unavailable'))
+
+    render(<App initialNavigation={absentNavigation} />)
+
+    await waitFor(() => expect(boundary.showToast).toHaveBeenCalledWith('network unavailable'))
+    expect(boundary.joinRoom).toHaveBeenCalledTimes(1)
+    expect(boundary.clearRoomSession).not.toHaveBeenCalled()
+    expect(boundary.clearVisitorSession).not.toHaveBeenCalled()
+    expect(boundary.createVisitor).not.toHaveBeenCalled()
+  })
+
   test('does not recover a receiver room at its exact expiry boundary', async () => {
     const now = Date.now()
     const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(now)
     boundary.loadVisitorSession.mockReturnValue(sessionFor(receiver))
-    window.localStorage.setItem('p2p.roomSession', JSON.stringify({
+    boundary.loadRoomSession.mockReturnValue({
       roomCode: room.code,
       role: 'receiver',
       expiresAt: now,
-    }))
+    })
 
     try {
-      render(<App />)
+      render(<App initialNavigation={absentNavigation} />)
 
-      await waitFor(() => expect(window.localStorage.getItem('p2p.roomSession')).toBeNull())
+      await waitFor(() => expect(boundary.clearRoomSession).toHaveBeenCalledTimes(1))
       expect(boundary.joinRoom).not.toHaveBeenCalled()
       expect(boundary.createVisitor).not.toHaveBeenCalled()
       expect(boundary.showToast).toHaveBeenCalledWith(
@@ -652,14 +888,30 @@ describe('App transfer integration', () => {
     }
   })
 
-  test('does not persist an unsupported sender recovery session', async () => {
+  test('keeps owner invitation in memory and exposes sharing only to the sender', async () => {
+    window.history.replaceState({ source: 'owner' }, '', '/deploy/app/?campaign=summer')
     const user = userEvent.setup()
-    render(<App />)
+    const rendered = render(<App initialNavigation={absentNavigation} />)
 
     await user.click(await screen.findByRole('button', { name: '创建测试房间' }))
     await waitFor(() => expect(boundary.createRealtimeClient).toHaveBeenCalledTimes(1))
+    expect(screen.getByRole('button', { name: '分享房间' })).not.toBeNull()
+    expect(rendered.container.textContent).not.toContain(inviteToken)
+    expect(JSON.stringify(window.localStorage)).not.toContain(inviteToken)
+    expect(JSON.stringify(window.sessionStorage)).not.toContain(inviteToken)
 
-    expect(window.localStorage.getItem('p2p.roomSession')).toBeNull()
+    await user.click(screen.getByRole('button', { name: '分享房间' }))
+    expect(boundary.renderShareDialog).toHaveBeenCalledWith(expect.objectContaining({
+      roomCode: room.code,
+      roomUrl: `http://localhost:3000/deploy/app/?campaign=summer#room=${room.code}&invite=${inviteToken}`,
+    }))
+
+    act(() => realtime.emitMessage({
+      type: 'error',
+      code: 'ROOM_MEMBERSHIP_REQUIRED',
+      message: 'membership lost',
+    }))
+    expect(screen.queryByRole('button', { name: '分享房间' })).toBeNull()
   })
 
   test('passes only ready room receivers to the transfer panel', async () => {
@@ -691,6 +943,7 @@ describe('App transfer integration', () => {
     expect(panel.dataset.visitorId).toBe(receiver.id)
     expect(panel.dataset.senderId).toBe(sender.id)
     expect(panel.dataset.receiverIds).toBe(receiver.id)
+    expect(screen.queryByRole('button', { name: '分享房间' })).toBeNull()
   })
 
   test('returns to a clean lobby when attached membership is no longer valid', async () => {
@@ -748,7 +1001,7 @@ describe('App transfer integration', () => {
     expect(peerSession.close).toHaveBeenCalledTimes(1)
     expect(boundary.showToast).toHaveBeenCalledWith('已退出房间', 'info')
     expect(screen.queryByTestId('receiver-panel')).toBeNull()
-    expect(screen.getByRole('button', { name: '加入测试房间' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '请求加入测试房间' })).toBeTruthy()
   })
 
   test('closes the receiver room when the sender leaves terminally', async () => {

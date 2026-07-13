@@ -28,11 +28,12 @@ import {
   initialRoomFlowState,
   roomFlowReducer,
 } from './features/room/state'
+import type { RoomNavigationSnapshot } from './features/room/room-navigation'
 import {
   createRoomSessionLifecycle,
   type RoomSessionLifecycle,
 } from './features/room/session-lifecycle'
-import { parseRoomCodeFromSearch } from './features/room/room-invite'
+import { buildRoomInviteUrl } from './features/room/room-invite'
 import {
   addFileSelections,
   removeFileSelection,
@@ -94,6 +95,7 @@ import type {
   ParticipantRole,
   PublicRoom,
   PublicVisitor,
+  RoomInviteCapability,
   RoomSessionBootstrap,
   VisitorSession,
 } from './shared/contracts'
@@ -197,7 +199,21 @@ const assertBootstrapMembership = (
   }
 }
 
-function App() {
+type AppProps = {
+  initialNavigation: RoomNavigationSnapshot
+}
+
+type OwnerInvite = {
+  roomCode: string
+  capability: RoomInviteCapability
+}
+
+type ShareDialogState = {
+  roomCode: string
+  roomUrl: string
+}
+
+function App({ initialNavigation }: AppProps) {
   const [state, dispatch] = useReducer(roomFlowReducer, initialRoomFlowState)
   const [transferUiState, setTransferUiState] = useState<TransferUiState>(
     initialTransferUiState,
@@ -211,7 +227,19 @@ function App() {
     status: 'waiting',
   })
   const [fileSpeedData, setFileSpeedData] = useState<FileSpeedData>({})
-  const [shareDialogRoomCode, setShareDialogRoomCode] = useState<string>()
+  const initialInvite = initialNavigation.fragment.kind === 'invite'
+    ? initialNavigation.fragment.intent
+    : undefined
+  const [joinMode, setJoinMode] = useState<'invite' | 'manual'>(
+    initialInvite ? 'invite' : 'manual',
+  )
+  const [joinError, setJoinError] = useState(
+    initialNavigation.fragment.kind === 'invalid'
+      ? '邀请链接无效或已过期'
+      : '',
+  )
+  const [ownerInviteRoomCode, setOwnerInviteRoomCode] = useState<string>()
+  const [shareDialog, setShareDialog] = useState<ShareDialogState>()
   const {
     toast: toastState,
     show: showToast,
@@ -240,6 +268,14 @@ function App() {
   const peerRetryTimersRef = useRef(new Set<ReturnType<typeof setTimeout>>())
   const visitorBootstrapPromiseRef = useRef<Promise<VisitorSession> | undefined>(undefined)
   const roomRecoveryAttemptedRef = useRef(false)
+  const bootLoadedVisitorRef = useRef(false)
+  const navigationSuppressesRecoveryRef = useRef(
+    initialNavigation.fragment.kind !== 'absent',
+  )
+  const inviteIntentRef = useRef(initialInvite)
+  const inviteJoinSessionRef = useRef<VisitorSession | undefined>(undefined)
+  const inviteVisitorReplacementAttemptedRef = useRef(false)
+  const ownerInviteRef = useRef<OwnerInvite | undefined>(undefined)
   const speedTrackerRef = useRef<SpeedTracker>(createSpeedTracker())
 
   const replaceFileSelections = useCallback((selections: FileSelection[]) => {
@@ -470,6 +506,12 @@ function App() {
     roomLifecycleRef.current = undefined
   }, [])
 
+  const clearOwnerInvite = useCallback(() => {
+    ownerInviteRef.current = undefined
+    setOwnerInviteRoomCode(undefined)
+    setShareDialog(undefined)
+  }, [])
+
   const disposeRoomResources = useCallback(() => {
     disposeRoomLifecycle()
     const realtime = realtimeRef.current
@@ -477,9 +519,10 @@ function App() {
     realtime?.close()
     disposePeerSession()
     roomRef.current = undefined
+    clearOwnerInvite()
     clearRoomSession()
     resetTransferPresentation({ type: 'room:reset' })
-  }, [disposePeerSession, disposeRoomLifecycle, resetTransferPresentation])
+  }, [clearOwnerInvite, disposePeerSession, disposeRoomLifecycle, resetTransferPresentation])
 
   useEffect(() => {
     const bootGeneration = operationGenerationRef.current
@@ -488,11 +531,13 @@ function App() {
       try {
         const existingSession = loadVisitorSession()
         if (existingSession) {
+          bootLoadedVisitorRef.current = true
           if (operationGenerationRef.current !== bootGeneration) return
           dispatch({ type: 'visitor:ready', session: existingSession })
           return
         }
 
+        bootLoadedVisitorRef.current = false
         const pendingSession = visitorBootstrapPromiseRef.current ?? createVisitor()
         visitorBootstrapPromiseRef.current = pendingSession
         const session = await pendingSession
@@ -516,6 +561,7 @@ function App() {
       disposeRoomLifecycle()
       disposePeerSession()
       disposeBrowserTransferResources()
+      ownerInviteRef.current = undefined
     }
   }, [
     disposeBrowserTransferResources,
@@ -803,6 +849,14 @@ function App() {
 
       if (message.type === 'visitor:ready') return
 
+      // Sender admission events are integrated in the next orchestration step.
+      // They must not fall through to the generic realtime error branch.
+      if (
+        message.type === 'room:join-requests'
+        || message.type === 'room:join-requested'
+        || message.type === 'room:join-request-resolved'
+      ) return
+
       if (
         message.type === 'signal:offer'
         || message.type === 'signal:answer'
@@ -996,6 +1050,11 @@ function App() {
         rtcConfiguration,
         operationGeneration,
       )
+      ownerInviteRef.current = {
+        roomCode: result.value.room.code,
+        capability: result.value.invite,
+      }
+      setOwnerInviteRoomCode(result.value.room.code)
     } catch (error) {
       if (operationGenerationRef.current !== operationGeneration) return
       const message = error instanceof Error ? error.message : '创建房间失败'
@@ -1004,68 +1063,159 @@ function App() {
     }
   }, [connectRealtime, runWithFreshSession, showToast, state.session])
 
-  const joinReceiverRoom = useCallback(async (
-    code: string,
-    reuseCurrentSession: boolean,
-  ) => {
-    if (!state.session) return
+  const clearInviteIntent = useCallback(() => {
+    inviteIntentRef.current = undefined
+    inviteJoinSessionRef.current = undefined
+    inviteVisitorReplacementAttemptedRef.current = false
+    setJoinMode('manual')
+  }, [])
+
+  const handleRoomCodeEdited = useCallback(() => {
+    clearInviteIntent()
+    setJoinError('')
+  }, [clearInviteIntent])
+
+  const joinInvitedRoom = useCallback(async (code: string) => {
+    const intent = inviteIntentRef.current
+    if (!state.session || !intent || intent.roomCode !== code) return
     const operationGeneration = ++operationGenerationRef.current
     dispatch({ type: 'room:joining' })
+    setJoinError('')
 
     try {
-      let joinSession = state.session
-      if (!reuseCurrentSession) {
+      let joinSession = inviteJoinSessionRef.current
+      if (!joinSession) {
         joinSession = await createVisitor()
         if (operationGenerationRef.current !== operationGeneration) return
+        inviteJoinSessionRef.current = joinSession
         saveVisitorSession(joinSession)
-        if (joinSession.token !== state.session.token) {
-          dispatch({ type: 'visitor:ready', session: joinSession })
-        }
+        dispatch({ type: 'visitor:ready', session: joinSession })
       }
       const iceMode = getClientIceMode()
-      const result = await runWithFreshSession(
-        joinSession,
-        activeSession => joinRoom(
-          code,
-          activeSession.token,
-          'receiver',
-          roomIceMode(iceMode),
-        ),
-        operationGeneration,
-      )
-      if (!result) return
-      if (operationGenerationRef.current !== operationGeneration) return
-      if (result.session.token !== joinSession.token) {
-        dispatch({ type: 'visitor:ready', session: result.session })
+      const admission = {
+        kind: 'invite' as const,
+        inviteToken: intent.inviteToken,
       }
-      const rtcConfiguration = resolveBootstrapRtcConfiguration(iceMode, result.value)
-      assertBootstrapMembership(result.value, result.session.visitor.id, 'receiver')
-      roomRef.current = result.value.room
-      dispatch({ type: 'room:joined', room: result.value.room })
+      let bootstrap: RoomSessionBootstrap
+      try {
+        bootstrap = await joinRoom({
+          roomCode: code,
+          visitorToken: joinSession.token,
+          iceMode: roomIceMode(iceMode),
+          admission,
+        })
+      } catch (error) {
+        if (
+          !(error instanceof ApiClientError)
+          || error.code !== 'VISITOR_NOT_FOUND'
+          || inviteVisitorReplacementAttemptedRef.current
+        ) throw error
+
+        inviteVisitorReplacementAttemptedRef.current = true
+        clearVisitorSession()
+        inviteJoinSessionRef.current = undefined
+        joinSession = await createVisitor()
+        if (operationGenerationRef.current !== operationGeneration) return
+        inviteJoinSessionRef.current = joinSession
+        saveVisitorSession(joinSession)
+        dispatch({ type: 'visitor:ready', session: joinSession })
+        bootstrap = await joinRoom({
+          roomCode: code,
+          visitorToken: joinSession.token,
+          iceMode: roomIceMode(iceMode),
+          admission,
+        })
+      }
+      if (operationGenerationRef.current !== operationGeneration) return
+      const rtcConfiguration = resolveBootstrapRtcConfiguration(iceMode, bootstrap)
+      assertBootstrapMembership(bootstrap, joinSession.visitor.id, 'receiver')
+      roomRef.current = bootstrap.room
+      dispatch({ type: 'room:joined', room: bootstrap.room })
       connectRealtime(
-        result.session,
-        result.value,
+        joinSession,
+        bootstrap,
         'receiver',
         rtcConfiguration,
         operationGeneration,
       )
       saveRoomSession({
-        roomCode: result.value.room.code,
+        roomCode: bootstrap.room.code,
         role: 'receiver',
-        expiresAt: result.value.room.expiresAt,
+        expiresAt: bootstrap.room.expiresAt,
       })
+      clearInviteIntent()
+      setJoinError('')
     } catch (error) {
       if (operationGenerationRef.current !== operationGeneration) return
-      const message = error instanceof Error ? error.message : '加入房间失败'
+      const denied = error instanceof ApiClientError
+        && error.code === 'ROOM_ACCESS_DENIED'
+      if (denied) clearInviteIntent()
+      const message = denied
+        ? '邀请链接无效或已过期'
+        : error instanceof Error ? error.message : '加入房间失败'
+      setJoinError(message)
       showToast(message)
       dispatch({ type: 'error', message })
     }
-  }, [connectRealtime, runWithFreshSession, showToast, state.session])
+  }, [clearInviteIntent, connectRealtime, showToast, state.session])
 
   const handleJoinRoom = useCallback(
-    (code: string) => joinReceiverRoom(code, false),
-    [joinReceiverRoom],
+    (code: string) => joinInvitedRoom(code),
+    [joinInvitedRoom],
   )
+
+  const recoverReceiverRoom = useCallback(async (
+    session: VisitorSession,
+    roomCode: string,
+  ) => {
+    const operationGeneration = ++operationGenerationRef.current
+    dispatch({ type: 'room:joining' })
+
+    try {
+      const iceMode = getClientIceMode()
+      const bootstrap = await joinRoom({
+        roomCode,
+        visitorToken: session.token,
+        iceMode: roomIceMode(iceMode),
+        admission: { kind: 'recovery' },
+      })
+      if (operationGenerationRef.current !== operationGeneration) return
+      const rtcConfiguration = resolveBootstrapRtcConfiguration(iceMode, bootstrap)
+      assertBootstrapMembership(bootstrap, session.visitor.id, 'receiver')
+      roomRef.current = bootstrap.room
+      dispatch({ type: 'room:joined', room: bootstrap.room })
+      connectRealtime(
+        session,
+        bootstrap,
+        'receiver',
+        rtcConfiguration,
+        operationGeneration,
+      )
+      saveRoomSession({
+        roomCode: bootstrap.room.code,
+        role: 'receiver',
+        expiresAt: bootstrap.room.expiresAt,
+      })
+    } catch (error) {
+      if (operationGenerationRef.current !== operationGeneration) return
+      const deterministicDenial = error instanceof ApiClientError && (
+        error.code === 'VISITOR_NOT_FOUND'
+        || error.code === 'ROOM_ACCESS_DENIED'
+        || error.code === 'ROOM_NOT_FOUND'
+        || error.code === 'ROOM_EXPIRED'
+        || error.code === 'ROOM_MEMBERSHIP_REQUIRED'
+        || error.code === 'INVALID_STATE'
+      )
+      if (deterministicDenial) {
+        clearRoomSession()
+        if (error.code === 'VISITOR_NOT_FOUND') clearVisitorSession()
+      }
+      const message = error instanceof Error ? error.message : '恢复房间失败'
+      setJoinError(message)
+      showToast(message)
+      dispatch({ type: 'error', message })
+    }
+  }, [connectRealtime, showToast])
 
   useEffect(() => {
     if (state.phase !== 'lobby' || !state.session) return
@@ -1075,6 +1225,11 @@ function App() {
     const roomSession = loadRoomSession()
     if (!roomSession) return
 
+    if (navigationSuppressesRecoveryRef.current || !bootLoadedVisitorRef.current) {
+      clearRoomSession()
+      return
+    }
+
     if (Date.now() >= roomSession.expiresAt) {
       clearRoomSession()
       showToast('上次的房间已到期，请创建或加入新房间', 'info')
@@ -1082,8 +1237,8 @@ function App() {
     }
 
     showToast('检测到上次加入的房间，正在重新连接…', 'info')
-    void joinReceiverRoom(roomSession.roomCode, true)
-  }, [state.phase, state.session, joinReceiverRoom, showToast])
+    void recoverReceiverRoom(state.session, roomSession.roomCode)
+  }, [state.phase, state.session, recoverReceiverRoom, showToast])
 
   const startActivity = useCallback((activity: OutgoingActivity) => {
     clearTerminalHold()
@@ -1337,6 +1492,26 @@ function App() {
     }
   }, [showToast])
 
+  const handleOpenShare = useCallback(() => {
+    const room = roomRef.current
+    const ownerInvite = ownerInviteRef.current
+    if (
+      !room
+      || !ownerInvite
+      || ownerInvite.roomCode !== room.code
+      || ownerInvite.capability.expiresAt !== room.expiresAt
+    ) return
+
+    setShareDialog({
+      roomCode: room.code,
+      roomUrl: buildRoomInviteUrl(
+        window.location.href,
+        room.code,
+        ownerInvite.capability.token,
+      ),
+    })
+  }, [])
+
   const roomView = state.session && state.room && state.phase !== 'lobby'
     ? { session: state.session, room: state.room }
     : undefined
@@ -1345,6 +1520,9 @@ function App() {
   const roomReceivers = receiversFromRoom(roomView?.room)
   const readyPeerIdSet = new Set(state.readyPeerIds)
   const connectedReceivers = roomReceivers.filter(receiver => readyPeerIdSet.has(receiver.id))
+  const initialJoinCode = initialInvite?.roomCode ?? initialNavigation.legacyRoomCode
+  const canShareOwnerInvite = state.role === 'sender'
+    && ownerInviteRoomCode === roomView?.room.code
 
   return (
     <div className="min-h-svh bg-surface px-4 py-6 text-amber-50 sm:flex sm:items-center sm:justify-center">
@@ -1354,9 +1532,12 @@ function App() {
         {!roomView && state.phase !== 'booting' && (
           <RoomJoin
             busy={state.phase === 'joining'}
-            initialCode={parseRoomCodeFromSearch(window.location.search)}
+            initialCode={initialJoinCode}
+            mode={joinMode}
+            error={joinError || state.error || undefined}
             onCreateRoom={handleCreateRoom}
-            onJoinRoom={handleJoinRoom}
+            onSubmit={handleJoinRoom}
+            onCodeEdited={handleRoomCodeEdited}
           />
         )}
 
@@ -1375,15 +1556,17 @@ function App() {
                     code={roomView.room.code}
                     onCopy={handleCopyRoomCode}
                   />
-                  <button
-                    type="button"
-                    className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-transparent text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
-                    onClick={() => setShareDialogRoomCode(roomView.room.code)}
-                    aria-label="分享房间"
-                    title="分享房间"
-                  >
-                    <span className="material-symbols-outlined" style={{ fontSize: '17px' }} aria-hidden="true">qr_code_scanner</span>
-                  </button>
+                  {canShareOwnerInvite && (
+                    <button
+                      type="button"
+                      className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-transparent text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
+                      onClick={handleOpenShare}
+                      aria-label="分享房间"
+                      title="分享房间"
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: '17px' }} aria-hidden="true">qr_code_scanner</span>
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-2 text-right text-xs">
@@ -1460,12 +1643,12 @@ function App() {
 
       <ToastViewport toast={toastState} onDismiss={dismissToast} />
 
-      {shareDialogRoomCode && (
+      {shareDialog && (
         <ShareDialog
-          roomCode={shareDialogRoomCode}
-          roomUrl={`${window.location.origin}/?room=${shareDialogRoomCode}`}
+          roomCode={shareDialog.roomCode}
+          roomUrl={shareDialog.roomUrl}
           onCopy={handleCopyRoomCode}
-          onClose={() => setShareDialogRoomCode(undefined)}
+          onClose={() => setShareDialog(undefined)}
         />
       )}
     </div>
