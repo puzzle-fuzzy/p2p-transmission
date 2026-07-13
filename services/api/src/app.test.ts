@@ -13,15 +13,18 @@ import { createNodeRoomInviteCrypto } from "./shared/room-invite-crypto";
 
 type HarnessOptions = {
   maxRooms?: number;
+  maxReceivers?: number;
   maxVisitors?: number;
   turnConfigured?: boolean;
 };
 
 const createTestHarness = ({
   maxRooms,
+  maxReceivers,
   maxVisitors,
   turnConfigured = true,
 }: HarnessOptions = {}) => {
+  let timestamp = 1_000;
   let visitorIndex = 0;
   let roomIndex = 0;
   const config: ApiConfig = {
@@ -41,7 +44,7 @@ const createTestHarness = ({
     trustedProxyIps: new Set(),
   };
   const visitors = createVisitorService({
-    now: () => 1_000,
+    now: () => timestamp,
     maxVisitors,
     createId: () => `vis_${String(++visitorIndex).padStart(3, "0")}`,
     createToken: () => `tok_${String(visitorIndex).padStart(3, "0")}`,
@@ -50,18 +53,19 @@ const createTestHarness = ({
   const rooms = createRoomService({
     visitors,
     inviteCrypto: createNodeRoomInviteCrypto(),
-    now: () => 1_000,
+    now: () => timestamp,
     maxRooms,
+    maxReceivers,
     createCode: () => String(234_560 + ++roomIndex),
     createPlanId: () => `plan_${String(roomIndex)}_${crypto.randomUUID()}`,
   });
   const roomAccess = createRoomAccessService({
     rooms,
     visitors,
-    now: () => 1_000,
+    now: () => timestamp,
   });
-  const rateLimits = createRateLimitService({ now: () => 1_000 });
-  const turn = createTurnService(config, { now: () => 1_000 });
+  const rateLimits = createRateLimitService({ now: () => timestamp });
+  const turn = createTurnService(config, { now: () => timestamp });
   const maintenance = createMaintenanceService({
     rooms,
     roomAccess,
@@ -87,7 +91,13 @@ const createTestHarness = ({
     roomBootstrap,
     clientIp: { resolve: () => "203.0.113.10" },
   };
-  return { app: createApp(context), context };
+  return {
+    app: createApp(context),
+    context,
+    advanceTime: (milliseconds: number) => {
+      timestamp += milliseconds;
+    },
+  };
 };
 
 const json = async <T>(response: Response) => response.json() as Promise<T>;
@@ -247,161 +257,551 @@ describe("app routes", () => {
     expect(fullHarness.context.visitors.size()).toBe(1);
   });
 
-  test("requires iceMode and defaults join role to receiver", async () => {
-    const { app } = createTestHarness();
-    const sender = await createVisitor(app);
-    const receiver = await createVisitor(app);
-
-    const missingMode = await app.handle(roomRequest(sender.token));
-    const createResponse = await app.handle(roomRequest(sender.token, { iceMode: "off" }));
-    const created = await json<{
-      room: {
-        code: string;
-        senderId: string;
-        participants: Array<{ status: string }>;
-      };
-      rtcConfiguration?: unknown;
-    }>(createResponse);
-    const missingJoinMode = await app.handle(new Request(
-      `http://api.test/v1/rooms/${created.room.code}/join`,
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${receiver.token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({}),
-      },
-    ));
-    const joinResponse = await app.handle(new Request(
-      `http://api.test/v1/rooms/${created.room.code}/join`,
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${receiver.token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ iceMode: "off" }),
-      },
-    ));
-    const joined = await json<{
-      room: {
-        receivers: string[];
-        participants: Array<{ role: string; status: string }>;
-      };
-      rtcConfiguration?: unknown;
-    }>(joinResponse);
-
-    expect(missingMode.status).toBe(422);
-    expect(missingJoinMode.status).toBe(422);
-    expect(createResponse.status).toBe(200);
-    expect(joinResponse.status).toBe(200);
-    expect(created.rtcConfiguration).toBeUndefined();
-    expect(joined.rtcConfiguration).toBeUndefined();
-    expect(created.room.participants).toMatchObject([{ status: "connecting" }]);
-    expect(joined.room.receivers).toEqual([receiver.visitor.id]);
-    expect(joined.room.participants[joined.room.participants.length - 1]).toMatchObject({
-      role: "receiver",
-      status: "connecting",
-    });
-  });
-
-  test("returns signed API ICE bootstrap with no-store and no shared secret", async () => {
+  test("creates an owner bootstrap with an in-memory invite and private headers", async () => {
     const { app } = createTestHarness();
     const sender = await createVisitor(app);
 
-    const response = await app.handle(roomRequest(sender.token, { iceMode: "api" }));
+    const response = await app.handle(roomRequest(sender.token, { iceMode: "off" }));
     const body = await json<{
       room: { code: string; expiresAt: number };
-      rtcConfiguration: {
-        iceServers: Array<{
-          urls: string[];
-          username?: string;
-          credential?: string;
-        }>;
-      };
-      credentialExpiresAt: number;
+      invite: { token: string; expiresAt: number };
+      rtcConfiguration?: unknown;
     }>(response);
 
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
     expect(body.room.code).toBe("234561");
-    expect(body.credentialExpiresAt).toBe(body.room.expiresAt + 300_000);
-    expect(body.rtcConfiguration.iceServers).toHaveLength(2);
-    expect(JSON.stringify(body)).not.toContain("0123456789abcdef0123456789abcdef");
+    expect(body.invite.token).toMatch(/^inv_[A-Za-z0-9_-]{43}$/u);
+    expect(body.invite.expiresAt).toBe(body.room.expiresAt);
+    expect(body.rtcConfiguration).toBeUndefined();
   });
 
-  test("rejects invalid present iceMode values", async () => {
+  test("joins only through exact invite or recovery bodies and never accepts a role", async () => {
     const { app } = createTestHarness();
     const sender = await createVisitor(app);
-
-    const response = await app.handle(roomRequest(sender.token, { iceMode: "static" }));
-
-    expect(response.status).toBe(422);
-  });
-
-  test("maps bootstrap errors to 401, 404, and 409", async () => {
-    const { app } = createTestHarness();
-    const sender = await createVisitor(app);
-    const secondSender = await createVisitor(app);
-
-    const unauthorized = await app.handle(roomRequest("bad", { iceMode: "off" }));
-    const missing = await app.handle(new Request("http://api.test/v1/rooms/000000/join", {
+    const receiver = await createVisitor(app);
+    const createdResponse = await app.handle(roomRequest(sender.token, { iceMode: "off" }));
+    const created = await json<{
+      room: { code: string };
+      invite: { token: string };
+    }>(createdResponse);
+    const joinUrl = `http://api.test/v1/rooms/${created.room.code}/join`;
+    const sendJoin = (body: unknown) => app.handle(new Request(joinUrl, {
       method: "POST",
       headers: {
-        authorization: `Bearer ${secondSender.token}`,
+        authorization: `Bearer ${receiver.token}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ role: "receiver", iceMode: "off" }),
+      body: JSON.stringify(body),
     }));
+
+    const invalidBodies = [
+      {},
+      { iceMode: "off" },
+      { iceMode: "off", role: "receiver", admission: { kind: "recovery" } },
+      { iceMode: "off", admission: { kind: "approval", requestId: "req_1" } },
+      { iceMode: "off", admission: { kind: "recovery", inviteToken: created.invite.token } },
+      {
+        iceMode: "off",
+        admission: { kind: "invite", inviteToken: created.invite.token, requestId: "req_1" },
+      },
+      { iceMode: "off", admission: { kind: "invite" } },
+      { iceMode: "static", admission: { kind: "recovery" } },
+    ];
+    for (const body of invalidBodies) {
+      const invalid = await sendJoin(body);
+      expect(invalid.status).toBe(422);
+      expect(invalid.headers.get("cache-control")).toBe("no-store");
+      expect(invalid.headers.get("referrer-policy")).toBe("no-referrer");
+    }
+
+    const malformedInvite = await sendJoin({
+      iceMode: "off",
+      admission: { kind: "invite", inviteToken: "not-an-invite" },
+    });
+    expect(malformedInvite.status).toBe(404);
+    expect(await json<{ error: { code: string } }>(malformedInvite)).toMatchObject({
+      error: { code: "ROOM_ACCESS_DENIED" },
+    });
+
+    const invited = await sendJoin({
+      iceMode: "off",
+      admission: { kind: "invite", inviteToken: created.invite.token },
+    });
+    expect(invited.status).toBe(200);
+    expect(await json<{ room: { receivers: string[] } }>(invited)).toMatchObject({
+      room: { receivers: [receiver.visitor.id] },
+    });
+
+    const recovered = await sendJoin({
+      iceMode: "off",
+      admission: { kind: "recovery" },
+    });
+    expect(recovered.status).toBe(200);
+  });
+
+  test("validates ASCII room codes and bounded request IDs before dispatch", async () => {
+    const { app } = createTestHarness();
+    const visitor = await createVisitor(app);
+    const headers = { authorization: `Bearer ${visitor.token}` };
+
+    for (const code of ["12345", "1234567", "abc123", "１２３４５６"]) {
+      const response = await app.handle(new Request(
+        `http://api.test/v1/rooms/${code}/join-requests`,
+        { method: "POST", headers },
+      ));
+      expect(response.status).toBe(422);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+    }
+
+    const overlongRequestId = "r".repeat(97);
+    const response = await app.handle(new Request(
+      `http://api.test/v1/rooms/123456/join-requests/${overlongRequestId}`,
+      { headers },
+    ));
+    expect(response.status).toBe(422);
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+  });
+
+  test("returns authoritative manual-request receipts with 202 on every replay", async () => {
+    const { app, context } = createTestHarness();
+    const sender = await createVisitor(app);
+    const receiver = await createVisitor(app);
     const createdResponse = await app.handle(roomRequest(sender.token, { iceMode: "off" }));
     const created = await json<{ room: { code: string } }>(createdResponse);
-    const conflict = await app.handle(new Request(
-      `http://api.test/v1/rooms/${created.room.code}/join`,
+    expect(context.rooms.attach(created.room.code, sender.visitor.id, "sender").ok).toBe(true);
+    const requestUrl = `http://api.test/v1/rooms/${created.room.code}/join-requests`;
+    const requestJoin = () => app.handle(new Request(requestUrl, {
+      method: "POST",
+      headers: { authorization: `Bearer ${receiver.token}` },
+    }));
+
+    const pendingResponse = await requestJoin();
+    const pending = await json<{ requestId: string; state: string }>(pendingResponse);
+    expect(pendingResponse.status).toBe(202);
+    expect(pending.state).toBe("pending");
+
+    const decision = await app.handle(new Request(
+      `${requestUrl}/${pending.requestId}/decision`,
       {
         method: "POST",
         headers: {
-          authorization: `Bearer ${secondSender.token}`,
+          authorization: `Bearer ${sender.token}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ role: "sender", iceMode: "off" }),
+        body: JSON.stringify({ decision: "approve" }),
       },
     ));
+    expect(decision.status).toBe(200);
 
-    expect(unauthorized.status).toBe(401);
-    expect(await json<{ error: { code: string } }>(unauthorized)).toMatchObject({
-      error: { code: "VISITOR_NOT_FOUND" },
+    const approvedReplay = await requestJoin();
+    expect(approvedReplay.status).toBe(202);
+    expect(await json<{ requestId: string; state: string }>(approvedReplay)).toMatchObject({
+      requestId: pending.requestId,
+      state: "approved",
     });
-    expect(missing.status).toBe(404);
-    expect(await json<{ error: { code: string } }>(missing)).toMatchObject({
-      error: { code: "ROOM_NOT_FOUND" },
-    });
-    expect(conflict.status).toBe(409);
-    expect(await json<{ error: { code: string } }>(conflict)).toMatchObject({
-      error: { code: "ROOM_SENDER_EXISTS" },
+
+    const cancelled = await app.handle(new Request(
+      `${requestUrl}/${pending.requestId}/cancel`,
+      { method: "POST", headers: { authorization: `Bearer ${receiver.token}` } },
+    ));
+    expect(cancelled.status).toBe(200);
+    const terminalReplay = await requestJoin();
+    expect(terminalReplay.status).toBe(202);
+    expect(await json<{ requestId: string; state: string }>(terminalReplay)).toMatchObject({
+      requestId: pending.requestId,
+      state: "cancelled",
     });
   });
 
-  test("maps rate limits to 429 with Retry-After", async () => {
-    const { app } = createTestHarness();
+  test("serves status, decision, finalize, and cancel with authoritative states", async () => {
+    const { app, context } = createTestHarness();
     const sender = await createVisitor(app);
-    for (let index = 0; index < 10; index += 1) {
-      const response = await app.handle(roomRequest(sender.token, { iceMode: "off" }));
-      expect(response.status).toBe(200);
+    const receiver = await createVisitor(app);
+    const outsider = await createVisitor(app);
+    const created = await json<{ room: { code: string } }>(await app.handle(
+      roomRequest(sender.token, { iceMode: "off" }),
+    ));
+    context.rooms.attach(created.room.code, sender.visitor.id, "sender");
+    const base = `http://api.test/v1/rooms/${created.room.code}/join-requests`;
+    const pendingResponse = await app.handle(new Request(base, {
+      method: "POST",
+      headers: { authorization: `Bearer ${receiver.token}` },
+    }));
+    const pending = await json<{ requestId: string }>(pendingResponse);
+    const requestUrl = `${base}/${pending.requestId}`;
+
+    const statusResponse = await app.handle(new Request(requestUrl, {
+      headers: { authorization: `Bearer ${receiver.token}` },
+    }));
+    expect(statusResponse.status).toBe(200);
+    expect(await json<{ state: string }>(statusResponse)).toMatchObject({ state: "pending" });
+
+    const outsiderStatus = await app.handle(new Request(requestUrl, {
+      headers: { authorization: `Bearer ${outsider.token}` },
+    }));
+    expect(outsiderStatus.status).toBe(404);
+    expect(await json<{ error: { code: string } }>(outsiderStatus)).toMatchObject({
+      error: { code: "ROOM_JOIN_REQUEST_NOT_FOUND" },
+    });
+
+    const outsiderOperations = [
+      new Request(`${requestUrl}/decision`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${outsider.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ decision: "approve" }),
+      }),
+      new Request(`${requestUrl}/finalize`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${outsider.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ iceMode: "off" }),
+      }),
+      new Request(`${requestUrl}/cancel`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${outsider.token}` },
+      }),
+    ];
+    for (const operation of outsiderOperations) {
+      const response = await app.handle(operation);
+      expect(response.status).toBe(404);
+      expect(await json<{ error: { code: string } }>(response)).toMatchObject({
+        error: { code: "ROOM_JOIN_REQUEST_NOT_FOUND" },
+      });
     }
 
-    const limited = await app.handle(roomRequest(sender.token, { iceMode: "off" }));
-    const body = await json<{ error: { code: string; retryAfterMs: number } }>(limited);
+    const prematureFinalize = await app.handle(new Request(`${requestUrl}/finalize`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${receiver.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ iceMode: "off" }),
+    }));
+    expect(prematureFinalize.status).toBe(409);
+    expect(await json<{ error: { code: string } }>(prematureFinalize)).toMatchObject({
+      error: { code: "ROOM_JOIN_REQUEST_NOT_APPROVED" },
+    });
 
-    expect(limited.status).toBe(429);
-    expect(limited.headers.get("retry-after")).toBe("3600");
-    expect(body.error).toMatchObject({ code: "RATE_LIMITED", retryAfterMs: 3_600_000 });
+    const approved = await app.handle(new Request(`${requestUrl}/decision`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${sender.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ decision: "approve" }),
+    }));
+    expect(approved.status).toBe(200);
+    expect(await json<{ state: string }>(approved)).toMatchObject({ state: "approved" });
+
+    const finalized = await app.handle(new Request(`${requestUrl}/finalize`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${receiver.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ iceMode: "off" }),
+    }));
+    expect(finalized.status).toBe(200);
+    expect(await json<{ room: { receivers: string[] } }>(finalized)).toMatchObject({
+      room: { receivers: [receiver.visitor.id] },
+    });
+
+    const finalizedReceipt = await app.handle(new Request(requestUrl, {
+      headers: { authorization: `Bearer ${receiver.token}` },
+    }));
+    expect(await json<{ state: string }>(finalizedReceipt)).toMatchObject({ state: "finalized" });
+
+    const repeatedDecision = await app.handle(new Request(`${requestUrl}/decision`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${sender.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ decision: "reject" }),
+    }));
+    const repeatedCancel = await app.handle(new Request(`${requestUrl}/cancel`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${receiver.token}` },
+    }));
+    expect(repeatedDecision.status).toBe(200);
+    expect(repeatedCancel.status).toBe(200);
+    expect(await json<{ state: string }>(repeatedDecision)).toMatchObject({ state: "finalized" });
+    expect(await json<{ state: string }>(repeatedCancel)).toMatchObject({ state: "finalized" });
   });
 
-  test("maps TURN and room capacity failures to 503", async () => {
+  test("maps rejected, cancelled, and expired finalization states precisely", async () => {
+    const makePending = async () => {
+      const harness = createTestHarness();
+      const sender = await createVisitor(harness.app);
+      const receiver = await createVisitor(harness.app);
+      const created = await json<{ room: { code: string } }>(await harness.app.handle(
+        roomRequest(sender.token, { iceMode: "off" }),
+      ));
+      harness.context.rooms.attach(created.room.code, sender.visitor.id, "sender");
+      const base = `http://api.test/v1/rooms/${created.room.code}/join-requests`;
+      const pending = await json<{ requestId: string }>(await harness.app.handle(new Request(base, {
+        method: "POST",
+        headers: { authorization: `Bearer ${receiver.token}` },
+      })));
+      return { ...harness, sender, receiver, requestUrl: `${base}/${pending.requestId}` };
+    };
+    const finalize = (fixture: Awaited<ReturnType<typeof makePending>>) =>
+      fixture.app.handle(new Request(`${fixture.requestUrl}/finalize`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${fixture.receiver.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ iceMode: "off" }),
+      }));
+
+    const rejected = await makePending();
+    await rejected.app.handle(new Request(`${rejected.requestUrl}/decision`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${rejected.sender.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ decision: "reject" }),
+    }));
+    expect((await finalize(rejected)).status).toBe(403);
+
+    const cancelled = await makePending();
+    await cancelled.app.handle(new Request(`${cancelled.requestUrl}/cancel`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${cancelled.receiver.token}` },
+    }));
+    expect((await finalize(cancelled)).status).toBe(410);
+
+    const expired = await makePending();
+    expired.advanceTime(90_001);
+    expect((await finalize(expired)).status).toBe(410);
+  });
+
+  test("returns uniform manual-room errors and never exposes a public snapshot", async () => {
+    const missingHarness = createTestHarness();
+    const missingVisitor = await createVisitor(missingHarness.app);
+    const missing = await missingHarness.app.handle(new Request(
+      "http://api.test/v1/rooms/000000/join-requests",
+      { method: "POST", headers: { authorization: `Bearer ${missingVisitor.token}` } },
+    ));
+    expect(missing.status).toBe(404);
+    expect(await json<{ error: { code: string } }>(missing)).toMatchObject({
+      error: { code: "ROOM_REQUEST_UNAVAILABLE" },
+    });
+
+    const offlineHarness = createTestHarness();
+    const sender = await createVisitor(offlineHarness.app);
+    const receiver = await createVisitor(offlineHarness.app);
+    const created = await json<{ room: { code: string } }>(await offlineHarness.app.handle(
+      roomRequest(sender.token, { iceMode: "off" }),
+    ));
+    const offline = await offlineHarness.app.handle(new Request(
+      `http://api.test/v1/rooms/${created.room.code}/join-requests`,
+      { method: "POST", headers: { authorization: `Bearer ${receiver.token}` } },
+    ));
+    expect(offline.status).toBe(404);
+    expect(await json<{ error: { code: string } }>(offline)).toMatchObject({
+      error: { code: "ROOM_REQUEST_UNAVAILABLE" },
+    });
+
+    const expiredHarness = createTestHarness();
+    const expiredSender = await createVisitor(expiredHarness.app);
+    const expiredCreated = await json<{ room: { code: string } }>(await expiredHarness.app.handle(
+      roomRequest(expiredSender.token, { iceMode: "off" }),
+    ));
+    expiredHarness.advanceTime(30 * 60_000 + 1);
+    const freshVisitor = await createVisitor(expiredHarness.app);
+    const expired = await expiredHarness.app.handle(new Request(
+      `http://api.test/v1/rooms/${expiredCreated.room.code}/join-requests`,
+      { method: "POST", headers: { authorization: `Bearer ${freshVisitor.token}` } },
+    ));
+    expect(expired.status).toBe(404);
+    expect(await json<{ error: { code: string } }>(expired)).toMatchObject({
+      error: { code: "ROOM_REQUEST_UNAVAILABLE" },
+    });
+
+    const closedHarness = createTestHarness();
+    const closedSender = await createVisitor(closedHarness.app);
+    const closedReceiver = await createVisitor(closedHarness.app);
+    const closedCreated = await json<{ room: { code: string } }>(await closedHarness.app.handle(
+      roomRequest(closedSender.token, { iceMode: "off" }),
+    ));
+    closedHarness.context.rooms.leave(
+      closedCreated.room.code,
+      closedSender.visitor.id,
+    );
+    const closed = await closedHarness.app.handle(new Request(
+      `http://api.test/v1/rooms/${closedCreated.room.code}/join-requests`,
+      { method: "POST", headers: { authorization: `Bearer ${closedReceiver.token}` } },
+    ));
+    expect(closed.status).toBe(404);
+    expect(await json<{ error: { code: string } }>(closed)).toMatchObject({
+      error: { code: "ROOM_REQUEST_UNAVAILABLE" },
+    });
+
+    const fullHarness = createTestHarness();
+    const fullSender = await createVisitor(fullHarness.app);
+    const fullCreated = await json<{ room: { code: string } }>(await fullHarness.app.handle(
+      roomRequest(fullSender.token, { iceMode: "off" }),
+    ));
+    fullHarness.context.rooms.attach(fullCreated.room.code, fullSender.visitor.id, "sender");
+    const fullRequestUrl = `http://api.test/v1/rooms/${fullCreated.room.code}/join-requests`;
+    for (let index = 0; index < 5; index += 1) {
+      const pendingVisitor = await createVisitor(fullHarness.app);
+      expect((await fullHarness.app.handle(new Request(fullRequestUrl, {
+        method: "POST",
+        headers: { authorization: `Bearer ${pendingVisitor.token}` },
+      }))).status).toBe(202);
+    }
+    const overflowVisitor = await createVisitor(fullHarness.app);
+    const full = await fullHarness.app.handle(new Request(fullRequestUrl, {
+      method: "POST",
+      headers: { authorization: `Bearer ${overflowVisitor.token}` },
+    }));
+    expect(full.status).toBe(404);
+    expect(await json<{ error: { code: string } }>(full)).toMatchObject({
+      error: { code: "ROOM_REQUEST_UNAVAILABLE" },
+    });
+
+    const publicLookup = await offlineHarness.app.handle(new Request(
+      `http://api.test/v1/rooms/${created.room.code}`,
+    ));
+    expect(publicLookup.status).toBe(404);
+  });
+
+  test("maps finalize TURN and receiver-capacity failures to 503", async () => {
+    const prepareApproved = async (
+      harness: ReturnType<typeof createTestHarness>,
+      sender: Awaited<ReturnType<typeof createVisitor>>,
+      receiver: Awaited<ReturnType<typeof createVisitor>>,
+      roomCode: string,
+    ) => {
+      harness.context.rooms.attach(roomCode, sender.visitor.id, "sender");
+      const base = `http://api.test/v1/rooms/${roomCode}/join-requests`;
+      const pending = await json<{ requestId: string }>(await harness.app.handle(new Request(base, {
+        method: "POST",
+        headers: { authorization: `Bearer ${receiver.token}` },
+      })));
+      const requestUrl = `${base}/${pending.requestId}`;
+      expect((await harness.app.handle(new Request(`${requestUrl}/decision`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${sender.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ decision: "approve" }),
+      }))).status).toBe(200);
+      return requestUrl;
+    };
+    const finalize = (
+      harness: ReturnType<typeof createTestHarness>,
+      requestUrl: string,
+      receiverToken: string,
+      iceMode: "off" | "api",
+    ) => harness.app.handle(new Request(`${requestUrl}/finalize`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${receiverToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ iceMode }),
+    }));
+
     const withoutTurn = createTestHarness({ turnConfigured: false });
-    const first = await createVisitor(withoutTurn.app);
-    const turnFailure = await withoutTurn.app.handle(roomRequest(first.token, { iceMode: "api" }));
+    const turnSender = await createVisitor(withoutTurn.app);
+    const turnReceiver = await createVisitor(withoutTurn.app);
+    const turnRoom = await json<{ room: { code: string } }>(await withoutTurn.app.handle(
+      roomRequest(turnSender.token, { iceMode: "off" }),
+    ));
+    const turnRequest = await prepareApproved(
+      withoutTurn,
+      turnSender,
+      turnReceiver,
+      turnRoom.room.code,
+    );
+    const turnFailure = await finalize(withoutTurn, turnRequest, turnReceiver.token, "api");
+    expect(turnFailure.status).toBe(503);
+    expect(await json<{ error: { code: string } }>(turnFailure)).toMatchObject({
+      error: { code: "TURN_NOT_CONFIGURED" },
+    });
+
+    const atCapacity = createTestHarness({ maxReceivers: 1 });
+    const capacitySender = await createVisitor(atCapacity.app);
+    const existingReceiver = await createVisitor(atCapacity.app);
+    const waitingReceiver = await createVisitor(atCapacity.app);
+    const capacityRoom = await json<{
+      room: { code: string };
+      invite: { token: string };
+    }>(await atCapacity.app.handle(roomRequest(capacitySender.token, { iceMode: "off" })));
+    const capacityRequest = await prepareApproved(
+      atCapacity,
+      capacitySender,
+      waitingReceiver,
+      capacityRoom.room.code,
+    );
+    expect((await atCapacity.app.handle(new Request(
+      `http://api.test/v1/rooms/${capacityRoom.room.code}/join`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${existingReceiver.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          iceMode: "off",
+          admission: { kind: "invite", inviteToken: capacityRoom.invite.token },
+        }),
+      },
+    ))).status).toBe(200);
+    const capacityFailure = await finalize(
+      atCapacity,
+      capacityRequest,
+      waitingReceiver.token,
+      "off",
+    );
+    expect(capacityFailure.status).toBe(503);
+    expect(await json<{ error: { code: string } }>(capacityFailure)).toMatchObject({
+      error: { code: "CAPACITY_EXCEEDED" },
+    });
+  });
+
+  test("maps private-route auth, rate, TURN, and capacity errors with private headers", async () => {
+    const { app, context } = createTestHarness();
+    const unauthorized = await app.handle(roomRequest("bad", { iceMode: "off" }));
+    expect(unauthorized.status).toBe(401);
+
+    const sender = await createVisitor(app);
+    const receiver = await createVisitor(app);
+    const created = await json<{ room: { code: string } }>(await app.handle(
+      roomRequest(sender.token, { iceMode: "off" }),
+    ));
+    context.rooms.attach(created.room.code, sender.visitor.id, "sender");
+    const joinRequest = () => app.handle(new Request(
+      `http://api.test/v1/rooms/${created.room.code}/join-requests`,
+      { method: "POST", headers: { authorization: `Bearer ${receiver.token}` } },
+    ));
+    expect((await joinRequest()).status).toBe(202);
+    expect((await joinRequest()).status).toBe(202);
+    expect((await joinRequest()).status).toBe(202);
+    const limited = await joinRequest();
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("retry-after")).toBe("60");
+
+    const withoutTurn = createTestHarness({ turnConfigured: false });
+    const turnSender = await createVisitor(withoutTurn.app);
+    const turnFailure = await withoutTurn.app.handle(roomRequest(
+      turnSender.token,
+      { iceMode: "api" },
+    ));
+    expect(turnFailure.status).toBe(503);
 
     const atCapacity = createTestHarness({ maxRooms: 1 });
     const senderOne = await createVisitor(atCapacity.app);
@@ -414,14 +814,11 @@ describe("app routes", () => {
       senderTwo.token,
       { iceMode: "off" },
     ));
-
-    expect(turnFailure.status).toBe(503);
-    expect(await json<{ error: { code: string } }>(turnFailure)).toMatchObject({
-      error: { code: "TURN_NOT_CONFIGURED" },
-    });
     expect(capacityFailure.status).toBe(503);
-    expect(await json<{ error: { code: string } }>(capacityFailure)).toMatchObject({
-      error: { code: "CAPACITY_EXCEEDED" },
-    });
+
+    for (const response of [unauthorized, limited, turnFailure, capacityFailure]) {
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    }
   });
 });

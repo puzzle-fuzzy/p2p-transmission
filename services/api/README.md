@@ -37,11 +37,23 @@ bun run --cwd services/api build
 ## HTTP 会话
 
 1. `POST /v1/visitors` 创建临时访客并返回 Bearer token。
-2. `POST /v1/rooms` 创建房间；`POST /v1/rooms/:code/join` 加入房间。
-3. 创建/加入请求声明 ICE 模式，响应原子返回房间状态以及该会话所需的 ICE 配置；
-   API 模式下还会返回不晚于房间生命周期使用的短期 TURN 凭据。
-4. 浏览器连接 `/v1/realtime?token=...` 后发送 `room:attach`，只附着已由 HTTP 创建的
+2. 发送者通过 `POST /v1/rooms` 创建房间。响应中的 6 位房间码只是房间标识；高熵
+   `invite.token` 只交给发送者，并用于构造邀请链接，服务端仅保存它的摘要。
+3. 接收者打开邀请链接并确认后，通过 `POST /v1/rooms/:code/join` 提交
+   `{ iceMode, admission: { kind: "invite", inviteToken } }`。同一浏览器标签页中已存在的
+   接收成员只能使用 `{ iceMode, admission: { kind: "recovery" } }` 恢复；接口不接受
+   调用方选择 `role`，无邀请的房间码不能直接加入。
+4. 仅输入房间码时，接收者通过 `POST /v1/rooms/:code/join-requests` 创建加入申请并轮询
+   `GET /v1/rooms/:code/join-requests/:requestId`。发送者调用后缀为 `/decision` 的接口批准
+   或拒绝；接收者仅在状态为 `approved` 后调用 `/finalize`。等待中的接收者可调用
+   `/cancel`。重复创建和操作返回当前权威状态，便于安全恢复响应丢失。
+5. 创建、邀请加入和批准后的最终加入请求声明 ICE 模式，响应原子返回房间状态以及该
+   会话所需的 ICE 配置；API 模式下还会返回不晚于房间生命周期使用的短期 TURN 凭据。
+6. 浏览器连接 `/v1/realtime?token=...` 后发送 `room:attach`，只附着已由 HTTP 创建的
    成员关系，不能通过 WebSocket 新建成员。
+
+所有 `/v1/rooms` 响应（包括校验和错误响应）均发送 `Cache-Control: no-store` 与
+`Referrer-Policy: no-referrer`。服务不提供公开的 `GET /v1/rooms/:code` 房间查询。
 
 所有 offer、answer 和 ICE frame 在转发前都会校验房间、角色、在线附着状态与目标。
 意外断线只保留短暂恢复窗口；房间到期或发送者终止离开会关闭房间。

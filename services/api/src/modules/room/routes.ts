@@ -1,59 +1,109 @@
 import { Elysia, t } from "elysia";
 import type { AppContext } from "../../context";
-import type { RoomBootstrapError, RoomBootstrapResult } from "./bootstrap";
-import type { RoomError, RoomResult } from "./model";
+import type {
+  RoomAccessOperationResult,
+  RoomBootstrapError,
+  RoomBootstrapResult,
+  RoomOwnerBootstrapResult,
+} from "./bootstrap";
 
-const iceModeSchema = t.Union([
+export const iceModeSchema = t.Union([
   t.Literal("off"),
   t.Literal("api"),
 ]);
 
-const tokenFromHeaders = (headers: Record<string, string | undefined>) => {
+export const roomCodeParamsSchema = t.Object({
+  code: t.String({ pattern: "^[0-9]{6}$" }),
+}, { additionalProperties: false });
+
+const inviteJoinBodySchema = t.Object({
+  iceMode: iceModeSchema,
+  admission: t.Object({
+    kind: t.Literal("invite"),
+    inviteToken: t.String({ minLength: 1, maxLength: 128 }),
+  }, { additionalProperties: false }),
+}, { additionalProperties: false });
+
+const recoveryJoinBodySchema = t.Object({
+  iceMode: iceModeSchema,
+  admission: t.Object({
+    kind: t.Literal("recovery"),
+  }, { additionalProperties: false }),
+}, { additionalProperties: false });
+
+const createRoomBodySchema = t.Object({
+  iceMode: iceModeSchema,
+}, { additionalProperties: false });
+
+export const tokenFromHeaders = (
+  headers: Record<string, string | undefined>,
+) => {
   const authorization = headers.authorization;
   if (!authorization?.startsWith("Bearer ")) return "";
   return authorization.slice("Bearer ".length).trim();
 };
 
-const statusForRoomError = (error: RoomError) => {
-  if (error.code === "ROOM_NOT_FOUND" || error.code === "ROOM_EXPIRED") return 404;
-  if (error.code === "ROOM_SENDER_EXISTS" || error.code === "INVALID_STATE") return 409;
-  if (error.code === "CAPACITY_EXCEEDED") return 503;
-  return 401;
-};
-
 const statusForBootstrapError = (error: RoomBootstrapError) => {
-  if (error.code === "RATE_LIMITED") return 429;
-  if (error.code === "CAPACITY_EXCEEDED" || error.code === "TURN_NOT_CONFIGURED") {
-    return 503;
+  switch (error.code) {
+    case "RATE_LIMITED":
+      return 429;
+    case "CAPACITY_EXCEEDED":
+    case "TURN_NOT_CONFIGURED":
+      return 503;
+    case "ROOM_JOIN_REQUEST_REJECTED":
+      return 403;
+    case "ROOM_JOIN_REQUEST_CANCELLED":
+    case "ROOM_JOIN_REQUEST_EXPIRED":
+      return 410;
+    case "ROOM_SENDER_EXISTS":
+    case "ROOM_JOIN_REQUEST_NOT_APPROVED":
+    case "INVALID_STATE":
+      return 409;
+    case "ROOM_NOT_FOUND":
+    case "ROOM_EXPIRED":
+    case "ROOM_ACCESS_DENIED":
+    case "ROOM_REQUEST_UNAVAILABLE":
+    case "ROOM_JOIN_REQUEST_NOT_FOUND":
+      return 404;
+    case "VISITOR_NOT_FOUND":
+    case "ROOM_MEMBERSHIP_REQUIRED":
+      return 401;
   }
-  if (error.code === "ROOM_NOT_FOUND" || error.code === "ROOM_EXPIRED") return 404;
-  if (error.code === "ROOM_SENDER_EXISTS" || error.code === "INVALID_STATE") return 409;
-  return 401;
 };
 
-const roomResponse = (
-  result: RoomResult,
-  status: (code: number, body: unknown) => unknown,
-) => result.ok
-  ? { room: result.room }
-  : status(statusForRoomError(result.error), { error: result.error });
+type RouteSet = {
+  headers: Record<string, string | number | readonly string[]>;
+};
 
-const bootstrapResponse = (
-  result: RoomBootstrapResult,
-  set: { headers: Record<string, string | number | readonly string[]> },
-  status: (code: number, body: unknown) => unknown,
+type RouteStatus = (code: number, body: unknown) => unknown;
+
+const errorResponse = (
+  error: RoomBootstrapError,
+  set: RouteSet,
+  status: RouteStatus,
 ) => {
-  if (result.ok) {
-    if (result.bootstrap.rtcConfiguration) {
-      set.headers["cache-control"] = "no-store";
-    }
-    return result.bootstrap;
+  if (error.code === "RATE_LIMITED") {
+    set.headers["retry-after"] = String(Math.ceil(error.retryAfterMs / 1_000));
   }
-  if (result.error.code === "RATE_LIMITED") {
-    set.headers["retry-after"] = String(Math.ceil(result.error.retryAfterMs / 1_000));
-  }
-  return status(statusForBootstrapError(result.error), { error: result.error });
+  return status(statusForBootstrapError(error), { error });
 };
+
+export const bootstrapResponse = (
+  result: RoomBootstrapResult | RoomOwnerBootstrapResult,
+  set: RouteSet,
+  status: RouteStatus,
+) => result.ok
+  ? result.bootstrap
+  : errorResponse(result.error, set, status);
+
+export const roomAccessResponse = (
+  result: RoomAccessOperationResult,
+  set: RouteSet,
+  status: RouteStatus,
+  successStatus = 200,
+) => result.ok
+  ? status(successStatus, result.receipt)
+  : errorResponse(result.error, set, status);
 
 export const roomRoutes = (context: AppContext) =>
   new Elysia({ prefix: "/v1/rooms" })
@@ -68,9 +118,7 @@ export const roomRoutes = (context: AppContext) =>
       });
       return bootstrapResponse(result, set, status);
     }, {
-      body: t.Object({
-        iceMode: iceModeSchema,
-      }),
+      body: createRoomBodySchema,
     })
     .post("/:code/join", ({ body, headers, params, request, server, set, status }) => {
       const result = context.roomBootstrap.joinRoom({
@@ -80,20 +128,14 @@ export const roomRoutes = (context: AppContext) =>
           directAddress: server?.requestIP(request)?.address,
           headers,
         }),
-        role: body.role ?? "receiver",
         iceMode: body.iceMode,
+        admission: body.admission,
       });
       return bootstrapResponse(result, set, status);
     }, {
-      body: t.Object({
-        role: t.Optional(t.Union([
-          t.Literal("sender"),
-          t.Literal("receiver"),
-        ])),
-        iceMode: iceModeSchema,
-      }),
-    })
-    .get("/:code", ({ params, status }) => {
-      const result = context.rooms.getRoom(params.code);
-      return roomResponse(result, status);
+      params: roomCodeParamsSchema,
+      body: t.Union([
+        inviteJoinBodySchema,
+        recoveryJoinBodySchema,
+      ]),
     });
