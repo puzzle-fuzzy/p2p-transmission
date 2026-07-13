@@ -115,7 +115,7 @@ GitHub Actions 需要在 `production` environment 中配置以下 secrets：
 
 - `TENCENT_HOST`：腾讯云服务器公网 IP。
 - `TENCENT_DEPLOY_USER`：专用部署用户，当前为 `p2p-deploy`。
-- `TENCENT_SSH_PRIVATE_KEY`：只用于 Actions 的 ed25519 私钥，不要复用个人管理私钥。
+- `TENCENT_SSH_PRIVATE_KEY_B64`：只用于 Actions 的 ed25519 私钥的 Base64 编码，不要复用个人管理私钥。
 - `TENCENT_SSH_KNOWN_HOSTS`：已核验的 SSH host key，禁止在 workflow 中临时执行无校验的 `ssh-keyscan`。
 
 workflow 上传的是 Git 提交归档，不包含 `.env`、SQLite 数据、证书或 coturn 本地配置。服务器上的
