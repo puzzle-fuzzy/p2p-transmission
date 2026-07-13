@@ -125,4 +125,31 @@ describe('RoomJoin', () => {
     )
     expect(privacy.className).toContain('text-amber-50/60')
   })
+
+  test('submits the complete room code when pressing Enter', async () => {
+    const user = userEvent.setup()
+    const props = renderRoomJoin()
+    const inputs = roomCodeInputs()
+
+    for (const [index, input] of inputs.entries()) {
+      await user.type(input, String(index + 1))
+    }
+    await user.keyboard('{Enter}')
+
+    expect(props.onSubmit).toHaveBeenCalledTimes(1)
+    expect(props.onSubmit).toHaveBeenCalledWith('123456')
+  })
+
+  test('does not submit an incomplete room code when pressing Enter', async () => {
+    const user = userEvent.setup()
+    const props = renderRoomJoin()
+    const inputs = roomCodeInputs()
+
+    for (const [index, input] of inputs.slice(0, 5).entries()) {
+      await user.type(input, String(index + 1))
+    }
+    await user.keyboard('{Enter}')
+
+    expect(props.onSubmit).not.toHaveBeenCalled()
+  })
 })

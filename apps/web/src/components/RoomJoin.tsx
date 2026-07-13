@@ -1,4 +1,4 @@
-import { useId, useMemo, useRef, useState } from 'react'
+import { useId, useMemo, useRef, useState, type FormEvent } from 'react'
 
 export type RoomJoinProps = {
   busy?: boolean
@@ -33,6 +33,11 @@ export default function RoomJoin({
   const submitLabel = busy
     ? mode === 'invite' ? '连接中…' : '申请中…'
     : mode === 'invite' ? '加入房间' : '请求加入'
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (busy || code.length !== 6) return
+    onSubmit(code)
+  }
 
   const handleInput = (index: number, event: React.ChangeEvent<HTMLInputElement>) => {
     const value = event.target.value.replace(/\D/g, '').slice(-1)
@@ -66,7 +71,10 @@ export default function RoomJoin({
   }
 
   return (
-    <div className="flex w-full max-w-sm flex-col items-center">
+    <form
+      className="flex w-full max-w-sm flex-col items-center"
+      onSubmit={handleSubmit}
+    >
       <h1 className="w-full text-left text-lg font-normal text-amber-50/80">加入房间</h1>
       <p className="mt-1 mb-4 w-full text-left text-xs leading-5 text-amber-50/50">
         输入发送者提供的 6 位房间码，或直接打开邀请链接
@@ -117,14 +125,13 @@ export default function RoomJoin({
       </div>
 
       <button
-        type="button"
+        type="submit"
         className={`min-h-11 w-full rounded-xl px-16 text-sm tracking-wider transition-[filter,color,background-color] ${
           busy || code.length !== 6
             ? 'cursor-not-allowed bg-white/5 text-amber-50/20'
             : 'cursor-pointer bg-accent text-white/90 hover:brightness-110 active:brightness-90'
         }`}
         disabled={busy || code.length !== 6}
-        onClick={() => onSubmit(code)}
       >
         {submitLabel}
       </button>
@@ -151,6 +158,6 @@ export default function RoomJoin({
       <div className="mt-6 text-center text-xs leading-5 text-amber-50/60">
         {'文件和文本正文通过加密的 WebRTC 通道传输，优先尝试设备直连，必要时经加密中继转发；应用服务器只协调连接，不保存传输内容。接收完成的文件会暂存在当前页面中，关闭结果或退出房间后释放。'}
       </div>
-    </div>
+    </form>
   )
 }
