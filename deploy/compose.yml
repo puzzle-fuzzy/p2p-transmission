@@ -5,6 +5,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/api/Dockerfile
+      args:
+        BUN_IMAGE: ${BUN_IMAGE:-mirror.ccs.tencentyun.com/oven/bun:1.3.14}
     restart: unless-stopped
     env_file:
       - ./.env
@@ -36,6 +38,7 @@ services:
       context: ..
       dockerfile: deploy/web/Dockerfile
       args:
+        BUN_IMAGE: ${BUN_IMAGE:-mirror.ccs.tencentyun.com/oven/bun:1.3.14}
         VITE_API_URL: https://p2p.yxswy.com
         VITE_TURN_MODE: ${VITE_TURN_MODE:-api}
         VITE_STUN_URLS: ${VITE_STUN_URLS:-}

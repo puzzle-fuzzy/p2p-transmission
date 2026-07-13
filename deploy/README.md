@@ -37,6 +37,8 @@ chmod 600 deploy/.env
 
 编辑 `deploy/.env`：填写真实公网 IP、TURN 域名和随机共享密钥。共享密钥必须同时用于 API 和 coturn，不得写入前端变量、日志或 Git。
 
+Compose 默认使用腾讯云可达的 `mirror.ccs.tencentyun.com/oven/bun:1.3.14` 作为 Bun 构建基础镜像；如迁移到其他网络，可在 `deploy/.env` 中设置 `BUN_IMAGE` 覆盖它。
+
 先部署 API/Web，并把宿主机 Nginx 配置为 `deploy/nginx/p2p.yxswy.com.http.conf`。证书签发后，再将 Nginx 切换为 HTTPS 配置。示例 ACME 目录：
 
 ```bash

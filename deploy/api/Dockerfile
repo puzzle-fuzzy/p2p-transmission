@@ -1,4 +1,5 @@
-FROM oven/bun:1.3.14 AS build
+ARG BUN_IMAGE=oven/bun:1.3.14
+FROM ${BUN_IMAGE} AS build
 
 WORKDIR /app
 COPY package.json bun.lock turbo.json ./
@@ -9,7 +10,7 @@ RUN bun install --frozen-lockfile
 COPY . .
 RUN bun run --cwd services/api build
 
-FROM oven/bun:1.3.14
+FROM ${BUN_IMAGE}
 
 WORKDIR /app
 ENV NODE_ENV=production
