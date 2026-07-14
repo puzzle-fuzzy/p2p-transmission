@@ -297,7 +297,7 @@ export default function TransferPanel({
                         action={!locked ? (
                           <button
                             type="button"
-                            className="flex size-11 shrink-0 items-center justify-center rounded-full text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50 focus-visible:bg-white/5 focus-visible:text-amber-50 focus-visible:outline-none"
+                            className="flex size-11 shrink-0 items-center justify-center rounded-lg text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50 focus-visible:bg-white/5 focus-visible:text-amber-50 focus-visible:outline-none"
                             onClick={event => {
                               event.stopPropagation()
                               onFileRemoved(selection.fileId)

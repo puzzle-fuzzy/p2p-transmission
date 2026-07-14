@@ -273,7 +273,7 @@ export default function IncomingFileRequestDialog({
                   speedBytesPerSecond={speedInfo?.speed}
                   etaSeconds={speedInfo?.eta}
                   action={downloadable ? (
-                    <div className="flex items-center gap-0.5 rounded-lg bg-surface-elevated/95 pl-0.5">
+                    <div className="flex items-center gap-0.5 rounded-r-lg bg-surface-elevated/95 pl-0.5">
                       {canCopy && (
                         <button
                           type="button"
@@ -282,7 +282,7 @@ export default function IncomingFileRequestDialog({
                             : copyStatus === 'error'
                               ? `复制失败${downloadable.name} 的内容`
                               : `复制${downloadable.name} 的内容`}
-                          className="flex size-11 shrink-0 items-center justify-center rounded-full text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:bg-white/5 focus-visible:text-amber-50/80 focus-visible:outline-none"
+                          className="flex size-11 shrink-0 items-center justify-center rounded-lg text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:bg-white/5 focus-visible:text-amber-50/80 focus-visible:outline-none"
                           onClick={() => void copyFileContent(downloadable)}
                         >
                           <span className="material-symbols-outlined" style={{ fontSize: '17px' }} aria-hidden="true">
@@ -294,7 +294,7 @@ export default function IncomingFileRequestDialog({
                         href={downloadable.url}
                         download={downloadable.name}
                         aria-label={`下载 ${downloadable.name}`}
-                        className="flex size-11 shrink-0 items-center justify-center rounded-full text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:bg-white/5 focus-visible:text-amber-50/80 focus-visible:outline-none"
+                        className="flex size-11 shrink-0 items-center justify-center rounded-lg text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:bg-white/5 focus-visible:text-amber-50/80 focus-visible:outline-none"
                       >
                         <span className="material-symbols-outlined" style={{ fontSize: '17px' }} aria-hidden="true">download</span>
                       </a>
