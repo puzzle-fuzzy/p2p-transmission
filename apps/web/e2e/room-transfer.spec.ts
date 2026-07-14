@@ -1,9 +1,11 @@
 import { expect, test } from '@playwright/test'
 import { fillRoomCode, roomCodeFromPage } from './fixtures'
 
-test('two real browser contexts can approve a peer and transfer text and a file', async ({ browser, baseURL }) => {
-  const sender = await browser.newContext({ baseURL })
-  const receiver = await browser.newContext({ baseURL })
+const clipboardPermissions = ['clipboard-read', 'clipboard-write'] as const
+
+test('two real browser contexts can approve a peer and transfer a pasted text file', async ({ browser, baseURL }) => {
+  const sender = await browser.newContext({ baseURL, permissions: [...clipboardPermissions] })
+  const receiver = await browser.newContext({ baseURL, permissions: [...clipboardPermissions] })
 
   try {
     const senderPage = await sender.newPage()
@@ -67,30 +69,80 @@ test('two real browser contexts can approve a peer and transfer text and a file'
     await expect(senderPage.getByText('1 位接收者已连接')).toBeVisible({ timeout: 30_000 })
     await expect(receiverPage.getByRole('heading', { name: '等待对方发送' })).toBeVisible({ timeout: 30_000 })
 
-    const text = `真实浏览器 E2E ${Date.now()}`
-    await senderPage.getByRole('textbox', { name: '要传输的文本' }).fill(text)
-    await senderPage.getByRole('button', { name: '发送给 1 位接收者' }).click()
+    const text = `真实浏览器 E2E 粘贴文本 ${Date.now()}`
+    await senderPage.evaluate(async value => {
+      await navigator.clipboard.writeText(value)
+    }, text)
 
-    const textDialog = receiverPage.getByRole('dialog', { name: '收到文本' })
-    await expect(textDialog).toContainText(text, { timeout: 30_000 })
-    await textDialog.getByRole('button', { name: '关闭' }).click()
-    await senderPage.getByRole('button', { name: '关闭结果' }).click()
+    const uploadArea = senderPage.getByRole('button', { name: '上传要传输的内容' })
+    await uploadArea.focus()
+    await uploadArea.press('Control+V')
 
-    await senderPage.getByRole('tab', { name: '传输文件' }).click()
-    await senderPage.locator('input[type="file"]').setInputFiles({
-      name: 'e2e.txt',
-      mimeType: 'text/plain',
-      buffer: Buffer.from('真实浏览器文件传输'),
-    })
-    await senderPage.getByRole('button', { name: '发送 1 个文件' }).click()
+    const pasteDialog = senderPage.getByRole('dialog', { name: '确认添加粘贴内容' })
+    await expect(pasteDialog).toBeVisible()
+    await pasteDialog.getByRole('button', { name: '添加到传输列表' }).click()
+    await expect(uploadArea.getByText('粘贴内容.txt', { exact: true })).toBeVisible()
+    await senderPage.getByRole('button', { name: '发送 1 项', exact: true }).click()
 
     const fileDialog = receiverPage.getByRole('dialog', { name: '收到文件' })
     await expect(fileDialog.getByRole('button', { name: '接收全部' })).toBeVisible({ timeout: 30_000 })
     await fileDialog.getByRole('button', { name: '接收全部' }).click()
-    await expect(fileDialog.getByRole('button', { name: '一键下载' })).toBeVisible({ timeout: 30_000 })
-    await expect(fileDialog).toContainText('e2e.txt')
+    const copyButton = fileDialog.getByRole('button', { name: '复制粘贴内容.txt 的内容' })
+    await expect(copyButton).toBeVisible({ timeout: 30_000 })
+    await expect(fileDialog.getByRole('link', { name: '下载 粘贴内容.txt' })).toBeVisible()
+    await copyButton.click()
+    await expect(copyButton).toHaveAttribute('aria-label', '已复制粘贴内容.txt 的内容')
+    await expect.poll(
+      () => receiverPage.evaluate(() => navigator.clipboard.readText()),
+      { timeout: 15_000 },
+    ).toBe(text)
   } finally {
     await receiver.close()
+    await sender.close()
+  }
+})
+
+test('sender confirms or cancels a pasted clipboard file', async ({ browser, baseURL }) => {
+  const sender = await browser.newContext({ baseURL, permissions: [...clipboardPermissions] })
+
+  try {
+    const senderPage = await sender.newPage()
+    await senderPage.goto('/')
+    await senderPage.getByRole('button', { name: '创建房间' }).click()
+
+    const uploadArea = senderPage.getByRole('button', { name: '上传要传输的内容' })
+    await expect(uploadArea).toBeVisible()
+
+    const dispatchClipboardFile = async () => {
+      await uploadArea.evaluate(element => {
+        const dataTransfer = new DataTransfer()
+        const file = new File(['真实浏览器剪贴板文件事件'], 'clipboard-event.txt', {
+          type: 'text/plain',
+        })
+        dataTransfer.items.add(file)
+        const event = new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: dataTransfer,
+        })
+        element.dispatchEvent(event)
+      })
+    }
+
+    await uploadArea.focus()
+    await dispatchClipboardFile()
+    const firstPasteDialog = senderPage.getByRole('dialog', { name: '确认添加粘贴内容' })
+    await expect(firstPasteDialog).toBeVisible()
+    await firstPasteDialog.getByRole('button', { name: '取消' }).click()
+    await expect(senderPage.getByText('clipboard-event.txt', { exact: true })).toHaveCount(0)
+
+    await uploadArea.focus()
+    await dispatchClipboardFile()
+    const secondPasteDialog = senderPage.getByRole('dialog', { name: '确认添加粘贴内容' })
+    await expect(secondPasteDialog).toBeVisible()
+    await secondPasteDialog.getByRole('button', { name: '添加到传输列表' }).click()
+    await expect(uploadArea.getByText('clipboard-event.txt', { exact: true })).toBeVisible()
+  } finally {
     await sender.close()
   }
 })
@@ -134,13 +186,18 @@ test('sender can target one receiver, then broadcast to both', async ({ browser,
     await picker.locator('label').nth(1).click()
     await picker.getByRole('button', { name: '确定' }).click()
 
-    const text = `定向文本 ${Date.now()}`
-    await senderPage.getByRole('textbox', { name: '要传输的文本' }).fill(text)
-    await senderPage.getByRole('button', { name: '发送给 1 位接收者' }).click()
-    const firstTextDialog = firstReceiverPage.getByRole('dialog', { name: '收到文本' })
-    await expect(firstTextDialog).toContainText(text, { timeout: 30_000 })
-    await expect(secondReceiverPage.getByRole('dialog', { name: '收到文本' })).toHaveCount(0)
-    await firstTextDialog.getByRole('button', { name: '关闭' }).click()
+    await senderPage.locator('input[type="file"]').setInputFiles({
+      name: 'targeted.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('定向文件传输'),
+    })
+    await senderPage.getByRole('button', { name: '发送 1 项', exact: true }).click()
+    const firstFileDialog = firstReceiverPage.getByRole('dialog', { name: '收到文件' })
+    await expect(firstFileDialog.getByRole('button', { name: '接收全部' })).toBeVisible({ timeout: 30_000 })
+    await firstFileDialog.getByRole('button', { name: '接收全部' }).click()
+    await expect(firstFileDialog.getByRole('link', { name: '下载 targeted.txt' })).toBeVisible({ timeout: 30_000 })
+    await expect(secondReceiverPage.getByRole('dialog', { name: '收到文件' })).toHaveCount(0)
+    await firstFileDialog.getByRole('button', { name: '关闭' }).click()
 
     await expect(senderPage.getByRole('button', { name: '关闭结果' })).toBeVisible({ timeout: 30_000 })
     await senderPage.getByRole('button', { name: '关闭结果' }).click()
@@ -151,13 +208,13 @@ test('sender can target one receiver, then broadcast to both', async ({ browser,
     await secondPicker.locator('label').nth(1).click()
     await secondPicker.getByRole('button', { name: '确定' }).click()
 
-    await senderPage.getByRole('tab', { name: '传输文件' }).click()
+    await senderPage.getByRole('button', { name: '清空' }).click()
     await senderPage.locator('input[type="file"]').setInputFiles({
       name: 'broadcast.txt',
       mimeType: 'text/plain',
       buffer: Buffer.from('广播文件传输'),
     })
-    await senderPage.getByRole('button', { name: '发送 1 个文件' }).click()
+    await senderPage.getByRole('button', { name: '发送 1 项', exact: true }).click()
 
     await expect(firstReceiverPage.getByRole('dialog', { name: '收到文件' })
       .getByRole('button', { name: '接收全部' })).toBeVisible({ timeout: 30_000 })
