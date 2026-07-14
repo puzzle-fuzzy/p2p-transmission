@@ -788,6 +788,7 @@ function App({ initialNavigation }: AppProps) {
               fileId: file.fileId,
               name: file.name,
               byteLength: file.byteLength,
+              mimeType: file.mimeType,
             })),
             state: { status: 'pending' },
           })
@@ -833,7 +834,9 @@ function App({ initialNavigation }: AppProps) {
                 fileId: file.fileId,
                 name: file.name,
                 byteLength: file.byteLength,
+                mimeType: file.mimeType,
                 url,
+                blob: file.blob,
               }
             })
             progressSchedulerRef.current?.clear()

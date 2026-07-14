@@ -7,10 +7,12 @@ export type IncomingFileRequestItem = {
   fileId: string
   name: string
   byteLength: number
+  mimeType?: string
 }
 
 export type DownloadableReceivedFile = IncomingFileRequestItem & {
   url: string
+  blob: Blob
 }
 
 export type IncomingFileRequestDialogState =
@@ -37,6 +39,11 @@ const formatByteLength = (byteLength: number) => {
   return `${(byteLength / (1024 * 1024)).toFixed(1)} MB`
 }
 
+const isCopyableTextFile = (file: IncomingFileRequestItem) => (
+  file.name.toLowerCase().endsWith('.txt')
+  || file.mimeType?.toLowerCase() === 'text/plain'
+)
+
 export default function IncomingFileRequestDialog({
   sender,
   files,
@@ -54,7 +61,11 @@ export default function IncomingFileRequestDialog({
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const decisionMadeRef = useRef(false)
   const closingRef = useRef(false)
+  const copyTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   const [decisionMade, setDecisionMade] = useState(false)
+  const [copyStatusByFileId, setCopyStatusByFileId] = useState<
+    Readonly<Record<string, 'copied' | 'error'>>
+  >({})
   const titleId = useId()
   const descriptionId = useId()
   const requestKey = useMemo(
@@ -67,15 +78,25 @@ export default function IncomingFileRequestDialog({
     const dialog = dialogRef.current
     if (!dialog) return undefined
 
+    for (const timer of copyTimersRef.current.values()) clearTimeout(timer)
+    copyTimersRef.current.clear()
+    setCopyStatusByFileId({})
     decisionMadeRef.current = false
     closingRef.current = false
     setDecisionMade(false)
     if (!dialog.open) dialog.showModal()
 
     return () => {
+      for (const timer of copyTimersRef.current.values()) clearTimeout(timer)
+      copyTimersRef.current.clear()
       if (dialog.open) dialog.close()
     }
   }, [requestKey])
+
+  useEffect(() => () => {
+    for (const timer of copyTimersRef.current.values()) clearTimeout(timer)
+    copyTimersRef.current.clear()
+  }, [])
 
   useEffect(() => {
     if (state.status === 'pending') {
@@ -144,6 +165,33 @@ export default function IncomingFileRequestDialog({
     }
   }
 
+  const copyFileContent = async (file: DownloadableReceivedFile) => {
+    if (!isCopyableTextFile(file)) return
+
+    const existingTimer = copyTimersRef.current.get(file.fileId)
+    if (existingTimer) clearTimeout(existingTimer)
+    copyTimersRef.current.delete(file.fileId)
+
+    try {
+      const content = await file.blob.text()
+      await navigator.clipboard.writeText(content)
+      setCopyStatusByFileId(current => ({ ...current, [file.fileId]: 'copied' }))
+
+      const timer = setTimeout(() => {
+        setCopyStatusByFileId(current => {
+          if (current[file.fileId] !== 'copied') return current
+          const next = { ...current }
+          delete next[file.fileId]
+          return next
+        })
+        copyTimersRef.current.delete(file.fileId)
+      }, 2_000)
+      copyTimersRef.current.set(file.fileId, timer)
+    } catch {
+      setCopyStatusByFileId(current => ({ ...current, [file.fileId]: 'error' }))
+    }
+  }
+
   const listedFiles = state.status === 'received' ? state.files : files
   const downloadableFiles = new Map<string, DownloadableReceivedFile>(
     state.status === 'received'
@@ -205,6 +253,8 @@ export default function IncomingFileRequestDialog({
                       : 'queued'
                   : 'queued'
             const downloadable = downloadableFiles.get(file.fileId)
+            const copyStatus = copyStatusByFileId[file.fileId]
+            const canCopy = downloadable ? isCopyableTextFile(downloadable) : false
 
             const speedInfo = fileSpeedData?.[file.fileId]
             return (
@@ -218,16 +268,39 @@ export default function IncomingFileRequestDialog({
                   speedBytesPerSecond={speedInfo?.speed}
                   etaSeconds={speedInfo?.eta}
                   action={downloadable ? (
-                    <a
-                      href={downloadable.url}
-                      download={downloadable.name}
-                      aria-label={`下载 ${downloadable.name}`}
-                      className="flex size-11 shrink-0 items-center justify-center rounded-full text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:bg-white/5 focus-visible:text-amber-50/80 focus-visible:outline-none"
-                    >
-                      <span className="material-symbols-outlined" style={{ fontSize: '17px' }} aria-hidden="true">download</span>
-                    </a>
+                    <div className="flex items-center gap-0.5 rounded-lg bg-surface-elevated/95 pl-0.5">
+                      {canCopy && (
+                        <button
+                          type="button"
+                          aria-label={copyStatus === 'copied'
+                            ? `已复制${downloadable.name} 的内容`
+                            : copyStatus === 'error'
+                              ? `复制失败${downloadable.name} 的内容`
+                              : `复制${downloadable.name} 的内容`}
+                          className="flex size-11 shrink-0 items-center justify-center rounded-full text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:bg-white/5 focus-visible:text-amber-50/80 focus-visible:outline-none"
+                          onClick={() => void copyFileContent(downloadable)}
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: '17px' }} aria-hidden="true">
+                            {copyStatus === 'copied' ? 'check' : copyStatus === 'error' ? 'content_paste_off' : 'content_copy'}
+                          </span>
+                        </button>
+                      )}
+                      <a
+                        href={downloadable.url}
+                        download={downloadable.name}
+                        aria-label={`下载 ${downloadable.name}`}
+                        className="flex size-11 shrink-0 items-center justify-center rounded-full text-amber-50/60 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:bg-white/5 focus-visible:text-amber-50/80 focus-visible:outline-none"
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: '17px' }} aria-hidden="true">download</span>
+                      </a>
+                    </div>
                   ) : undefined}
                 />
+                {copyStatus === 'error' && (
+                  <p className="px-3 py-1 text-right text-xs text-red-300/80" aria-live="polite">
+                    复制失败，请检查剪贴板权限，或使用下载按钮。
+                  </p>
+                )}
               </li>
             )
           })}

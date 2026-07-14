@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import '../test/dom'
@@ -28,6 +28,17 @@ const callbacks = () => ({
   onCancel: vi.fn(),
   onClose: vi.fn(),
 })
+
+const installClipboard = (writeText: (text: string) => Promise<void>) => {
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText },
+  })
+}
+
+const textBlob = () => ({
+  text: vi.fn(async () => '粘贴内容'),
+} as unknown as Blob)
 
 describe('IncomingFileRequestDialog', () => {
   test('shows metadata and focuses Reject before consent', () => {
@@ -169,8 +180,8 @@ describe('IncomingFileRequestDialog', () => {
         state={{
           status: 'received',
           files: [
-            { ...files[0], url: 'blob:file-1' },
-            { ...files[1], url: 'blob:file-2' },
+            { ...files[0], url: 'blob:file-1', blob: new Blob(['image']) },
+            { ...files[1], url: 'blob:file-2', blob: new Blob(['body']) },
           ],
         }}
         {...actions}
@@ -199,6 +210,8 @@ describe('IncomingFileRequestDialog', () => {
     const secondDownload = screen.getByRole('link', { name: '下载 说明.txt' })
     expect(secondDownload.getAttribute('href')).toBe('blob:file-2')
     expect(secondDownload.getAttribute('download')).toBe('说明.txt')
+    expect(screen.queryByRole('button', { name: '复制设计稿.png 的内容' })).toBeNull()
+    expect(screen.getByRole('button', { name: '复制说明.txt 的内容' })).not.toBeNull()
     const downloadAll = screen.getByRole('button', { name: '一键下载' })
     expect(downloadAll.parentElement?.className)
       .toContain('grid-cols-[minmax(0,1fr)_minmax(0,2fr)]')
@@ -215,6 +228,73 @@ describe('IncomingFileRequestDialog', () => {
       new Event('cancel', { cancelable: true }),
     )
     expect(actions.onClose).toHaveBeenCalledTimes(1)
+  })
+
+  test('copies TXT content, keeps feedback for two seconds, and keeps its download link', async () => {
+    vi.useFakeTimers()
+
+    try {
+      const writeText = vi.fn(async (_text: string) => undefined)
+      installClipboard(writeText)
+      const actions = callbacks()
+      render(
+        <IncomingFileRequestDialog
+          sender={sender}
+          files={[files[1]]}
+          state={{
+            status: 'received',
+            files: [{ ...files[1], url: 'blob:file-text', blob: textBlob() }],
+          }}
+          {...actions}
+        />,
+      )
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: '复制说明.txt 的内容' }))
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+
+      expect(writeText).toHaveBeenCalledWith('粘贴内容')
+      expect(screen.getByRole('button', { name: '已复制说明.txt 的内容' })).not.toBeNull()
+      expect(screen.getByRole('link', { name: '下载 说明.txt' })).not.toBeNull()
+
+      act(() => vi.advanceTimersByTime(1_999))
+      expect(screen.getByRole('button', { name: '已复制说明.txt 的内容' })).not.toBeNull()
+
+      act(() => vi.advanceTimersByTime(1))
+      expect(screen.getByRole('button', { name: '复制说明.txt 的内容' })).not.toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('shows an aria-live error and keeps download available when clipboard copy fails', async () => {
+    const user = userEvent.setup()
+    const writeText = vi.fn(async () => {
+      throw new Error('clipboard denied')
+    })
+    installClipboard(writeText)
+    const actions = callbacks()
+    render(
+      <IncomingFileRequestDialog
+        sender={sender}
+        files={[files[1]]}
+        state={{
+          status: 'received',
+          files: [{ ...files[1], url: 'blob:file-text', blob: textBlob() }],
+        }}
+        {...actions}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: '复制说明.txt 的内容' }))
+
+    expect(writeText).toHaveBeenCalledWith('粘贴内容')
+    expect(screen.getByRole('button', { name: '复制失败说明.txt 的内容' })).not.toBeNull()
+    const error = screen.getByText('复制失败，请检查剪贴板权限，或使用下载按钮。')
+    expect(error.getAttribute('aria-live')).toBe('polite')
+    expect(screen.getByRole('link', { name: '下载 说明.txt' })).not.toBeNull()
   })
 
   test('keeps an error recoverable with a Close action', () => {
