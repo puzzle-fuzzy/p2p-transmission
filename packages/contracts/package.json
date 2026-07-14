@@ -1,7 +1,8 @@
 {
   "name": "@p2p/contracts",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "P2P Transmission 的 Web/API 共享协议契约。",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"

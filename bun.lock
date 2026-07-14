@@ -4,13 +4,14 @@
   "workspaces": {
     "": {
       "name": "p2p-transmission",
+      "version": "1.0.0",
       "devDependencies": {
         "turbo": "^2.6.3",
       },
     },
     "apps/web": {
       "name": "web",
-      "version": "0.0.0",
+      "version": "1.0.0",
       "dependencies": {
         "@p2p/contracts": "workspace:*",
         "@tailwindcss/vite": "^4.3.2",
@@ -43,7 +44,7 @@
     },
     "packages/contracts": {
       "name": "@p2p/contracts",
-      "version": "0.0.0",
+      "version": "1.0.0",
       "devDependencies": {
         "oxlint": "^1.71.0",
         "typescript": "~6.0.2",

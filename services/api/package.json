@@ -1,6 +1,9 @@
 {
   "name": "api",
+  "private": true,
   "version": "1.0.0",
+  "description": "P2P Transmission 的 Bun/Elysia 信令与房间 API。",
+  "type": "module",
   "scripts": {
     "build": "bun build src/index.ts --target=bun --outdir=dist",
     "dev": "bun run --watch src/index.ts",
