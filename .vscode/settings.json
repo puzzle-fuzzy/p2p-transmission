@@ -4,5 +4,15 @@
   // 确保 .css 文件中的 @tailwind 指令被正确识别
   "files.associations": {
     "*.css": "tailwindcss"
-  }
+  },
+  "json.schemaDownload.enable": true,
+  "json.schemas": [
+    {
+      "fileMatch": [
+        "/*.json",
+        "/*.jsonc"
+      ],
+      "url": "https://turbo.build/schema.json"
+    }
+  ]
 }
