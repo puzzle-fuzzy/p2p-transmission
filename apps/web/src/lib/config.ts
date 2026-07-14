@@ -14,8 +14,9 @@ export type ClientIceMode =
   | { mode: 'static'; configuration: RTCConfiguration }
   | { mode: 'api'; iceTransportPolicy: RTCIceTransportPolicy }
 
-export const getApiBaseUrl = () =>
-  trimTrailingSlash(import.meta.env.VITE_API_URL ?? 'http://localhost:3000')
+export const getApiBaseUrl = (
+  environment: ClientEnvironment = import.meta.env,
+) => trimTrailingSlash(environment.VITE_API_URL ?? 'http://localhost:3332')
 
 export const getRealtimeUrl = (ticket: string) => {
   const baseUrl = new URL(getApiBaseUrl())

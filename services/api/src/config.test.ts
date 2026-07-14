@@ -8,7 +8,7 @@ describe("API configuration", () => {
     const config = loadApiConfig({});
 
     expect(config).toEqual({
-      port: 3000,
+      port: 3332,
       databasePath: ":memory:",
       realtimeTicketTtlMs: 60_000,
       realtimeTicketMaxPerVisitor: 12,

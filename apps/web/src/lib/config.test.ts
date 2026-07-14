@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import type { RoomSessionBootstrap } from '@p2p/contracts'
 import {
+  getApiBaseUrl,
   parseClientIceMode,
   parseIceServerUrls,
   resolveBootstrapRtcConfiguration,
@@ -14,6 +15,17 @@ const room = {
   createdAt: 1,
   expiresAt: 1_800_001,
 }
+
+describe('API endpoint config', () => {
+  test('uses the isolated local API port by default', () => {
+    expect(getApiBaseUrl({})).toBe('http://localhost:3332')
+  })
+
+  test('honors an explicit API URL and trims its trailing slash', () => {
+    expect(getApiBaseUrl({ VITE_API_URL: 'https://api.example.com/' }))
+      .toBe('https://api.example.com')
+  })
+})
 
 describe('runtime ICE config', () => {
   test('uses STUN-only off mode and all policy by default', () => {

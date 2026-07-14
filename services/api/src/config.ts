@@ -21,7 +21,7 @@ export type ApiConfig = {
 
 export type ApiEnvironment = Readonly<Record<string, string | undefined>>;
 
-const DEFAULT_PORT = 3000;
+const DEFAULT_PORT = 3332;
 const DEFAULT_DATABASE_PATH = ":memory:";
 const DEFAULT_REALTIME_TICKET_TTL_SECONDS = 60;
 const DEFAULT_REALTIME_TICKET_MAX_PER_VISITOR = 12;
