@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type { ComponentProps } from 'react'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import '../test/dom'
@@ -30,9 +30,8 @@ const createProps = (overrides: Partial<PanelProps> = {}): PanelProps => ({
   receivers: [receiverOne, receiverTwo],
   files: [],
   selectionError: '',
-  onFilesAdded: vi.fn(),
+  onFilesAdded: vi.fn(() => true),
   onFileRemoved: vi.fn(),
-  onSendText: vi.fn(async () => undefined),
   onSendFiles: vi.fn(async () => undefined),
   onCancel: vi.fn(),
   ...overrides,
@@ -42,6 +41,11 @@ const createSelection = (fileId: string, file: File): FileSelection => ({
   fileId,
   file,
 })
+
+const createTextClipboard = (text: string) => ({
+  files: [],
+  getData: (format: string) => format === 'text/plain' ? text : '',
+}) as unknown as DataTransfer
 
 const createActiveFileTransfer = (
   fileId: string,
@@ -95,18 +99,6 @@ const createFailedFileTransfer = (
   },
 })
 
-const createActiveTextTransfer = (): OutgoingActivity => ({
-  generation: 1,
-  transferId: 'transfer-text',
-  kind: 'text',
-  phase: 'transferring',
-  peerIds: [receiverTwo.id],
-  peers: {
-    [receiverTwo.id]: { accepted: true, progress: 0.5 },
-  },
-  files: {},
-})
-
 describe('TransferPanel', () => {
   test('keeps the connected label and peer flow together while filtering active recipients', () => {
     const initialProps = createProps()
@@ -125,10 +117,12 @@ describe('TransferPanel', () => {
     expect(screen.getByTitle(receiverTwo.displayName)).not.toBeNull()
     expect(screen.queryByText(/房间\s+012345/)).toBeNull()
 
+    const activeActivity = createActiveFileTransfer('file-flow')
+    activeActivity.peerIds = [receiverTwo.id]
     rerender(
       <TransferPanel
         {...initialProps}
-        activity={createActiveTextTransfer()}
+        activity={activeActivity}
       />,
     )
 
@@ -149,78 +143,41 @@ describe('TransferPanel', () => {
     expect(status.querySelectorAll('.transfer-peer-flow__dot')).toHaveLength(0)
   })
 
-  test('implements wrapping arrow keys plus Home/End for tabs', async () => {
-    const user = userEvent.setup()
+  test('shows one upload surface and no text/file tabs', () => {
     render(<TransferPanel {...createProps()} />)
 
-    const textTab = screen.getByRole('tab', { name: '传输文本' })
-    const fileTab = screen.getByRole('tab', { name: '传输文件' })
-    const tablist = screen.getByRole('tablist', { name: '传输类型' })
-    const slider = () => tablist.querySelector('[data-testid="transfer-tab-slider"]')
-
-    expect(textTab.getAttribute('aria-selected')).toBe('true')
-    expect(tablist.getAttribute('data-active-tab')).toBe('text')
-    expect(slider()?.getAttribute('aria-hidden')).toBe('true')
-    expect(slider()?.className).toContain('translate-x-0')
-
-    await user.click(fileTab)
-    expect(tablist.getAttribute('data-active-tab')).toBe('file')
-    expect(slider()?.className).toContain('translate-x-full')
-
-    await user.click(textTab)
-    expect(tablist.getAttribute('data-active-tab')).toBe('text')
-    expect(slider()?.className).toContain('translate-x-0')
-
-    textTab.focus()
-    await user.keyboard('{ArrowRight}')
-    expect(fileTab.getAttribute('aria-selected')).toBe('true')
-    expect(document.activeElement).toBe(fileTab)
-
-    await user.keyboard('{ArrowRight}')
-    expect(textTab.getAttribute('aria-selected')).toBe('true')
-    expect(document.activeElement).toBe(textTab)
-
-    await user.keyboard('{End}')
-    expect(fileTab.getAttribute('aria-selected')).toBe('true')
-    await user.keyboard('{Home}')
-    expect(textTab.getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByRole('button', { name: '上传要传输的内容' })).not.toBeNull()
+    expect(screen.queryByRole('tab')).toBeNull()
+    expect(screen.queryByRole('textbox', { name: '要传输的文本' })).toBeNull()
   })
 
-  test('preserves the exact textarea value and sends it without trimming', async () => {
+  test('opens paste confirmation only from the upload surface', async () => {
     const user = userEvent.setup()
-    const onSendText = vi.fn(async () => undefined)
-    render(<TransferPanel {...createProps({ onSendText })} />)
+    render(<TransferPanel {...createProps()} />)
+    const upload = screen.getByRole('button', { name: '上传要传输的内容' })
+    const data = createTextClipboard('粘贴的内容')
 
-    const textarea = screen.getByRole('textbox', {
-      name: '要传输的文本',
-    }) as HTMLTextAreaElement
-    const exact = '  第一行\n第二行 🙂  '
-    fireEvent.change(textarea, { target: { value: exact } })
+    await user.click(upload)
+    fireEvent.paste(upload, { clipboardData: data })
 
-    expect(textarea.value).toBe(exact)
-    expect(textarea.className.includes('focus-visible:border-accent')).toBe(true)
-    expect(textarea.className).not.toMatch(/(?:ring|shadow)/)
-    expect(screen.getByText(`${String(exact.length)}/500`).textContent)
-      .toBe(`${String(exact.length)}/500`)
-
-    await user.click(screen.getByRole('button', { name: '发送给 2 位接收者' }))
-    expect(onSendText).toHaveBeenCalledTimes(1)
-    expect(onSendText).toHaveBeenCalledWith(exact, [receiverOne.id, receiverTwo.id])
-    await waitFor(() => expect(textarea.value).toBe(''))
+    expect(screen.getByRole('dialog', { name: '确认添加粘贴内容' })).not.toBeNull()
   })
 
-  test('defaults to all receivers and passes a multi-selection to text sends', async () => {
+  test('confirming pasted text adds one file item but does not send', async () => {
     const user = userEvent.setup()
-    const onSendText = vi.fn(async () => undefined)
-    render(<TransferPanel {...createProps({ onSendText })} />)
+    const onFilesAdded = vi.fn(() => true)
+    const onSendFiles = vi.fn(async () => undefined)
+    render(<TransferPanel {...createProps({ onFilesAdded, onSendFiles })} />)
+    const upload = screen.getByRole('button', { name: '上传要传输的内容' })
+    const data = createTextClipboard('要作为文本项目发送')
 
-    await user.click(screen.getByRole('button', { name: /选择接收者/u }))
-    await user.click(screen.getByRole('checkbox', { name: receiverTwo.displayName }))
-    await user.click(screen.getByRole('button', { name: '确定' }))
-    await user.type(screen.getByRole('textbox', { name: '要传输的文本' }), 'hello')
-    await user.click(screen.getByRole('button', { name: '发送给 1 位接收者' }))
+    fireEvent.paste(upload, { clipboardData: data })
+    await user.click(screen.getByRole('button', { name: '添加到传输列表' }))
 
-    expect(onSendText).toHaveBeenCalledWith('hello', [receiverOne.id])
+    expect(onFilesAdded).toHaveBeenCalledWith([
+      expect.objectContaining({ name: '粘贴内容.txt', type: 'text/plain' }),
+    ])
+    expect(onSendFiles).not.toHaveBeenCalled()
   })
 
   test('keeps an empty recipient selection explicit and disables sending', async () => {
@@ -233,7 +190,7 @@ describe('TransferPanel', () => {
 
     expect(screen.getByRole('alert').textContent).toContain('至少选择一位接收者')
     await user.click(screen.getByRole('button', { name: '取消' }))
-    expect((screen.getByRole('button', { name: '发送给 2 位接收者' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: '选择文件' }) as HTMLButtonElement).disabled).toBe(true)
     expect(screen.getByRole('button', { name: '选择接收者，已选择 2 位' })).not.toBeNull()
   })
 
@@ -257,8 +214,7 @@ describe('TransferPanel', () => {
       />,
     )
 
-    await user.click(screen.getByRole('tab', { name: '传输文件' }))
-    const dropZone = screen.getByRole('button', { name: '选择要传输的文件' })
+    const dropZone = screen.getByRole('button', { name: '上传要传输的内容' })
     const fileScroll = screen.getByTestId('selected-file-scroll')
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     const inputClick = vi.spyOn(input, 'click')
@@ -294,7 +250,7 @@ describe('TransferPanel', () => {
     expect(onFileRemoved).toHaveBeenCalledWith('file-existing')
     expect(inputClick).not.toHaveBeenCalled()
 
-    await user.click(screen.getByRole('button', { name: '发送 1 个文件' }))
+    await user.click(screen.getByRole('button', { name: '发送 1 项' }))
     expect(onSendFiles).toHaveBeenCalledTimes(1)
   })
 
@@ -317,11 +273,9 @@ describe('TransferPanel', () => {
       />,
     )
 
-    await user.click(screen.getByRole('tab', { name: '传输文件' }))
-
     const sendButton = screen.getByRole('button', { name: '暂无接收者连接' }) as HTMLButtonElement
     expect(sendButton.disabled).toBe(true)
-    expect(screen.queryByRole('button', { name: '发送 1 个文件' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '发送 1 项' })).toBeNull()
 
     await user.click(screen.getByRole('button', { name: '清空' }))
     expect(onFileRemoved).toHaveBeenCalledWith('file-waiting')
@@ -338,7 +292,6 @@ describe('TransferPanel', () => {
     const onFileRemoved = vi.fn()
     render(<TransferPanel {...createProps({ files, onFileRemoved })} />)
 
-    await user.click(screen.getByRole('tab', { name: '传输文件' }))
     await user.click(screen.getByRole('button', { name: '清空' }))
 
     expect(onFileRemoved.mock.calls).toEqual([
@@ -366,11 +319,8 @@ describe('TransferPanel', () => {
       .toContain('文件总大小不能超过 100 MiB')
   })
 
-  test('shows the 10-file and 100-MiB limits before files are selected', async () => {
-    const user = userEvent.setup()
+  test('shows the 10-file and 100-MiB limits before files are selected', () => {
     render(<TransferPanel {...createProps()} />)
-
-    await user.click(screen.getByRole('tab', { name: '传输文件' }))
 
     expect(screen.getByText('一次最多 10 个文件，总计不超过 100 MiB')).toBeDefined()
   })
@@ -392,7 +342,6 @@ describe('TransferPanel', () => {
     })
     const { rerender } = render(<TransferPanel {...initialProps} />)
 
-    await user.click(screen.getByRole('tab', { name: '传输文件' }))
     const selectedRow = screen.getByTestId('file-transfer-row-file-progress')
     const selectedClassName = selectedRow.className
     expect(screen.getByRole('button', { name: '移除 progress.bin' })).not.toBeNull()
@@ -414,13 +363,11 @@ describe('TransferPanel', () => {
     expect(progress.getAttribute('aria-valuenow')).toBe('35')
     expect(progress.getAttribute('style')).toContain('35%')
     expect(screen.getByText('35%').textContent).toBe('35%')
-    expect((screen.getByRole('tab', { name: '传输文本' }) as HTMLButtonElement).disabled)
-      .toBe(true)
     expect((document.querySelector('input[type="file"]') as HTMLInputElement).disabled)
       .toBe(true)
     expect(screen.queryByRole('button', { name: '移除 progress.bin' })).toBeNull()
 
-    const dropZone = screen.getByRole('button', { name: '选择要传输的文件' })
+    const dropZone = screen.getByRole('button', { name: '上传要传输的内容' })
     expect(dropZone.getAttribute('aria-disabled')).toBe('true')
     expect(dropZone.className).not.toContain('opacity-60')
     fireEvent.drop(dropZone, {
@@ -451,12 +398,9 @@ describe('TransferPanel', () => {
     expect(onDismissActivity).toHaveBeenCalledTimes(1)
   })
 
-  test('uses border-only focus and contains no fake transfer machinery', async () => {
-    const user = userEvent.setup()
+  test('uses border-only focus and contains no fake transfer machinery', () => {
     render(<TransferPanel {...createProps()} />)
-    await user.click(screen.getByRole('tab', { name: '传输文件' }))
-
-    const dropZone = screen.getByRole('button', { name: '选择要传输的文件' })
+    const dropZone = screen.getByRole('button', { name: '上传要传输的内容' })
     expect(dropZone.className.includes('focus-visible:border-accent')).toBe(true)
     expect(dropZone.className).not.toMatch(/(?:ring|shadow)/)
 

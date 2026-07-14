@@ -1,21 +1,24 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   MAX_FILE_BATCH_BYTES,
   MAX_FILE_COUNT,
-  MAX_TEXT_CHARACTERS,
   type PublicVisitor,
 } from '@p2p/contracts'
 import type { FileSelection } from '../features/transfer/file-selection'
+import {
+  createPastedTextFile,
+  readPasteCandidate,
+  type PasteCandidate,
+} from '../features/transfer/paste-upload'
 import {
   aggregateFileProgress,
   isTransferLocked,
   type OutgoingActivity,
 } from '../features/transfer/ui-state'
 import FileTransferRow from './FileTransferRow'
+import PasteConfirmDialog from './PasteConfirmDialog'
 import RecipientPickerDialog from './RecipientPickerDialog'
 import TransferPeerFlow from './TransferPeerFlow'
-
-type Tab = 'text' | 'file'
 
 const MEBIBYTE_BYTES = 1024 * 1024
 const MAX_FILE_BATCH_MEBIBYTES = MAX_FILE_BATCH_BYTES / MEBIBYTE_BYTES
@@ -27,9 +30,8 @@ export type TransferPanelProps = {
   files: FileSelection[]
   selectionError: string
   fileSpeedData?: Record<string, { speed: number; eta: number | undefined }>
-  onFilesAdded(files: readonly File[]): void
+  onFilesAdded(files: readonly File[]): boolean
   onFileRemoved(fileId: string): void
-  onSendText(text: string, peerIds: ReadonlyArray<string>): Promise<void>
   onSendFiles(peerIds: ReadonlyArray<string>): Promise<void>
   onCancel(): void
   onRetry?(): Promise<void>
@@ -61,24 +63,19 @@ export default function TransferPanel({
   fileSpeedData,
   onFilesAdded,
   onFileRemoved,
-  onSendText,
   onSendFiles,
   onCancel,
   onRetry,
   onDismissActivity,
 }: TransferPanelProps) {
-  const [tab, setTab] = useState<Tab>('text')
-  const [text, setText] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [sendError, setSendError] = useState('')
   const [dragActive, setDragActive] = useState(false)
   const [selectedReceiverIds, setSelectedReceiverIds] = useState<string[] | undefined>()
   const [pickerOpen, setPickerOpen] = useState(false)
-  const textTabRef = useRef<HTMLButtonElement>(null)
-  const fileTabRef = useRef<HTMLButtonElement>(null)
+  const [pasteCandidate, setPasteCandidate] = useState<PasteCandidate>()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const pickerTriggerRef = useRef<HTMLButtonElement>(null)
-  const tabId = useId()
   const terminal = activity?.phase === 'complete' || activity?.phase === 'error'
   const activeTransfer = Boolean(activity && !terminal)
   const connectedCount = receivers.length
@@ -87,15 +84,14 @@ export default function TransferPanel({
   const selectedCount = selectedReadyReceivers.length
   const locked = isTransferLocked({ activity }) || submitting
   const pickerLocked = activeTransfer || submitting
-  const canSendText = selectedCount > 0 && Boolean(text.trim()) && !locked
-  const canSendFiles = selectedCount > 0 && files.length > 0 && !locked
+  const canSend = selectedCount > 0 && files.length > 0 && !locked
   const connectedLabel = `${String(connectedCount)} 位接收者已连接`
-  const showClearFiles = tab === 'file' && files.length > 0
+  const showClearFiles = files.length > 0
   const fileSubmitLabel = files.length === 0
     ? '选择文件'
     : selectedCount === 0
       ? connectedCount === 0 ? '暂无接收者连接' : '请选择接收者'
-      : `发送 ${String(files.length)} 个文件`
+      : `发送 ${String(files.length)} 项`
   const activePeerIds = new Set(activity?.peerIds ?? [])
   const flowReceivers = activity
     ? receivers.filter(receiver => activePeerIds.has(receiver.id))
@@ -118,51 +114,8 @@ export default function TransferPanel({
     window.setTimeout(() => pickerTriggerRef.current?.focus(), 0)
   }
 
-  const selectTab = (nextTab: Tab, focus = false) => {
-    if (locked) return
-    setTab(nextTab)
-    setSendError('')
-    if (focus) {
-      const target = nextTab === 'text' ? textTabRef.current : fileTabRef.current
-      target?.focus()
-    }
-  }
-
-  const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
-    event.preventDefault()
-    if (event.key === 'Home') {
-      selectTab('text', true)
-      return
-    }
-    if (event.key === 'End') {
-      selectTab('file', true)
-      return
-    }
-
-    const nextTab = event.key === 'ArrowLeft'
-      ? tab === 'text' ? 'file' : 'text'
-      : tab === 'file' ? 'text' : 'file'
-    selectTab(nextTab, true)
-  }
-
-  const handleTextSend = async () => {
-    if (!canSendText) return
-    const snapshot = text
-    setSubmitting(true)
-    setSendError('')
-    try {
-      await onSendText(snapshot, selectedReadyReceivers.map(receiver => receiver.id))
-      setText(current => current === snapshot ? '' : current)
-    } catch (error) {
-      setSendError(error instanceof Error ? error.message : '无法发送文本，请稍后重试。')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
   const handleFileSend = async () => {
-    if (!canSendFiles) return
+    if (!canSend) return
     setSubmitting(true)
     setSendError('')
     try {
@@ -202,6 +155,14 @@ export default function TransferPanel({
     onFilesAdded(Array.from(nextFiles))
   }
 
+  const handlePasteConfirm = () => {
+    if (!pasteCandidate || locked) return
+    const nextFiles = pasteCandidate.kind === 'files'
+      ? pasteCandidate.files
+      : [createPastedTextFile(pasteCandidate.text, files.map(selection => selection.file.name))]
+    if (onFilesAdded(nextFiles)) setPasteCandidate(undefined)
+  }
+
   const activityLabel = !activity
     ? connectedLabel
     : activity.kind === 'file'
@@ -213,68 +174,17 @@ export default function TransferPanel({
             ? '文件传输完成'
             : '文件传输结束，但有接收方未完成'
       : activity.phase === 'complete'
-        ? '文本传输完成'
+        ? '传输完成'
         : activity.phase === 'error'
-          ? '文本传输结束，但有接收方未完成'
-          : '正在传输文本'
+          ? '传输结束，但有接收方未完成'
+          : '正在传输'
 
   return (
     <section
       className="native-scrollbar flex max-h-[calc(100svh-2rem)] w-[calc(100vw-2rem)] max-w-xl flex-col gap-5 overflow-y-auto py-0.5 sm:gap-6"
       aria-label="发送内容"
     >
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div
-          className="relative grid w-full grid-cols-2 rounded-xl bg-white/5 p-1 sm:w-auto sm:min-w-64"
-          role="tablist"
-          aria-label="传输类型"
-          data-active-tab={tab}
-        >
-          <span
-            data-testid="transfer-tab-slider"
-            aria-hidden="true"
-            className={`pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-lg bg-white/10 transition-transform duration-200 ease-out motion-reduce:transition-none ${tab === 'file' ? 'translate-x-full' : 'translate-x-0'}`}
-          />
-          <button
-            ref={textTabRef}
-            id={`${tabId}-text-tab`}
-            type="button"
-            role="tab"
-            aria-selected={tab === 'text'}
-            aria-controls={`${tabId}-text-panel`}
-            tabIndex={tab === 'text' ? 0 : -1}
-            disabled={locked}
-            className={`relative z-10 min-h-11 rounded-lg border border-transparent px-4 text-sm transition-colors focus-visible:border-accent focus-visible:outline-none disabled:cursor-not-allowed ${
-              tab === 'text'
-                ? 'text-amber-50/80'
-                : 'text-amber-50/60 hover:text-amber-50/80'
-            }`}
-            onClick={() => selectTab('text')}
-            onKeyDown={handleTabKeyDown}
-          >
-            传输文本
-          </button>
-          <button
-            ref={fileTabRef}
-            id={`${tabId}-file-tab`}
-            type="button"
-            role="tab"
-            aria-selected={tab === 'file'}
-            aria-controls={`${tabId}-file-panel`}
-            tabIndex={tab === 'file' ? 0 : -1}
-            disabled={locked}
-            className={`relative z-10 min-h-11 rounded-lg border border-transparent px-4 text-sm transition-colors focus-visible:border-accent focus-visible:outline-none disabled:cursor-not-allowed ${
-              tab === 'file'
-                ? 'text-amber-50/80'
-                : 'text-amber-50/60 hover:text-amber-50/80'
-            }`}
-            onClick={() => selectTab('file')}
-            onKeyDown={handleTabKeyDown}
-          >
-            传输文件
-          </button>
-        </div>
-
+      <div className="flex justify-end">
         <div className="flex w-full flex-nowrap items-center justify-between gap-2 sm:w-auto sm:justify-end sm:gap-3">
           <div className="shrink-0 whitespace-nowrap text-[11px] text-amber-50/60 tabular-nums sm:text-xs">
             {connectedLabel}
@@ -310,34 +220,10 @@ export default function TransferPanel({
         </div>
       )}
 
-      {tab === 'text' && (
-        <div id={`${tabId}-text-panel`} role="tabpanel" aria-labelledby={`${tabId}-text-tab`}>
-          <div className="relative h-52 sm:h-56" style={{ fontSize: 0 }}>
-            <textarea
-              placeholder="输入要传输的文本…"
-              maxLength={MAX_TEXT_CHARACTERS}
-              value={text}
-              disabled={locked}
-              onChange={event => {
-                setText(event.target.value)
-                if (sendError) setSendError('')
-              }}
-              className="native-scrollbar h-full w-full resize-none rounded-xl border border-amber-50/15 bg-transparent p-4 pb-9 text-sm text-amber-50/80 outline-none transition-colors placeholder:text-amber-50/50 focus-visible:border-accent disabled:cursor-not-allowed disabled:opacity-60"
-              aria-label="要传输的文本"
-            />
-            <span className="pointer-events-none absolute bottom-4 right-4 text-xs text-amber-50/60 tabular-nums">
-              {text.length}/{String(MAX_TEXT_CHARACTERS)}
-            </span>
-          </div>
-        </div>
-      )}
-
-      {tab === 'file' && (
-        <div id={`${tabId}-file-panel`} role="tabpanel" aria-labelledby={`${tabId}-file-tab`}>
-          <div
+      <div
             role="button"
             tabIndex={locked ? -1 : 0}
-            aria-label="选择要传输的文件"
+            aria-label="上传要传输的内容"
             aria-disabled={locked}
             className={`flex min-h-52 flex-col rounded-xl border-2 border-dashed px-3 py-3 transition-colors focus-visible:border-accent focus-visible:outline-none sm:min-h-56 ${
               dragActive ? 'border-accent' : 'border-amber-50/15'
@@ -366,11 +252,19 @@ export default function TransferPanel({
               setDragActive(false)
               addFiles(event.dataTransfer.files)
             }}
+            onPaste={event => {
+              if (locked) return
+              const candidate = readPasteCandidate(event.clipboardData)
+              if (!candidate) return
+              event.preventDefault()
+              setSendError('')
+              setPasteCandidate(candidate)
+            }}
           >
             {files.length === 0 ? (
               <div className="flex flex-1 flex-col items-center justify-center px-5 text-center">
                 <span className="material-symbols-outlined text-amber-50/30" style={{ fontSize: '28px' }} aria-hidden="true">upload_file</span>
-                <div className="mt-3 text-sm text-amber-50/70">拖拽文件到这里，或点击选择</div>
+                <div className="mt-3 text-sm text-amber-50/70">拖拽文件到这里、点击选择，或粘贴内容</div>
                 <p className="mt-2 text-xs leading-5 text-amber-50/50">
                   一次最多 {String(MAX_FILE_COUNT)} 个文件，总计不超过 {String(MAX_FILE_BATCH_MEBIBYTES)} MiB
                 </p>
@@ -427,7 +321,7 @@ export default function TransferPanel({
                     }}
                   >
                     <span className="material-symbols-outlined" style={{ fontSize: '16px' }} aria-hidden="true">add</span>
-                    添加更多文件
+                    添加更多内容
                   </button>
                 )}
               </div>
@@ -444,8 +338,6 @@ export default function TransferPanel({
               }}
             />
           </div>
-        </div>
-      )}
 
       {activity && !terminal ? (
         <button
@@ -499,29 +391,20 @@ export default function TransferPanel({
               清空
             </button>
           )}
-          <button
-            type="button"
-            className={`flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-transparent px-4 text-sm transition-[filter,color,background-color,border-color] focus-visible:border-amber-50/80 focus-visible:outline-none ${
-              (tab === 'text' ? canSendText : canSendFiles)
+            <button
+              type="button"
+              className={`flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-transparent px-4 text-sm transition-[filter,color,background-color,border-color] focus-visible:border-amber-50/80 focus-visible:outline-none ${
+              canSend
                 ? 'cursor-pointer bg-accent text-white/90 hover:brightness-110 active:brightness-90'
                 : 'cursor-not-allowed bg-white/5 text-amber-50/30'
             }`}
-            disabled={tab === 'text' ? !canSendText : !canSendFiles}
-            onClick={() => {
-              if (tab === 'text') void handleTextSend()
-              else void handleFileSend()
-            }}
+            disabled={!canSend}
+            onClick={() => { void handleFileSend() }}
           >
             {submitting && (
               <span className="material-symbols-outlined motion-safe:animate-spin" style={{ fontSize: '16px' }} aria-hidden="true">progress_activity</span>
             )}
-            {tab === 'file'
-              ? fileSubmitLabel
-              : selectedCount === 0
-                 ? connectedCount === 0 ? '等待接收者连接' : '请选择接收者'
-                : selectedCount === 1
-                  ? '发送给 1 位接收者'
-                  : `发送给 ${String(selectedCount)} 位接收者`}
+            {fileSubmitLabel}
           </button>
         </div>
       )}
@@ -541,6 +424,11 @@ export default function TransferPanel({
           }}
         />
       )}
+      <PasteConfirmDialog
+        candidate={pasteCandidate}
+        onConfirm={handlePasteConfirm}
+        onCancel={() => setPasteCandidate(undefined)}
+      />
     </section>
   )
 }
