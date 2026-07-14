@@ -34,7 +34,7 @@ describe('RoomJoin', () => {
     renderRoomJoin()
 
     for (const input of roomCodeInputs()) {
-      expect(input.className).toContain('aspect-[4/5]')
+      expect(input.className).toContain('aspect-4/5')
       expect(input.className).toContain('min-h-12')
     }
   })
