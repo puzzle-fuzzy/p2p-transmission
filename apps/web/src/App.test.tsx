@@ -192,8 +192,7 @@ type MockTransferPanelProps = {
   files: FileSelection[]
   receivers: PublicVisitor[]
   fileSpeedData?: Record<string, { speed: number; eta: number | undefined }>
-  onFilesAdded(files: readonly File[]): void
-  onSendText(text: string, peerIds: readonly string[]): Promise<void>
+  onFilesAdded(files: readonly File[]): boolean
   onSendFiles(peerIds: readonly string[]): Promise<void>
   onCancel(): void
   onRetry?(): Promise<void>
@@ -215,18 +214,22 @@ vi.mock('./components/TransferPanel', () => ({
         <button
           type="button"
           disabled={Boolean(props.activity)}
-          onClick={() => { void props.onSendText('精确文本\n🙂', ['receiver']) }}
-        >
-          发送测试文本
-        </button>
-        <button
-          type="button"
-          disabled={Boolean(props.activity)}
           onClick={() => props.onFilesAdded([
             new File(['file body'], '设计稿.txt', { type: 'text/plain' }),
           ])}
         >
           添加测试文件
+        </button>
+        <button
+          type="button"
+          disabled={Boolean(props.activity)}
+          onClick={() => {
+            props.onFilesAdded([
+              new File(['精确文本\n🙂'], '粘贴内容.txt', { type: 'text/plain' }),
+            ])
+          }}
+        >
+          添加粘贴文本
         </button>
         <button
           type="button"
@@ -2073,17 +2076,29 @@ describe('App transfer integration', () => {
   test('keeps a terminal result until dismiss and retries the original payload', async () => {
     const user = await enterRoom('sender')
 
-    await user.click(screen.getByRole('button', { name: '发送测试文本' }))
+    await user.click(screen.getByRole('button', { name: '添加粘贴文本' }))
+    await user.click(screen.getByRole('button', { name: '发送测试文件' }))
+    const pastedSelections = peerSession.offerFiles.mock.calls[0]?.[0]
+    const pastedSelection = pastedSelections?.[0]
+    expect(pastedSelection).toMatchObject({
+      fileId: expect.any(String),
+      file: expect.objectContaining({
+        name: '粘贴内容.txt',
+        type: 'text/plain',
+      }),
+    })
+    await expect(pastedSelection?.file.text()).resolves.toBe('精确文本\n🙂')
+
     emit({
       type: 'transfer:terminal',
       peerId: receiver.id,
-      transferId: 'text-1',
+      transferId: 'files-1',
       outcome: 'completed',
     })
     expect(screen.getByTestId('activity-phase').textContent).toBe('complete')
 
-    peerSession.offerText.mockReturnValueOnce({
-      transferId: 'text-2',
+    peerSession.offerFiles.mockReturnValueOnce({
+      transferId: 'files-2',
       peerIds: [receiver.id],
       peerCount: 1,
       unsupportedPeerIds: [],
@@ -2092,13 +2107,13 @@ describe('App transfer integration', () => {
     expect(screen.getByTestId('activity-phase').textContent).toBe('complete')
 
     await user.click(screen.getByRole('button', { name: '再次发送' }))
-    expect(peerSession.offerText).toHaveBeenLastCalledWith('精确文本\n🙂', ['receiver'])
-    expect(screen.getByTestId('activity-phase').textContent).toBe('transferring')
+    expect(peerSession.offerFiles).toHaveBeenLastCalledWith(pastedSelections, ['receiver'])
+    expect(screen.getByTestId('activity-phase').textContent).toBe('requesting')
 
     emit({
       type: 'transfer:terminal',
       peerId: receiver.id,
-      transferId: 'text-2',
+      transferId: 'files-2',
       outcome: 'completed',
     })
     expect(screen.getByTestId('activity-phase').textContent).toBe('complete')
@@ -2150,7 +2165,7 @@ describe('App transfer integration', () => {
     expect(screen.getByTestId('transfer-panel')).not.toBeNull()
   })
 
-  test('wires room copy plus sender text, file, and cancel intents', async () => {
+  test('wires room copy plus sender file and cancel intents', async () => {
     const user = await enterRoom('sender')
     expect(screen.getAllByText('012345')).toHaveLength(1)
     expect(screen.getByTestId('room-code-copy-value').textContent).toBe('012345')
@@ -2158,9 +2173,17 @@ describe('App transfer integration', () => {
     expect(clipboardWrite).toHaveBeenCalledWith('012345')
     expect(boundary.showToast).toHaveBeenCalledWith('房间码已复制', 'success')
 
-    await user.click(screen.getByRole('button', { name: '发送测试文本' }))
-    expect(peerSession.offerText).toHaveBeenCalledWith('精确文本\n🙂', ['receiver'])
+    await user.click(screen.getByRole('button', { name: '添加测试文件' }))
+    await user.click(screen.getByRole('button', { name: '发送测试文件' }))
+    expect(peerSession.offerFiles).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          file: expect.objectContaining({ name: '设计稿.txt' }),
+        }),
+      ]),
+      ['receiver'],
+    )
     await user.click(screen.getByRole('button', { name: '取消测试传输' }))
-    expect(peerSession.cancelTransfer).toHaveBeenCalledWith('text-1')
+    expect(peerSession.cancelTransfer).toHaveBeenCalledWith('files-1')
   })
 })

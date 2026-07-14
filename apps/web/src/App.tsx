@@ -144,9 +144,7 @@ type FileProgressEvent = Extract<
 
 type FileSpeedData = Record<string, { speed: number; eta: number | undefined }>
 
-type OutgoingPayload =
-  | { kind: 'text'; text: string; peerIds: string[] }
-  | { kind: 'file'; selections: FileSelection[]; peerIds: string[] }
+type OutgoingPayload = { kind: 'file'; selections: FileSelection[]; peerIds: string[] }
 
 const speedSampleKey = (
   direction: FileProgressEvent['direction'],
@@ -1678,45 +1676,8 @@ function App({ initialNavigation }: AppProps) {
     armTerminalHold(next.activity)
   }, [applyTransferAction, armTerminalHold, clearTerminalHold])
 
-  const handleSendText = useCallback(async (
-    text: string,
-    peerIds: readonly string[],
-  ) => {
-    const peerSession = peerSessionRef.current
-    if (!peerSession) throw new Error('点对点连接尚未就绪')
-    outgoingOfferInFlightRef.current = true
-    pendingOutgoingEventsRef.current = []
-    let result: ReturnType<PeerSession['offerText']>
-    try {
-      result = peerSession.offerText(text, peerIds)
-    } catch (error) {
-      pendingOutgoingEventsRef.current = []
-      throw error
-    } finally {
-      outgoingOfferInFlightRef.current = false
-    }
-    outgoingPayloadRef.current = {
-      kind: 'text',
-      text,
-      peerIds: result.peerIds,
-    }
-    startActivity(createActivity({
-      generation: ++transferGenerationRef.current,
-      transferId: result.transferId,
-      kind: 'text',
-      peerIds: result.peerIds,
-      unsupportedPeerIds: result.unsupportedPeerIds,
-    }))
-    showToast(
-      result.peerCount === 1
-        ? '已向 1 位接收者发送文本'
-        : `已向 ${String(result.peerCount)} 位接收者发送文本`,
-      'info',
-    )
-  }, [showToast, startActivity])
-
-  const handleFilesAdded = useCallback((files: readonly File[]) => {
-    if (transferUiStateRef.current.activity) return
+  const handleFilesAdded = useCallback((files: readonly File[]): boolean => {
+    if (transferUiStateRef.current.activity) return false
     const result = addFileSelections(
       fileSelectionsRef.current,
       files,
@@ -1724,10 +1685,11 @@ function App({ initialNavigation }: AppProps) {
     )
     if (!result.ok) {
       setSelectionError(result.message)
-      return
+      return false
     }
     replaceFileSelections(result.selections)
     setSelectionError('')
+    return true
   }, [replaceFileSelections])
 
   const handleFileRemoved = useCallback((fileId: string) => {
@@ -1789,23 +1751,6 @@ function App({ initialNavigation }: AppProps) {
     outgoingOfferInFlightRef.current = true
     pendingOutgoingEventsRef.current = []
     try {
-      if (payload.kind === 'text') {
-        const result = peerSession.offerText(payload.text, targetPeerIds)
-        outgoingPayloadRef.current = {
-          kind: 'text',
-          text: payload.text,
-          peerIds: result.peerIds,
-        }
-        startActivity(createActivity({
-          generation: ++transferGenerationRef.current,
-          transferId: result.transferId,
-          kind: 'text',
-          peerIds: result.peerIds,
-          unsupportedPeerIds: result.unsupportedPeerIds,
-        }))
-        return
-      }
-
       const result = peerSession.offerFiles(payload.selections, targetPeerIds)
       outgoingPayloadRef.current = {
         kind: 'file',
@@ -2207,7 +2152,6 @@ function App({ initialNavigation }: AppProps) {
                 fileSpeedData={fileSpeedData}
                 onFilesAdded={handleFilesAdded}
                 onFileRemoved={handleFileRemoved}
-                onSendText={handleSendText}
                 onSendFiles={handleSendFiles}
                 onCancel={handleCancelTransfer}
                 onRetry={retryOutgoingTransfer}
