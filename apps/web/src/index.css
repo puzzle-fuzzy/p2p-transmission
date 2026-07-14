@@ -42,6 +42,12 @@ label:has(input:not(:disabled)) {
   }
 }
 
+@keyframes transfer-dash-flow {
+  to {
+    stroke-dashoffset: -28;
+  }
+}
+
 @keyframes dialog-enter {
   from {
     opacity: 0;
@@ -67,12 +73,24 @@ label:has(input:not(:disabled)) {
 @keyframes toast-enter {
   from {
     opacity: 0;
-    transform: translateY(-4px);
+    transform: translateY(-6px) scale(0.98);
   }
 
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes toast-timer {
+  from {
+    transform: scaleX(1);
+    transform-origin: left;
+  }
+
+  to {
+    transform: scaleX(0);
+    transform-origin: left;
   }
 }
 
@@ -88,21 +106,32 @@ label:has(input:not(:disabled)) {
   animation: toast-enter 160ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+.toast-timer {
+  animation: toast-timer 3200ms linear both;
+}
+
 .transfer-peer-flow__dot {
   opacity: 0.6;
   transform: scale(1);
 }
 
-.transfer-peer-flow[data-active="true"] .transfer-peer-flow__dot {
+.transfer-peer-flow[data-phase="connecting"] .transfer-peer-flow__dot,
+.transfer-peer-flow[data-phase="requesting"] .transfer-peer-flow__dot {
   animation: dot-wave 1.2s cubic-bezier(0.25, 1, 0.5, 1) infinite;
 }
 
-.transfer-peer-flow[data-active="true"] .transfer-peer-flow__dot:nth-child(2) {
+.transfer-peer-flow[data-phase="connecting"] .transfer-peer-flow__dot:nth-child(2),
+.transfer-peer-flow[data-phase="requesting"] .transfer-peer-flow__dot:nth-child(2) {
   animation-delay: 120ms;
 }
 
-.transfer-peer-flow[data-active="true"] .transfer-peer-flow__dot:nth-child(3) {
+.transfer-peer-flow[data-phase="connecting"] .transfer-peer-flow__dot:nth-child(3),
+.transfer-peer-flow[data-phase="requesting"] .transfer-peer-flow__dot:nth-child(3) {
   animation-delay: 240ms;
+}
+
+.transfer-peer-flow[data-phase="transferring"] .transfer-peer-flow__dash-line {
+  animation: transfer-dash-flow 800ms linear infinite;
 }
 
 /* Scrollbar 定制 — 适配暗色背景 */
@@ -159,12 +188,17 @@ label:has(input:not(:disabled)) {
 @media (prefers-reduced-motion: reduce) {
   .incoming-transfer-dialog[open],
   .incoming-transfer-dialog[open]::backdrop,
-  .toast-surface {
+  .toast-surface,
+  .toast-timer {
+    animation: none;
+  }
+
+  .transfer-peer-flow .transfer-peer-flow__dot,
+  .transfer-peer-flow .transfer-peer-flow__dash-line {
     animation: none;
   }
 
   .transfer-peer-flow .transfer-peer-flow__dot {
-    animation: none;
     opacity: 0.6;
     transform: none;
   }

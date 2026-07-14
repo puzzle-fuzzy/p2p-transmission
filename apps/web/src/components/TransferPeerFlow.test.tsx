@@ -15,7 +15,7 @@ const createVisitor = (id: string, displayName: string): PublicVisitor => ({
 })
 
 describe('TransferPeerFlow', () => {
-  test('renders at most three receivers, overflow, and one accessible status', () => {
+  test('keeps the sender left and uses five receiver slots with total-count overflow', () => {
     const sender = createVisitor('sender', 'Sender')
     const receivers = Array.from({ length: 6 }, (_, index) =>
       createVisitor(`receiver-${index + 1}`, `Receiver ${index + 1}`))
@@ -24,98 +24,92 @@ describe('TransferPeerFlow', () => {
       <TransferPeerFlow
         sender={sender}
         receivers={receivers}
-        phase="transferring"
-        accessibleLabel="Transferring to 6 receivers"
+        phase="idle"
+        accessibleLabel="6 receivers connected"
       />,
     )
 
-    const status = screen.getByRole('status', { name: 'Transferring to 6 receivers' })
-    expect(status.getAttribute('data-active')).toBe('true')
-    expect(status.querySelectorAll('.transfer-peer-flow__dot')).toHaveLength(3)
-    expect(status.querySelector('.transfer-peer-flow__line')).toBeNull()
-    expect(status.querySelector('[aria-hidden="true"]')).not.toBeNull()
-    expect(screen.getAllByRole('status')).toHaveLength(1)
-
-    expect(screen.getByTitle('Sender').textContent).toBe('ER')
-    expect(screen.getByTitle('Receiver 1').textContent).toBe('R1')
-    expect(screen.getByTitle('Receiver 3').textContent).toBe('R3')
-    expect(screen.queryByTitle('Receiver 4')).toBeNull()
-    const overflow = screen.getByText('+3')
-    expect(overflow.textContent).toBe('+3')
-    expect(overflow.className).toContain('max-sm:size-8!')
+    const status = screen.getByRole('status', { name: '6 receivers connected' })
+    const senderSide = status.querySelector('[data-side="sender"]')
+    const receiverSide = status.querySelector('[data-side="receivers"]')
+    expect(senderSide).not.toBeNull()
+    expect(receiverSide).not.toBeNull()
+    expect(senderSide!.compareDocumentPosition(receiverSide!) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy()
+    expect(screen.getByTitle('Sender')).not.toBeNull()
+    expect(screen.getByTitle('Receiver 1')).not.toBeNull()
+    expect(screen.getByTitle('Receiver 4')).not.toBeNull()
+    expect(screen.queryByTitle('Receiver 5')).toBeNull()
+    expect(screen.queryByTitle('Receiver 6')).toBeNull()
+    expect(screen.getByTitle('共 6 位接收者').textContent).toBe('6')
+    const receiverSummary = screen.getByText('共 6 位接收者')
+    expect(receiverSummary.className).toContain('sr-only')
+    expect(receiverSummary.closest('[aria-hidden="true"]')).toBeNull()
   })
 
-  test('renders only the sender when no receiver is connected', () => {
+  test('shows all five receivers before switching to the total-count badge', () => {
+    const sender = createVisitor('sender', 'Sender')
+    const receivers = Array.from({ length: 5 }, (_, index) =>
+      createVisitor(`receiver-${index + 1}`, `Receiver ${index + 1}`))
+
+    render(
+      <TransferPeerFlow
+        sender={sender}
+        receivers={receivers}
+        phase="idle"
+        accessibleLabel="5 receivers connected"
+      />,
+    )
+
+    expect(screen.getByTitle('Receiver 5')).not.toBeNull()
+    expect(screen.queryByTitle('共 5 位接收者')).toBeNull()
+  })
+
+  test('maps connection phases to dots, a line, moving dashes, and state icons', () => {
+    const sender = createVisitor('sender', 'Sender')
+    const receiver = createVisitor('receiver', 'Receiver')
+    const props = { sender, receivers: [receiver], accessibleLabel: 'Peer state' }
+    const { rerender } = render(<TransferPeerFlow {...props} phase="connecting" />)
+    const status = screen.getByRole('status')
+
+    expect(status.querySelectorAll('.transfer-peer-flow__dot')).toHaveLength(3)
+    expect(status.querySelector('.transfer-peer-flow__line')).toBeNull()
+
+    rerender(<TransferPeerFlow {...props} phase="idle" />)
+    expect(status.querySelector('.transfer-peer-flow__line')).not.toBeNull()
+    expect(status.querySelector('.transfer-peer-flow__dash')).toBeNull()
+
+    rerender(<TransferPeerFlow {...props} phase="requesting" />)
+    expect(status.querySelectorAll('.transfer-peer-flow__dot')).toHaveLength(3)
+
+    rerender(<TransferPeerFlow {...props} phase="transferring" />)
+    expect(status.querySelector('.transfer-peer-flow__dash')).not.toBeNull()
+    expect(status.querySelectorAll('.transfer-peer-flow__dot')).toHaveLength(0)
+
+    rerender(<TransferPeerFlow {...props} phase="complete" />)
+    expect(status.querySelector('[data-state-icon="check"]')).not.toBeNull()
+
+    rerender(<TransferPeerFlow {...props} phase="error" />)
+    expect(status.querySelector('[data-state-icon="link_off"]')).not.toBeNull()
+  })
+
+  test('shows a receiver placeholder while connecting with nobody ready', () => {
     const sender = createVisitor('sender', 'Sender')
     render(
       <TransferPeerFlow
         sender={sender}
         receivers={[]}
-        phase="idle"
-        accessibleLabel="0 receivers connected"
-      />,
-    )
-
-    const status = screen.getByRole('status', { name: '0 receivers connected' })
-    expect(screen.getByTitle('Sender')).not.toBeNull()
-    expect(status.querySelector('.transfer-peer-flow__line')).toBeNull()
-    expect(status.querySelectorAll('.transfer-peer-flow__dot')).toHaveLength(0)
-    expect(status.getAttribute('data-active')).toBe('false')
-  })
-
-  test('uses a fixed static line except while transferring', () => {
-    const sender = createVisitor('sender', 'Sender')
-    const receiver = createVisitor('receiver', 'Receiver')
-    const { rerender } = render(
-      <TransferPeerFlow
-        sender={sender}
-        receivers={[receiver]}
-        phase="requesting"
-        accessibleLabel="Waiting for receiver decision"
+        phase="connecting"
+        accessibleLabel="Waiting for receivers"
       />,
     )
 
     const status = screen.getByRole('status')
-    const requestingLine = status.querySelector('.transfer-peer-flow__line')
-    expect(status.getAttribute('data-active')).toBe('false')
-    expect(requestingLine).not.toBeNull()
-    expect(requestingLine?.parentElement?.className).toContain('w-5')
-    expect(requestingLine?.parentElement?.className).toContain('sm:w-8')
-    expect(screen.getByTitle('Sender').className).toContain('max-sm:size-8!')
-    expect(screen.getByTitle('Receiver').className).toContain('max-sm:size-8!')
-    expect(status.querySelectorAll('.transfer-peer-flow__dot')).toHaveLength(0)
-
-    rerender(
-      <TransferPeerFlow
-        sender={sender}
-        receivers={[receiver]}
-        phase="transferring"
-        accessibleLabel="Transferring"
-      />,
-    )
-
-    expect(status.getAttribute('data-active')).toBe('true')
-    expect(status.querySelector('.transfer-peer-flow__line')).toBeNull()
+    expect(status.querySelector('.transfer-peer-flow__placeholder')).not.toBeNull()
     expect(status.querySelectorAll('.transfer-peer-flow__dot')).toHaveLength(3)
-    expect(status.querySelector('.transfer-peer-flow__dot')?.parentElement?.className)
-      .toContain('sm:gap-1.5')
-
-    rerender(
-      <TransferPeerFlow
-        sender={sender}
-        receivers={[receiver]}
-        phase="complete"
-        accessibleLabel="Transfer complete"
-      />,
-    )
-
-    expect(status.getAttribute('data-active')).toBe('false')
-    expect(status.getAttribute('data-phase')).toBe('complete')
-    expect(status.querySelector('.transfer-peer-flow__line')).not.toBeNull()
-    expect(status.querySelectorAll('.transfer-peer-flow__dot')).toHaveLength(0)
   })
 
-  test('exposes a keyboard-focusable recipient picker trigger with the selected count', () => {
+  test('keeps the recipient picker keyboard-focusable and reports selection count', () => {
     const sender = createVisitor('sender', 'Sender')
     const receiver = createVisitor('receiver', 'Receiver')
     const onClick = vi.fn()
@@ -132,7 +126,6 @@ describe('TransferPeerFlow', () => {
     )
 
     const trigger = screen.getByRole('button', { name: '选择接收者，已选择 1 位' })
-    expect(trigger.getAttribute('title')).toBe('选择接收者')
     trigger.focus()
     expect(document.activeElement).toBe(trigger)
     trigger.click()
