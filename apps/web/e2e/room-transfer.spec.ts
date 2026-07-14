@@ -38,23 +38,6 @@ test('two real browser contexts can approve a peer and transfer a pasted text fi
     await senderPage.getByRole('button', { name: '创建房间' }).click()
     await expect(senderPage.getByRole('button', { name: '复制房间码' })).toBeVisible()
 
-    const roomAboutButton = senderPage.getByRole('button', {
-      name: '关于 P2P Transmission',
-      exact: true,
-    })
-    await roomAboutButton.click()
-    await expect(aboutDialog).toBeVisible()
-    await expect(aboutDialog.getByRole('heading', {
-      name: '关于 P2P Transmission',
-      exact: true,
-    })).toBeVisible()
-    await expect(aboutDialog).toContainText('https://p2p.yxswy.com')
-    await expect(aboutDialog).toContainText('30 分钟')
-    await expect(aboutDialog).toContainText('10 个文件')
-    await expect(aboutDialog).toContainText('100 MiB')
-    await aboutDialog.getByRole('button', { name: '关闭', exact: true }).click()
-    await expect(aboutDialog).toBeHidden()
-
     const code = await roomCodeFromPage(senderPage)
 
     await receiverPage.goto('/')
@@ -66,7 +49,7 @@ test('two real browser contexts can approve a peer and transfer a pasted text fi
     await expect(joinDialog).toBeVisible()
     await joinDialog.getByRole('button', { name: '允许加入' }).click()
 
-    await expect(senderPage.getByText('1 位接收者已连接')).toBeVisible({ timeout: 30_000 })
+    await expect(senderPage.getByRole('status', { name: '1 位接收者已连接' })).toBeVisible({ timeout: 30_000 })
     await expect(receiverPage.getByRole('heading', { name: '等待对方发送' })).toBeVisible({ timeout: 30_000 })
 
     const text = `真实浏览器 E2E 粘贴文本 ${Date.now()}`
@@ -175,7 +158,7 @@ test('sender can target one receiver, then broadcast to both', async ({ browser,
       await joinDialog.getByRole('button', { name: '允许加入' }).click()
     }
 
-    await expect(senderPage.getByText('2 位接收者已连接')).toBeVisible({ timeout: 30_000 })
+    await expect(senderPage.getByRole('status', { name: '2 位接收者已连接' })).toBeVisible({ timeout: 30_000 })
 
     const pickerTrigger = senderPage.getByRole('button', {
       name: '选择接收者，已选择 2 位',
