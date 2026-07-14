@@ -345,6 +345,7 @@ describe('TransferPanel', () => {
     const selectedRow = screen.getByTestId('file-transfer-row-file-progress')
     const selectedClassName = selectedRow.className
     const removeButton = screen.getByRole('button', { name: '移除 progress.bin' })
+    expect(removeButton.className).toContain('size-9')
     expect(removeButton.className).toContain('rounded-lg')
     expect(removeButton.className).not.toContain('rounded-full')
 

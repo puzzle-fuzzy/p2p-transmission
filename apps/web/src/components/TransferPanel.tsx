@@ -297,14 +297,14 @@ export default function TransferPanel({
                         action={!locked ? (
                           <button
                             type="button"
-                            className="flex size-11 shrink-0 items-center justify-center rounded-lg text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50 focus-visible:bg-white/5 focus-visible:text-amber-50 focus-visible:outline-none"
+                            className="flex size-9 shrink-0 items-center justify-center rounded-lg text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50 focus-visible:bg-white/5 focus-visible:text-amber-50 focus-visible:outline-none"
                             onClick={event => {
                               event.stopPropagation()
                               onFileRemoved(selection.fileId)
                             }}
                             aria-label={`移除 ${selection.file.name}`}
                           >
-                            <span className="material-symbols-outlined" style={{ fontSize: '16px' }} aria-hidden="true">close</span>
+                            <span className="material-symbols-outlined" style={{ fontSize: '15px' }} aria-hidden="true">close</span>
                           </button>
                         ) : undefined}
                       />
