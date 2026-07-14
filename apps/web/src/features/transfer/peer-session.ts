@@ -2,7 +2,6 @@ import {
   DEFAULT_FILE_CHUNK_BYTES,
   MAX_FILE_BATCH_BYTES,
   MAX_FILE_COUNT,
-  MAX_TEXT_CHARACTERS,
   encodeTransferMessage,
   parseFileChunkFrame,
   parseTransferMessage,
@@ -91,7 +90,6 @@ export type TransferOfferResult = {
 
 export type PeerSessionEvent =
   | { type: 'peer:state'; peerId: string; state: 'connecting' | 'ready' | 'closed' }
-  | { type: 'transfer:text-received'; peerId: string; transferId: string; text: string }
   | { type: 'transfer:file-requested'; peerId: string; transferId: string; files: FileDescriptor[] }
   | { type: 'transfer:file-decision'; peerId: string; transferId: string; decision: 'accept' | 'reject' }
   | {
@@ -147,23 +145,6 @@ type PeerEntry = {
   closed: boolean
 }
 
-type PendingIncomingText = {
-  text: string
-  state: 'awaiting-ui'
-  timer?: TimerHandle
-}
-
-type OutgoingTextPeer = {
-  state: 'awaiting-receipt' | 'received' | 'cancelled' | 'failed'
-  timer?: TimerHandle
-  terminal: boolean
-}
-
-type OutgoingTextTransfer = {
-  kind: 'text'
-  peers: Map<string, OutgoingTextPeer>
-}
-
 type ReceiptWaiter = {
   fileId: string
   resolve(): void
@@ -195,7 +176,7 @@ type OutgoingFileTransfer = {
   batchTotalBytes: number
 }
 
-type OutgoingTransfer = OutgoingTextTransfer | OutgoingFileTransfer
+type OutgoingTransfer = OutgoingFileTransfer
 
 type IncomingFileBatch = {
   peerId: string
@@ -214,9 +195,6 @@ type IncomingFileBatch = {
 export type PeerSession = {
   syncRoom(room: PublicRoom): void
   handleSignal(message: SignalServerMessage): Promise<void>
-  offerText(text: string, targetPeerIds?: readonly string[]): TransferOfferResult
-  acknowledgeText(peerId: string, transferId: string): boolean
-  discardText(peerId: string, transferId: string): boolean
   offerFiles(files: readonly FileSelection[], targetPeerIds?: readonly string[]): TransferOfferResult
   acceptFiles(peerId: string, transferId: string): boolean
   rejectFiles(peerId: string, transferId: string): boolean
@@ -267,7 +245,6 @@ export const createPeerSession = ({
   const peers = new Map<string, PeerEntry>()
   const earlyIce = new Map<string, (IceCandidateDto | null)[]>()
   const outgoingTransfers = new Map<string, OutgoingTransfer>()
-  const incomingTexts = new Map<string, PendingIncomingText>()
   const incomingFileBatches = new Map<string, IncomingFileBatch>()
   const listeners = new Set<(event: PeerSessionEvent) => void>()
   const fileEngine = createFileTransferEngine()
@@ -308,39 +285,12 @@ export const createPeerSession = ({
 
   const maybeDeleteOutgoing = (transferId: string) => {
     const transfer = outgoingTransfers.get(transferId)
-    const allTerminal = transfer?.kind === 'text'
+    const allTerminal = transfer
       ? Array.from(transfer.peers.values()).every(peer => peer.terminal)
-      : transfer?.kind === 'file'
-        ? Array.from(transfer.peers.values()).every(peer => peer.terminal)
-        : false
+      : false
     if (allTerminal) {
       outgoingTransfers.delete(transferId)
     }
-  }
-
-  const finishTextPeer = (
-    transferId: string,
-    transfer: OutgoingTextTransfer,
-    peerId: string,
-    outcome: 'completed' | 'cancelled' | 'failed' | 'timed-out',
-  ) => {
-    const peer = transfer.peers.get(peerId)
-    if (!peer || peer.terminal) return
-    clearOwnedTimer(peer)
-    peer.terminal = true
-    peer.state = outcome === 'completed'
-      ? 'received'
-      : outcome === 'cancelled' || outcome === 'timed-out'
-        ? 'cancelled'
-        : 'failed'
-    maybeDeleteOutgoing(transferId)
-    emit({
-      type: 'transfer:terminal',
-      peerId,
-      transferId,
-      outcome,
-      ...(outcome === 'failed' ? { code: 'TRANSFER_ERROR' as const } : {}),
-    })
   }
 
   const finishFilePeer = (
@@ -530,9 +480,7 @@ export const createPeerSession = ({
   }
 
   const peerHasIncoming = (peerId: string) => {
-    if (activeIncomingBatch(peerId)) return true
-    const prefix = peerId + '\u0000'
-    return Array.from(incomingTexts.keys()).some(key => key.startsWith(prefix))
+    return activeIncomingBatch(peerId) !== undefined
   }
 
   const allocateStreamIds = (entry: PeerEntry, count: number) => {
@@ -616,23 +564,6 @@ export const createPeerSession = ({
   }
 
   const onControlFrame = (entry: PeerEntry, message: TransferProtocolMessage) => {
-    if (message.type === 'transfer:text') {
-      if (role !== 'receiver' || peerHasIncoming(entry.peerId)) {
-        sendFrame(entry, { v: 2, type: 'transfer:error', transferId: message.transferId, code: 'INVALID_STATE' })
-        return
-      }
-      const key = compoundKey(entry.peerId, message.transferId)
-      const incoming: PendingIncomingText = { text: message.text, state: 'awaiting-ui' }
-      incoming.timer = setTimer(() => {
-        if (incomingTexts.get(key) !== incoming) return
-        incomingTexts.delete(key)
-        sendFrame(entry, { v: 2, type: 'transfer:error', transferId: message.transferId, code: 'INVALID_STATE' })
-      }, RECEIPT_TIMEOUT_MS)
-      incomingTexts.set(key, incoming)
-      emit({ type: 'transfer:text-received', peerId: entry.peerId, transferId: message.transferId, text: message.text })
-      return
-    }
-
     if (message.type === 'transfer:file-request') {
       if (role !== 'receiver' || peerHasIncoming(entry.peerId)) {
         sendFrame(entry, { v: 2, type: 'transfer:error', transferId: message.transferId, code: 'INVALID_STATE' })
@@ -764,14 +695,6 @@ export const createPeerSession = ({
     if (message.type === 'transfer:receipt') {
       const transfer = outgoingTransfers.get(message.transferId)
       if (!transfer) return
-      if (message.kind === 'text') {
-        if (transfer.kind !== 'text') return
-        const peer = transfer.peers.get(entry.peerId)
-        if (!peer || peer.terminal || peer.state !== 'awaiting-receipt') return
-        finishTextPeer(message.transferId, transfer, entry.peerId, 'completed')
-        return
-      }
-      if (transfer.kind !== 'file') return
       const peer = transfer.peers.get(entry.peerId)
       if (
         !peer
@@ -789,29 +712,16 @@ export const createPeerSession = ({
 
     if (message.type === 'transfer:cancel') {
       const transfer = outgoingTransfers.get(message.transferId)
-      if (transfer?.kind === 'text') finishTextPeer(message.transferId, transfer, entry.peerId, 'cancelled')
-      if (transfer?.kind === 'file') finishFilePeer(message.transferId, transfer, entry.peerId, 'cancelled')
-      const textKey = compoundKey(entry.peerId, message.transferId)
-      const text = incomingTexts.get(textKey)
-      if (text) {
-        clearOwnedTimer(text)
-        incomingTexts.delete(textKey)
-      }
-      const batch = incomingFileBatches.get(textKey)
+      if (transfer) finishFilePeer(message.transferId, transfer, entry.peerId, 'cancelled')
+      const batch = incomingFileBatches.get(compoundKey(entry.peerId, message.transferId))
       if (batch) finishIncomingBatch(entry, batch, 'cancelled')
       return
     }
 
     if (message.type === 'transfer:error') {
       const transfer = outgoingTransfers.get(message.transferId)
-      if (transfer?.kind === 'text') finishTextPeer(message.transferId, transfer, entry.peerId, 'failed')
-      if (transfer?.kind === 'file') finishFilePeer(message.transferId, transfer, entry.peerId, 'failed')
+      if (transfer) finishFilePeer(message.transferId, transfer, entry.peerId, 'failed')
       const key = compoundKey(entry.peerId, message.transferId)
-      const text = incomingTexts.get(key)
-      if (text) {
-        clearOwnedTimer(text)
-        incomingTexts.delete(key)
-      }
       const batch = incomingFileBatches.get(key)
       if (batch) finishIncomingBatch(entry, batch, 'failed')
       emitError('Remote peer reported a transfer error', entry.peerId, message.transferId, 'TRANSFER_ERROR')
@@ -820,14 +730,7 @@ export const createPeerSession = ({
 
   const cancelPeerTransfers = (entry: PeerEntry) => {
     for (const [transferId, transfer] of outgoingTransfers) {
-      if (transfer.kind === 'text') finishTextPeer(transferId, transfer, entry.peerId, 'cancelled')
-      else finishFilePeer(transferId, transfer, entry.peerId, 'cancelled')
-    }
-    const prefix = entry.peerId + '\u0000'
-    for (const [key, text] of incomingTexts) {
-      if (!key.startsWith(prefix)) continue
-      clearOwnedTimer(text)
-      incomingTexts.delete(key)
+      finishFilePeer(transferId, transfer, entry.peerId, 'cancelled')
     }
     for (const batch of Array.from(incomingFileBatches.values())) {
       if (batch.peerId === entry.peerId) finishIncomingBatch(entry, batch, 'cancelled')
@@ -1057,53 +960,6 @@ export const createPeerSession = ({
       })
       return signalQueue
     },
-    offerText(text, targetPeerIds) {
-      assertCanOffer()
-      if (!text || text.length > MAX_TEXT_CHARACTERS) {
-        throw new Error(`Text must contain 1 to ${String(MAX_TEXT_CHARACTERS)} characters`)
-      }
-      const entries = readyEntriesFor(targetPeerIds)
-      if (entries.length === 0) throw new Error('No connected receivers')
-      const transferId = createId('transfer')
-      const transfer: OutgoingTextTransfer = { kind: 'text', peers: new Map() }
-      for (const entry of entries) {
-        transfer.peers.set(entry.peerId, {
-          state: 'awaiting-receipt',
-          terminal: false,
-        })
-      }
-      outgoingTransfers.set(transferId, transfer)
-      for (const entry of entries) {
-        const peer = transfer.peers.get(entry.peerId) as OutgoingTextPeer
-        peer.timer = setTimer(() => {
-          if (peer.terminal) return
-          sendFrame(entry, { v: 2, type: 'transfer:cancel', transferId })
-          finishTextPeer(transferId, transfer, entry.peerId, 'timed-out')
-        }, RECEIPT_TIMEOUT_MS)
-        if (!sendFrame(entry, { v: 2, type: 'transfer:text', transferId, text })) {
-          finishTextPeer(transferId, transfer, entry.peerId, 'failed')
-        }
-      }
-      return { transferId, peerIds: entries.map(entry => entry.peerId), peerCount: entries.length, unsupportedPeerIds: [] }
-    },
-    acknowledgeText(peerId, transferId) {
-      const key = compoundKey(peerId, transferId)
-      const incoming = incomingTexts.get(key)
-      const entry = peers.get(peerId)
-      if (!incoming || incoming.state !== 'awaiting-ui' || !entry) return false
-      clearOwnedTimer(incoming)
-      incomingTexts.delete(key)
-      return sendFrame(entry, { v: 2, type: 'transfer:receipt', transferId, kind: 'text', status: 'received' })
-    },
-    discardText(peerId, transferId) {
-      const key = compoundKey(peerId, transferId)
-      const incoming = incomingTexts.get(key)
-      const entry = peers.get(peerId)
-      if (!incoming || incoming.state !== 'awaiting-ui' || !entry) return false
-      clearOwnedTimer(incoming)
-      incomingTexts.delete(key)
-      return sendFrame(entry, { v: 2, type: 'transfer:error', transferId, code: 'INVALID_STATE' })
-    },
     offerFiles(files, targetPeerIds) {
       assertCanOffer()
       if (files.length === 0 || files.length > MAX_FILE_COUNT) throw new Error('File batch count is invalid')
@@ -1200,19 +1056,9 @@ export const createPeerSession = ({
           if (peer.terminal) continue
           const entry = peers.get(peerId)
           if (entry) sendFrame(entry, { v: 2, type: 'transfer:cancel', transferId })
-          if (transfer.kind === 'text') finishTextPeer(transferId, transfer, peerId, 'cancelled')
-          else finishFilePeer(transferId, transfer, peerId, 'cancelled')
+          finishFilePeer(transferId, transfer, peerId, 'cancelled')
           cancelled = true
         }
-      }
-      for (const [key, text] of Array.from(incomingTexts)) {
-        if (!key.endsWith('\u0000' + transferId)) continue
-        const peerId = key.slice(0, key.indexOf('\u0000'))
-        clearOwnedTimer(text)
-        incomingTexts.delete(key)
-        const entry = peers.get(peerId)
-        if (entry) sendFrame(entry, { v: 2, type: 'transfer:cancel', transferId })
-        cancelled = true
       }
       for (const batch of Array.from(incomingFileBatches.values())) {
         if (batch.transferId !== transferId) continue
@@ -1235,9 +1081,7 @@ export const createPeerSession = ({
       if (closed) return
       closed = true
       for (const peerId of Array.from(peers.keys())) closePeer(peerId)
-      for (const text of incomingTexts.values()) clearOwnedTimer(text)
       for (const batch of incomingFileBatches.values()) clearOwnedTimer(batch)
-      incomingTexts.clear()
       incomingFileBatches.clear()
       outgoingTransfers.clear()
       earlyIce.clear()

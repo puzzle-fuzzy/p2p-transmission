@@ -277,27 +277,6 @@ vi.mock('./components/ReceiverPanel', () => ({
   ),
 }))
 
-vi.mock('./components/ReceivedTextDialog', () => ({
-  default: ({
-    text,
-    copyStatus,
-    onCopy,
-    onClose,
-  }: {
-    text: string
-    copyStatus: string
-    onCopy(): void
-    onClose(): void
-  }) => (
-    <div role="dialog" aria-label="收到文本">
-      <div data-testid="received-text">{text}</div>
-      <div data-testid="copy-status">{copyStatus}</div>
-      <button type="button" onClick={onCopy}>复制收到文本</button>
-      <button type="button" onClick={onClose}>关闭收到文本</button>
-    </div>
-  ),
-}))
-
 vi.mock('./components/IncomingFileRequestDialog', () => ({
   default: ({
     files,
@@ -400,20 +379,12 @@ class FakePeerSession {
   readyPeerIdList: readonly string[] = ['receiver']
   readonly readyPeerIds = vi.fn((): readonly string[] => this.readyPeerIdList)
   readonly close = vi.fn()
-  readonly offerText = vi.fn((_text: string, _peerIds?: readonly string[]) => ({
-    transferId: 'text-1',
-    peerIds: ['receiver'],
-    peerCount: 1,
-    unsupportedPeerIds: [],
-  }))
   readonly offerFiles = vi.fn((_files: readonly FileSelection[], _peerIds?: readonly string[]) => ({
     transferId: 'files-1',
     peerIds: ['receiver'],
     peerCount: 1,
     unsupportedPeerIds: [],
   }))
-  readonly acknowledgeText = vi.fn(() => true)
-  readonly discardText = vi.fn(() => true)
   readonly acceptFiles = vi.fn(() => true)
   readonly rejectFiles = vi.fn(() => true)
   readonly cancelTransfer = vi.fn((_transferId: string) => true)
@@ -1430,13 +1401,6 @@ describe('App transfer integration', () => {
 
   test('returns to a clean lobby when attached membership is no longer valid', async () => {
     await enterRoom('receiver')
-    emit({
-      type: 'transfer:text-received',
-      peerId: sender.id,
-      transferId: 'text-before-expiry',
-      text: '只应显示到房间失效为止',
-    })
-    expect(screen.getByRole('dialog', { name: '收到文本' })).toBeTruthy()
 
     act(() => realtime.emitMessage({
       type: 'error',
@@ -1446,7 +1410,6 @@ describe('App transfer integration', () => {
 
     expect(realtime.close).toHaveBeenCalledTimes(1)
     expect(peerSession.close).toHaveBeenCalledTimes(1)
-    expect(screen.queryByRole('dialog', { name: '收到文本' })).toBeNull()
     expect(screen.getByRole('button', { name: '创建测试房间' })).toBeTruthy()
     expect(boundary.showToast).toHaveBeenCalledWith(
       '房间连接已失效，请重新加入',
@@ -1519,45 +1482,6 @@ describe('App transfer integration', () => {
       '发送者已退出，房间自动关闭',
       'info',
     )
-  })
-
-  test('commits five exact text bodies before one ACK each and discards overflow once', async () => {
-    const user = await enterRoom('receiver')
-
-    for (let index = 1; index <= 6; index += 1) {
-      emit({
-        type: 'transfer:text-received',
-        peerId: sender.id,
-        transferId: `text-${String(index)}`,
-        text: `第 ${String(index)} 条\n🙂`,
-      })
-    }
-
-    expect(peerSession.acknowledgeText).toHaveBeenCalledTimes(5)
-    expect(peerSession.discardText).toHaveBeenCalledTimes(1)
-    expect(peerSession.discardText).toHaveBeenCalledWith(sender.id, 'text-6')
-    expect(screen.getByTestId('received-text').textContent).toBe('第 1 条\n🙂')
-
-    await user.click(screen.getByRole('button', { name: '关闭收到文本' }))
-    expect(screen.getByTestId('received-text').textContent).toBe('第 2 条\n🙂')
-  })
-
-  test('copies the exact received body and preserves the dialog on failure', async () => {
-    const user = await enterRoom('receiver')
-    emit({
-      type: 'transfer:text-received',
-      peerId: sender.id,
-      transferId: 'text-copy',
-      text: '保留空格  \n与换行',
-    })
-    clipboardWrite.mockRejectedValueOnce(new Error('denied'))
-
-    await user.click(screen.getByRole('button', { name: '复制收到文本' }))
-    await waitFor(() => expect(screen.getByTestId('copy-status').textContent).toBe('error'))
-
-    expect(clipboardWrite).toHaveBeenCalledWith('保留空格  \n与换行')
-    expect(screen.getByTestId('received-text').textContent).toBe('保留空格  \n与换行')
-    expect(boundary.showToast).toHaveBeenCalledWith('无法复制文本，请手动复制')
   })
 
   test('accepts or rejects only file requests and creates/revokes each result URL once', async () => {

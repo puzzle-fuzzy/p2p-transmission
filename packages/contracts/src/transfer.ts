@@ -1,5 +1,4 @@
 export const TRANSFER_PROTOCOL_VERSION = 2
-export const MAX_TEXT_CHARACTERS = 500
 export const MAX_CONTROL_FRAME_BYTES = 16 * 1024
 export const MAX_TRANSFER_ID_LENGTH = 96
 export const MAX_FILE_COUNT = 10
@@ -30,12 +29,6 @@ export type FileDescriptor = {
 export type TransferProtocolMessage =
   | {
       v: 2
-      type: 'transfer:text'
-      transferId: string
-      text: string
-    }
-  | {
-      v: 2
       type: 'transfer:file-request'
       transferId: string
       files: FileDescriptor[]
@@ -61,13 +54,6 @@ export type TransferProtocolMessage =
       streamId: number
       chunkCount: number
       byteLength: number
-    }
-  | {
-      v: 2
-      type: 'transfer:receipt'
-      transferId: string
-      kind: 'text'
-      status: 'received'
     }
   | {
       v: 2
@@ -265,29 +251,6 @@ export const parseTransferMessage = (raw: string): TransferParseResult => {
   if (value.v !== TRANSFER_PROTOCOL_VERSION) return protocolError('Unsupported protocol version')
   if (!isIdentifier(value.transferId)) return protocolError('Invalid transfer ID')
 
-  if (value.type === 'transfer:text') {
-    if (!hasExactKeys(value, ['v', 'type', 'transferId', 'text'])) {
-      return protocolError('Invalid text transfer fields')
-    }
-    if (
-      typeof value.text !== 'string'
-      || value.text.length === 0
-      || value.text.length > MAX_TEXT_CHARACTERS
-    ) {
-      return protocolError(`Text must contain 1 to ${MAX_TEXT_CHARACTERS} characters`)
-    }
-
-    return {
-      ok: true,
-      message: {
-        v: 2,
-        type: 'transfer:text',
-        transferId: value.transferId,
-        text: value.text,
-      },
-    }
-  }
-
   if (value.type === 'transfer:file-request') {
     if (!hasExactKeys(value, ['v', 'type', 'transferId', 'files'])) {
       return protocolError('Invalid file request fields')
@@ -381,24 +344,6 @@ export const parseTransferMessage = (raw: string): TransferParseResult => {
   }
 
   if (value.type === 'transfer:receipt') {
-    if (value.kind === 'text') {
-      if (!hasExactKeys(value, ['v', 'type', 'transferId', 'kind', 'status'])) {
-        return protocolError('Invalid text receipt fields')
-      }
-      if (value.status !== 'received') return protocolError('Invalid receipt status')
-
-      return {
-        ok: true,
-        message: {
-          v: 2,
-          type: 'transfer:receipt',
-          transferId: value.transferId,
-          kind: 'text',
-          status: 'received',
-        },
-      }
-    }
-
     if (value.kind === 'file') {
       if (!hasExactKeys(value, ['v', 'type', 'transferId', 'kind', 'fileId', 'status'])) {
         return protocolError('Invalid file receipt fields')

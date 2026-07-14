@@ -7,10 +7,9 @@ import {
   createActivity,
   initialTransferUiState,
   isTransferLocked,
-  planIncomingText,
   transferUiReducer,
 } from './ui-state'
-import type { IncomingTextEvent, TransferUiState } from './ui-state'
+import type { TransferUiState } from './ui-state'
 
 const event = <Event extends { type: string }>(value: Event) =>
   value as unknown as PeerSessionEvent
@@ -21,15 +20,9 @@ const reduceEvent = (
 ) => transferUiReducer(state, { type: 'peer-session:event', event: value })
 
 describe('transfer UI state', () => {
-  test('creates concrete text and file peer state', () => {
-    const text = createActivity({
-      generation: 1,
-      transferId: 'text_1',
-      kind: 'text',
-      peerIds: ['peer_a', 'peer_b'],
-    })
+  test('creates concrete file peer state', () => {
     const files = createActivity({
-      generation: 2,
+      generation: 1,
       transferId: 'files_1',
       kind: 'file',
       peerIds: ['peer_a', 'peer_b'],
@@ -37,13 +30,6 @@ describe('transfer UI state', () => {
       fileIds: ['file_a', 'file_b'],
     })
 
-    expect(text).toMatchObject({
-      phase: 'transferring',
-      peers: {
-        peer_a: { accepted: true, progress: 0 },
-        peer_b: { accepted: true, progress: 0 },
-      },
-    })
     expect(files).toMatchObject({
       phase: 'requesting',
       peers: {
@@ -61,7 +47,7 @@ describe('transfer UI state', () => {
         },
       },
     })
-    expect(isTransferLocked({ activity: text })).toBe(true)
+    expect(isTransferLocked({ activity: files })).toBe(true)
     expect(isTransferLocked(initialTransferUiState)).toBe(false)
   })
 
@@ -239,34 +225,34 @@ describe('transfer UI state', () => {
       activity: createActivity({
         generation: 1,
         transferId,
-        kind: 'text' as const,
+        kind: 'file' as const,
         peerIds: ['peer_a', 'peer_b'],
       }),
     })
-    let complete = reduceEvent(start('text_ok'), event({
+    let complete = reduceEvent(start('file_ok'), event({
       type: 'transfer:terminal',
       peerId: 'peer_a',
-      transferId: 'text_ok',
+      transferId: 'file_ok',
       outcome: 'completed',
     }))
     expect(complete.activity?.phase).toBe('transferring')
     complete = reduceEvent(complete, event({
       type: 'transfer:terminal',
       peerId: 'peer_b',
-      transferId: 'text_ok',
+      transferId: 'file_ok',
       outcome: 'completed',
     }))
 
-    let failed = reduceEvent(start('text_failed'), event({
+    let failed = reduceEvent(start('file_failed'), event({
       type: 'transfer:terminal',
       peerId: 'peer_a',
-      transferId: 'text_failed',
+      transferId: 'file_failed',
       outcome: 'completed',
     }))
     failed = reduceEvent(failed, event({
       type: 'transfer:terminal',
       peerId: 'peer_b',
-      transferId: 'text_failed',
+      transferId: 'file_failed',
       outcome: 'failed',
       code: 'TRANSFER_ERROR',
     }))
@@ -279,8 +265,8 @@ describe('transfer UI state', () => {
     const state = {
       activity: createActivity({
         generation: 1,
-        transferId: 'text_1',
-        kind: 'text' as const,
+        transferId: 'file_1',
+        kind: 'file' as const,
         peerIds: ['peer_a'],
       }),
     }
@@ -301,13 +287,13 @@ describe('transfer UI state', () => {
     const old = createActivity({
       generation: 1,
       transferId: 'old',
-      kind: 'text',
+      kind: 'file',
       peerIds: ['peer_a'],
     })
     const next = createActivity({
       generation: 2,
       transferId: 'new',
-      kind: 'text',
+      kind: 'file',
       peerIds: ['peer_a'],
     })
     const state = { activity: next }
@@ -334,50 +320,13 @@ describe('transfer UI state', () => {
     const state = {
       activity: createActivity({
         generation: 1,
-        transferId: 'text_1',
-        kind: 'text' as const,
+        transferId: 'file_1',
+        kind: 'file' as const,
         peerIds: ['peer_a'],
       }),
     }
 
     expect(transferUiReducer(state, { type: 'room:reset' })).toEqual(initialTransferUiState)
     expect(transferUiReducer(state, { type: 'realtime:disconnected' })).toEqual(initialTransferUiState)
-  })
-})
-
-describe('incoming text FIFO planning', () => {
-  test('acknowledges exactly five queued bodies and discards overflow', () => {
-    let queue: IncomingTextEvent[] = []
-
-    for (let index = 0; index < 5; index += 1) {
-      const incoming: IncomingTextEvent = {
-        type: 'transfer:text-received',
-        peerId: `peer_${String(index)}`,
-        transferId: `text_${String(index)}`,
-        text: `第 ${String(index + 1)} 条\n🙂`,
-      }
-      const planned = planIncomingText(queue, incoming, 5)
-
-      expect(planned.disposition).toBe('acknowledge')
-      queue = planned.queue
-    }
-
-    const overflow: IncomingTextEvent = {
-      type: 'transfer:text-received',
-      peerId: 'peer_overflow',
-      transferId: 'text_overflow',
-      text: '不应覆盖队列',
-    }
-    const planned = planIncomingText(queue, overflow, 5)
-
-    expect(queue.map(item => item.text)).toEqual([
-      '第 1 条\n🙂',
-      '第 2 条\n🙂',
-      '第 3 条\n🙂',
-      '第 4 条\n🙂',
-      '第 5 条\n🙂',
-    ])
-    expect(planned).toEqual({ queue, disposition: 'discard' })
-    expect(planned.queue).toBe(queue)
   })
 })

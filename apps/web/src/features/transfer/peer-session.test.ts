@@ -270,26 +270,6 @@ describe('peer session v2', () => {
     expect(session.readyPeerIds()).toEqual([])
   })
 
-  test('offers text only to the selected ready peer', async () => {
-    const first = new FakePeerConnection()
-    const second = new FakePeerConnection()
-    const receiverTwo = { ...receiver, id: 'vis_receiver_2' }
-    const { session } = senderHarness([first, second])
-    session.syncRoom(room([receiver, receiverTwo]))
-    await settle()
-
-    const firstChannel = first.channels[0] as FakeDataChannel
-    const secondChannel = second.channels[0] as FakeDataChannel
-    firstChannel.open()
-    secondChannel.open()
-
-    const offered = session.offerText('targeted', [receiver.id])
-
-    expect(offered.peerIds).toEqual([receiver.id])
-    expect(controls(firstChannel)).toContainEqual(expect.objectContaining({ type: 'transfer:text' }))
-    expect(controls(secondChannel)).not.toContainEqual(expect.objectContaining({ type: 'transfer:text' }))
-  })
-
   test('offers files only to selected ready peers and rejects an empty target set', async () => {
     const first = new FakePeerConnection(4096)
     const second = new FakePeerConnection(4096)
@@ -304,88 +284,13 @@ describe('peer session v2', () => {
     secondChannel.open()
     const file = new File([new Uint8Array([1, 2, 3])], 'target.txt')
 
-    expect(() => session.offerText('empty', [])).toThrow('No connected receivers')
+    expect(() => session.offerFiles([{ fileId: 'file_empty_target', file }], [])).toThrow('No connected receivers')
 
     const offered = session.offerFiles([{ fileId: 'file_target', file }], [receiver.id])
 
     expect(offered.peerIds).toEqual([receiver.id])
     expect(controls(firstChannel)).toContainEqual(expect.objectContaining({ type: 'transfer:file-request' }))
     expect(controls(secondChannel)).not.toContainEqual(expect.objectContaining({ type: 'transfer:file-request' }))
-  })
-
-  test('delivers text directly, waits for one receipt, and excludes concurrent offers', async () => {
-    const connection = new FakePeerConnection()
-    const { session, events } = senderHarness([connection])
-    session.syncRoom(room())
-    await settle()
-    const channel = connection.channels[0] as FakeDataChannel
-    channel.open()
-
-    const offered = session.offerText('secret body')
-    expect(controls(channel)[0]).toEqual({
-      v: 2,
-      type: 'transfer:text',
-      transferId: offered.transferId,
-      text: 'secret body',
-    })
-    expect(() => session.offerText('second')).toThrow(/already active/)
-
-    channel.emit({
-      v: 2,
-      type: 'transfer:receipt',
-      transferId: offered.transferId,
-      kind: 'text',
-      status: 'received',
-    })
-    channel.emit({
-      v: 2,
-      type: 'transfer:receipt',
-      transferId: offered.transferId,
-      kind: 'text',
-      status: 'received',
-    })
-
-    expect(events.filter(event =>
-      event.type === 'transfer:terminal'
-      && event.transferId === offered.transferId)).toEqual([{
-      type: 'transfer:terminal',
-      peerId: receiver.id,
-      transferId: offered.transferId,
-      outcome: 'completed',
-    }])
-    expect(session.offerText('next').peerCount).toBe(1)
-  })
-
-  test('receiver exposes exact text without auto-ack and acknowledges or discards once', async () => {
-    const { session, channel, events } = await receiverHarness()
-    channel.emit({ v: 2, type: 'transfer:text', transferId: 'tx_ack', text: '你好' })
-
-    expect(events).toContainEqual({
-      type: 'transfer:text-received',
-      peerId: sender.id,
-      transferId: 'tx_ack',
-      text: '你好',
-    })
-    expect(controls(channel)).toEqual([])
-    expect(session.acknowledgeText(sender.id, 'tx_ack')).toBe(true)
-    expect(session.acknowledgeText(sender.id, 'tx_ack')).toBe(false)
-    expect(controls(channel)).toEqual([{
-      v: 2,
-      type: 'transfer:receipt',
-      transferId: 'tx_ack',
-      kind: 'text',
-      status: 'received',
-    }])
-
-    channel.emit({ v: 2, type: 'transfer:text', transferId: 'tx_drop', text: 'drop' })
-    expect(session.discardText(sender.id, 'tx_drop')).toBe(true)
-    expect(session.discardText(sender.id, 'tx_drop')).toBe(false)
-    expect(controls(channel).at(-1)).toEqual({
-      v: 2,
-      type: 'transfer:error',
-      transferId: 'tx_drop',
-      code: 'INVALID_STATE',
-    })
   })
 
   test('offers metadata only and excludes a peer whose channel cannot carry 1 KiB chunks', async () => {
@@ -558,7 +463,7 @@ describe('peer session v2', () => {
       transferId: first.transferId,
       outcome: 'timed-out',
     })
-    expect(session.offerText('now unlocked').peerCount).toBe(1)
+    expect(session.offerFiles([{ fileId: 'file_unlocked', file: new File(['b'], 'b.txt') }]).peerCount).toBe(1)
   })
 
   test('peer close aborts active work and emits one terminal cancellation', async () => {
@@ -615,21 +520,6 @@ describe('peer session v2', () => {
     failingChannel.open()
     healthyChannel.open()
     failingChannel.send = () => { throw new Error('send failed') }
-
-    const text = session.offerText('survives')
-    healthyChannel.emit({
-      v: 2,
-      type: 'transfer:receipt',
-      transferId: text.transferId,
-      kind: 'text',
-      status: 'received',
-    })
-    expect(events).toContainEqual({
-      type: 'transfer:terminal',
-      peerId: secondReceiver.id,
-      transferId: text.transferId,
-      outcome: 'completed',
-    })
 
     const files = session.offerFiles([{ fileId: 'file_1', file: new File(['x'], 'x.txt') }])
     healthyChannel.emit({ v: 2, type: 'transfer:decision', transferId: files.transferId, decision: 'accept' })
@@ -807,7 +697,7 @@ describe('peer session v2', () => {
       transferId: offered.transferId,
       outcome: 'timed-out',
     })
-    expect(outgoing.session.offerText('unlocked').peerCount).toBe(1)
+    expect(outgoing.session.offerFiles([{ fileId: 'file_unlocked', file: new File(['b'], 'b.txt') }]).peerCount).toBe(1)
   })
 
   test('read failure sends cancellation before reporting a local terminal failure', async () => {
@@ -844,17 +734,36 @@ describe('peer session v2', () => {
     second.open()
     const eventsBeforeStaleFrame = events.length
 
-    first.emit({ v: 2, type: 'transfer:text', transferId: 'tx_stale', text: 'stale' })
+    first.emitRaw(JSON.stringify({
+      v: 2,
+      type: 'transfer:text',
+      transferId: 'tx_stale',
+      text: 'stale',
+    }))
     first.close()
     expect(events).toHaveLength(eventsBeforeStaleFrame)
     expect(connection.closed).toBe(false)
 
-    second.emit({ v: 2, type: 'transfer:text', transferId: 'tx_current', text: 'current' })
+    second.emit({
+      v: 2,
+      type: 'transfer:file-request',
+      transferId: 'tx_current',
+      files: [{
+        fileId: 'file_current',
+        streamId: 1,
+        name: 'current.txt',
+        mimeType: 'text/plain',
+        byteLength: 0,
+        lastModified: 1,
+        chunkSize: 1024,
+        chunkCount: 0,
+      }],
+    })
     expect(events).toContainEqual({
-      type: 'transfer:text-received',
+      type: 'transfer:file-requested',
       peerId: sender.id,
       transferId: 'tx_current',
-      text: 'current',
+      files: [expect.objectContaining({ fileId: 'file_current' })],
     })
   })
 

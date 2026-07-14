@@ -55,17 +55,11 @@ describe('transfer protocol v2', () => {
     const messages: TransferProtocolMessage[] = [
       {
         v: 2,
-        type: 'transfer:text',
-        transferId: 'tx_text',
-        text: '你好\n🙂',
-      },
-      fileRequest(),
-      {
-        v: 2,
         type: 'transfer:decision',
         transferId: 'tx_files',
         decision: 'accept',
       },
+      fileRequest(),
       {
         v: 2,
         type: 'transfer:file-start',
@@ -81,13 +75,6 @@ describe('transfer protocol v2', () => {
         streamId: 1,
         chunkCount: 1,
         byteLength: 3,
-      },
-      {
-        v: 2,
-        type: 'transfer:receipt',
-        transferId: 'tx_text',
-        kind: 'text',
-        status: 'received',
       },
       {
         v: 2,
@@ -137,9 +124,9 @@ describe('transfer protocol v2', () => {
   test('rejects v1, malformed JSON, and non-object values', () => {
     expectProtocolError({
       v: 1,
-      type: 'transfer:text',
+      type: 'transfer:file-request',
       transferId: 'tx_1',
-      text: 'legacy',
+      files: [descriptor()],
     })
     expectProtocolError('{not-json')
     expectProtocolError('null')
@@ -147,21 +134,13 @@ describe('transfer protocol v2', () => {
   })
 
   test('rejects invalid transfer IDs, types, and exact-key violations', () => {
-    expectProtocolError({ v: 2, type: 'transfer:text', transferId: '', text: 'x' })
     expectProtocolError({
       v: 2,
-      type: 'transfer:text',
-      transferId: 'x'.repeat(97),
-      text: 'x',
+      type: 'transfer:file-request',
+      transferId: '',
+      files: [descriptor()],
     })
     expectProtocolError({ v: 2, type: 'unknown', transferId: 'tx_1' })
-    expectProtocolError({
-      v: 2,
-      type: 'transfer:text',
-      transferId: 'tx_1',
-      text: 'x',
-      extra: true,
-    })
     expectProtocolError({
       v: 2,
       type: 'transfer:file-request',
@@ -170,13 +149,14 @@ describe('transfer protocol v2', () => {
     })
   })
 
-  test('rejects empty and oversized text bodies', () => {
-    expectProtocolError({ v: 2, type: 'transfer:text', transferId: 'tx_1', text: '' })
+  test('rejects removed legacy text transfer and receipt frames', () => {
+    expectProtocolError({ v: 2, type: 'transfer:text', transferId: 'tx_1', text: 'legacy' })
     expectProtocolError({
       v: 2,
-      type: 'transfer:text',
+      type: 'transfer:receipt',
       transferId: 'tx_1',
-      text: 'a'.repeat(501),
+      kind: 'text',
+      status: 'received',
     })
   })
 
@@ -241,14 +221,6 @@ describe('transfer protocol v2', () => {
       type: 'transfer:decision',
       transferId: 'tx_1',
       decision: 'later',
-    })
-    expectProtocolError({
-      v: 2,
-      type: 'transfer:receipt',
-      transferId: 'tx_1',
-      kind: 'text',
-      fileId: 'file_1',
-      status: 'received',
     })
     expectProtocolError({
       v: 2,

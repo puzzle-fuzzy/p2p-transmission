@@ -13,9 +13,6 @@ import IncomingFileRequestDialog, {
 import AboutDialog from './components/AboutDialog'
 import Loading from './components/Loading'
 import ManualJoinWaiting from './components/ManualJoinWaiting'
-import ReceivedTextDialog, {
-  type ReceivedTextCopyStatus,
-} from './components/ReceivedTextDialog'
 import ReceiverPanel, {
   type ReceiverPanelState,
 } from './components/ReceiverPanel'
@@ -72,9 +69,7 @@ import {
 import {
   createActivity,
   initialTransferUiState,
-  planIncomingText,
   transferUiReducer,
-  type IncomingTextEvent,
   type OutgoingActivity,
   type TransferUiAction,
   type TransferUiState,
@@ -124,10 +119,6 @@ import type {
   RoomSessionBootstrap,
   VisitorSession,
 } from './shared/contracts'
-
-type IncomingText = IncomingTextEvent & {
-  sender: PublicVisitor
-}
 
 type IncomingFileTransfer = {
   peerId: string
@@ -270,8 +261,6 @@ function App({ initialNavigation }: AppProps) {
   )
   const [fileSelections, setFileSelections] = useState<FileSelection[]>([])
   const [selectionError, setSelectionError] = useState('')
-  const [incomingTexts, setIncomingTexts] = useState<IncomingText[]>([])
-  const [textCopyStatus, setTextCopyStatus] = useState<ReceivedTextCopyStatus>('idle')
   const [incomingFile, setIncomingFile] = useState<IncomingFileTransfer>()
   const [receiverPanelState, setReceiverPanelState] = useState<ReceiverPanelState>({
     status: 'waiting',
@@ -312,13 +301,11 @@ function App({ initialNavigation }: AppProps) {
   const roomRef = useRef<PublicRoom | undefined>(undefined)
   const transferUiStateRef = useRef<TransferUiState>(initialTransferUiState)
   const fileSelectionsRef = useRef<FileSelection[]>([])
-  const incomingTextsRef = useRef<IncomingText[]>([])
   const incomingFileRef = useRef<IncomingFileTransfer | undefined>(undefined)
   const progressSchedulerRef = useRef<ProgressFrameScheduler<FileProgressEvent> | undefined>(undefined)
   const terminalHoldTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const terminalHoldIdentityRef = useRef<string | undefined>(undefined)
   const objectUrlsRef = useRef(new Set<string>())
-  const textCopyOperationRef = useRef(0)
   const operationGenerationRef = useRef(0)
   const transferGenerationRef = useRef(0)
   const outgoingOfferInFlightRef = useRef(false)
@@ -362,11 +349,6 @@ function App({ initialNavigation }: AppProps) {
 
   const invalidatePendingOperations = useCallback(() => {
     operationGenerationRef.current += 1
-  }, [])
-
-  const replaceIncomingTexts = useCallback((texts: IncomingText[]) => {
-    incomingTextsRef.current = texts
-    setIncomingTexts(texts)
   }, [])
 
   const replaceIncomingFile = useCallback((file?: IncomingFileTransfer) => {
@@ -516,15 +498,12 @@ function App({ initialNavigation }: AppProps) {
     clearTerminalHold()
     progressSchedulerRef.current?.clear()
     revokeAllObjectUrls()
-    textCopyOperationRef.current += 1
     outgoingOfferInFlightRef.current = false
     pendingOutgoingEventsRef.current = []
     outgoingPayloadRef.current = undefined
-    replaceIncomingTexts([])
     replaceIncomingFile()
     replaceFileSelections([])
     setSelectionError('')
-    setTextCopyStatus('idle')
     setReceiverPanelState({ status: 'waiting' })
     clearFileSpeedPresentation()
     applyTransferAction(action)
@@ -534,7 +513,6 @@ function App({ initialNavigation }: AppProps) {
     clearTerminalHold,
     replaceFileSelections,
     replaceIncomingFile,
-    replaceIncomingTexts,
     revokeAllObjectUrls,
   ])
 
@@ -542,7 +520,6 @@ function App({ initialNavigation }: AppProps) {
     clearTerminalHold()
     progressSchedulerRef.current?.clear()
     revokeAllObjectUrls()
-    textCopyOperationRef.current += 1
     outgoingPayloadRef.current = undefined
   }, [clearTerminalHold, revokeAllObjectUrls])
 
@@ -787,32 +764,6 @@ function App({ initialNavigation }: AppProps) {
               }, 750 * (retries + 1))
               peerRetryTimersRef.current.add(timer)
             }
-          }
-          return
-        }
-
-        if (event.type === 'transfer:text-received') {
-          const sender = visitorFromRoom(roomRef.current, event.peerId)
-          if (!sender) {
-            peerSession.discardText(event.peerId, event.transferId)
-            return
-          }
-
-          const planned = planIncomingText(incomingTextsRef.current, {
-            ...event,
-            sender,
-          }, 5)
-          replaceIncomingTexts(planned.queue)
-          sendNotification({
-            title: '收到文本',
-            body: `来自 ${sender.displayName}：${event.text.slice(0, 60)}${event.text.length > 60 ? '…' : ''}`,
-            tag: `text-${event.transferId}`,
-          })
-          if (planned.disposition === 'acknowledge') {
-            peerSession.acknowledgeText(event.peerId, event.transferId)
-          } else {
-            peerSession.discardText(event.peerId, event.transferId)
-            showToast('接收队列已满，新的文本未显示', 'info')
           }
           return
         }
@@ -1078,7 +1029,6 @@ function App({ initialNavigation }: AppProps) {
     disposeRoomResources,
     getProgressScheduler,
     replaceIncomingFile,
-    replaceIncomingTexts,
     resetTransferPresentation,
     revokeObjectUrl,
     showToast,
@@ -1797,39 +1747,6 @@ function App({ initialNavigation }: AppProps) {
     clearFileSpeedPresentation()
   }, [clearFileSpeedPresentation, showToast])
 
-  const handleCloseText = useCallback(() => {
-    if (incomingTextsRef.current.length === 0) return
-    textCopyOperationRef.current += 1
-    replaceIncomingTexts(incomingTextsRef.current.slice(1))
-    setTextCopyStatus('idle')
-  }, [replaceIncomingTexts])
-
-  const handleCopyText = useCallback(async () => {
-    const current = incomingTextsRef.current[0]
-    if (!current) return
-    const operation = ++textCopyOperationRef.current
-    setTextCopyStatus('copying')
-
-    try {
-      if (!navigator.clipboard) throw new Error('clipboard unavailable')
-      await navigator.clipboard.writeText(current.text)
-      if (
-        textCopyOperationRef.current === operation
-        && incomingTextsRef.current[0] === current
-      ) {
-        setTextCopyStatus('copied')
-      }
-    } catch {
-      if (
-        textCopyOperationRef.current === operation
-        && incomingTextsRef.current[0] === current
-      ) {
-        setTextCopyStatus('error')
-        showToast('无法复制文本，请手动复制')
-      }
-    }
-  }, [showToast])
-
   const handleAcceptFiles = useCallback(() => {
     const current = incomingFileRef.current
     if (!current || current.state.status !== 'pending') return
@@ -1994,7 +1911,6 @@ function App({ initialNavigation }: AppProps) {
   const roomView = state.session && state.room && state.phase !== 'lobby'
     ? { session: state.session, room: state.room }
     : undefined
-  const activeText = incomingTexts[0]
   const receiverSender = senderFromRoom(roomView?.room)
   const roomReceivers = receiversFromRoom(roomView?.room)
   const readyPeerIdSet = new Set(state.readyPeerIds)
@@ -2168,16 +2084,6 @@ function App({ initialNavigation }: AppProps) {
           </div>
         )}
       </main>
-
-      {activeText && (
-        <ReceivedTextDialog
-          sender={activeText.sender}
-          text={activeText.text}
-          copyStatus={textCopyStatus}
-          onCopy={() => { void handleCopyText() }}
-          onClose={handleCloseText}
-        />
-      )}
 
       {incomingFile && (
         <IncomingFileRequestDialog

@@ -34,7 +34,7 @@ export type OutgoingFileUiState = {
 export type OutgoingActivity = {
   generation: number
   transferId: string
-  kind: 'text' | 'file'
+  kind: 'file'
   phase: Exclude<TransferPhase, 'idle'>
   peerIds: string[]
   peers: Record<string, OutgoingPeerUiState>
@@ -55,22 +55,10 @@ export type TransferUiAction =
 export type CreateActivityInput = {
   generation: number
   transferId: string
-  kind: 'text' | 'file'
+  kind: 'file'
   peerIds: readonly string[]
   unsupportedPeerIds?: readonly string[]
   fileIds?: readonly string[]
-}
-
-export type IncomingTextEvent = {
-  type: 'transfer:text-received'
-  peerId: string
-  transferId: string
-  text: string
-}
-
-export type IncomingTextPlan<Event extends IncomingTextEvent> = {
-  queue: Event[]
-  disposition: 'acknowledge' | 'discard'
 }
 
 export const initialTransferUiState: TransferUiState = {}
@@ -106,7 +94,6 @@ const derivePhase = (activity: OutgoingActivity): OutgoingActivity['phase'] => {
     return completed && !hasError ? 'complete' : 'error'
   }
 
-  if (activity.kind === 'text') return 'transferring'
   return peers.some(peer => peer.accepted) ? 'transferring' : 'requesting'
 }
 
@@ -368,7 +355,7 @@ export const createActivity = ({
   const peers = Object.fromEntries(uniquePeerIds.map(peerId => [
     peerId,
     {
-      accepted: kind === 'text' && !unsupported.has(peerId),
+      accepted: false,
       progress: 0,
       ...(unsupported.has(peerId) ? { outcome: 'failed' as const } : {}),
     },
@@ -391,7 +378,7 @@ export const createActivity = ({
     generation,
     transferId,
     kind,
-    phase: kind === 'text' ? 'transferring' : 'requesting',
+    phase: 'requesting',
     peerIds: uniquePeerIds,
     peers,
     files,
@@ -417,21 +404,6 @@ export const clearTerminalHold = (
 
 export const isTransferLocked = (state: TransferUiState) =>
   state.activity !== undefined
-
-export const planIncomingText = <Event extends IncomingTextEvent>(
-  queue: Event[],
-  event: Event,
-  maximumQueued: number,
-): IncomingTextPlan<Event> => {
-  if (queue.length >= Math.max(0, Math.trunc(maximumQueued))) {
-    return { queue, disposition: 'discard' }
-  }
-
-  return {
-    queue: [...queue, event],
-    disposition: 'acknowledge',
-  }
-}
 
 export const transferUiReducer = (
   state: TransferUiState,
