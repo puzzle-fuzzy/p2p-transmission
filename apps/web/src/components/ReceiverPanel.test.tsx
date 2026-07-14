@@ -23,50 +23,53 @@ const receiver: PublicVisitor = {
 }
 
 describe('ReceiverPanel', () => {
-  test('shows receiver identity, peer flow, and connection states', () => {
+  test('uses one sender-left receiver-group flow across receiver states', () => {
     const { rerender } = render(
       <ReceiverPanel
-        visitor={receiver}
         sender={sender}
         receivers={[receiver]}
+        connected={false}
         state={{ status: 'waiting' }}
       />,
     )
 
-    expect(screen.getByRole('region', { name: '接收状态' })).not.toBeNull()
-    expect(screen.getByText('接收者乙').textContent).toBe('接收者乙')
-    expect(screen.getByText('接收者').textContent).toBe('接收者')
-    expect(screen.getByRole('status', { name: '1 位接收者在房间内' }))
-      .not.toBeNull()
+    const status = screen.getByRole('status', { name: '正在建立点对点连接' })
+    expect(status.getAttribute('data-phase')).toBe('connecting')
+    expect(screen.getAllByTitle('接收者乙')).toHaveLength(1)
     expect(screen.getByTitle('发送者甲')).not.toBeNull()
-    expect(screen.getAllByTitle('接收者乙')).toHaveLength(2)
-    expect(screen.getByRole('status').querySelector('.transfer-peer-flow__line'))
-      .not.toBeNull()
-    expect(screen.getByRole('status').querySelectorAll('.transfer-peer-flow__dot'))
-      .toHaveLength(0)
-    expect(screen.getByRole('heading', { name: '等待对方发送' })).not.toBeNull()
-    expect(screen.queryByRole('button')).toBeNull()
 
     rerender(
       <ReceiverPanel
-        visitor={receiver}
         sender={sender}
         receivers={[receiver]}
+        connected
+        state={{ status: 'waiting' }}
+      />,
+    )
+    expect(status.getAttribute('data-phase')).toBe('idle')
+    expect(status.querySelector('.transfer-peer-flow__line')).not.toBeNull()
+
+    rerender(
+      <ReceiverPanel
+        sender={sender}
+        receivers={[receiver]}
+        connected
         state={{ status: 'receiving' }}
       />,
     )
-    expect(screen.getByRole('heading', { name: '正在接收文件' })).not.toBeNull()
-    expect(screen.getByRole('status', { name: '正在接收来自发送者的文件' })
-      .querySelectorAll('.transfer-peer-flow__dot')).toHaveLength(3)
+    expect(status.getAttribute('data-phase')).toBe('transferring')
+    expect(status.querySelector('.transfer-peer-flow__dash')).not.toBeNull()
 
     rerender(
       <ReceiverPanel
-        visitor={receiver}
         sender={sender}
         receivers={[receiver]}
+        connected={false}
         state={{ status: 'error', message: '发送者已离开' }}
       />,
     )
-    expect(screen.getByText('发送者已离开').textContent).toBe('发送者已离开')
+    expect(status.getAttribute('data-phase')).toBe('error')
+    expect(status.querySelector('[data-state-icon="link_off"]')).not.toBeNull()
+    expect(screen.getByText('发送者已离开')).not.toBeNull()
   })
 })

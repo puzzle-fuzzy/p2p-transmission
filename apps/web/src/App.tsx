@@ -2078,9 +2078,11 @@ function App({ initialNavigation }: AppProps) {
               />
             ) : (
               <ReceiverPanel
-                visitor={roomView.session.visitor}
                 sender={receiverSender}
                 receivers={roomReceivers}
+                connected={Boolean(
+                  receiverSender && state.readyPeerIds.includes(receiverSender.id)
+                )}
                 state={receiverPanelState}
               />
             )}

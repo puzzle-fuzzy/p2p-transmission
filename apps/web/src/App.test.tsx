@@ -256,21 +256,21 @@ vi.mock('./components/TransferPanel', () => ({
 
 vi.mock('./components/ReceiverPanel', () => ({
   default: ({
-    visitor,
     sender,
     receivers,
+    connected,
     state,
   }: {
-    visitor: PublicVisitor
     sender?: PublicVisitor
     receivers: PublicVisitor[]
+    connected: boolean
     state: { status: string }
   }) => (
     <div
       data-testid="receiver-panel"
-      data-visitor-id={visitor.id}
       data-sender-id={sender?.id ?? ''}
       data-receiver-ids={receivers.map(receiver => receiver.id).join(',')}
+      data-connected={String(connected)}
     >
       {state.status}
     </div>
@@ -1389,13 +1389,14 @@ describe('App transfer integration', () => {
     expect(screen.getByTestId('transfer-panel').dataset.receiverIds).toBe(receiver.id)
   })
 
-  test('passes receiver identity and room peers to the receiver panel', async () => {
+  test('passes the sender, room receivers, and peer readiness to the receiver panel', async () => {
+    peerSession.readyPeerIdList = [sender.id]
     await enterRoom('receiver')
 
     const panel = screen.getByTestId('receiver-panel')
-    expect(panel.dataset.visitorId).toBe(receiver.id)
     expect(panel.dataset.senderId).toBe(sender.id)
     expect(panel.dataset.receiverIds).toBe(receiver.id)
+    expect(panel.dataset.connected).toBe('true')
     expect(screen.queryByRole('button', { name: '分享房间' })).toBeNull()
   })
 

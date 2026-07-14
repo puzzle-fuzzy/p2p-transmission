@@ -1,5 +1,4 @@
 import type { PublicVisitor } from '../shared/contracts'
-import Avatar from './Avatar'
 import TransferPeerFlow from './TransferPeerFlow'
 
 export type ReceiverPanelState =
@@ -8,9 +7,9 @@ export type ReceiverPanelState =
   | { status: 'error'; message?: string }
 
 export type ReceiverPanelProps = {
-  visitor: PublicVisitor
   sender?: PublicVisitor
   receivers: PublicVisitor[]
+  connected: boolean
   state: ReceiverPanelState
 }
 
@@ -36,65 +35,41 @@ const statusCopy = {
 } as const
 
 export default function ReceiverPanel({
-  visitor,
   sender,
   receivers,
+  connected,
   state,
 }: ReceiverPanelProps) {
   const copy = statusCopy[state.status]
   const description = state.status === 'error' && state.message
     ? state.message
     : copy.description
-  const flowPhase = state.status === 'receiving' ? 'transferring' : 'idle'
-  const flowLabel = sender
-    ? state.status === 'receiving'
+  const flowPhase = state.status === 'error'
+    ? 'error'
+    : state.status === 'receiving'
+      ? 'transferring'
+      : connected
+        ? 'idle'
+        : 'connecting'
+  const flowLabel = state.status === 'error'
+    ? '传输连接已中断'
+    : state.status === 'receiving'
       ? '正在接收来自发送者的文件'
-      : `${String(receivers.length)} 位接收者在房间内`
-    : '等待发送者加入'
+      : connected
+        ? `${String(receivers.length)} 位接收者在房间内，点对点已连接`
+        : '正在建立点对点连接'
 
   return (
     <section
       className="w-[calc(100vw-2rem)] max-w-xl"
       aria-label="接收状态"
     >
-      <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-center gap-3">
-          <Avatar
-            seed={visitor.avatarSeed}
-            label={visitor.displayName}
-            className="shrink-0"
-          />
-          <div className="min-w-0">
-            <p className="truncate text-sm text-amber-50/80">{visitor.displayName}</p>
-            <p className="text-xs text-amber-50/50">接收者</p>
-          </div>
-        </div>
-
-        {sender ? (
-          <div className="flex shrink-0 items-center gap-3 self-end sm:self-auto">
-            <span className="text-xs text-amber-50/50">{copy.label}</span>
-            <TransferPeerFlow
-              sender={sender}
-              receivers={receivers}
-              phase={flowPhase}
-              accessibleLabel={flowLabel}
-            />
-          </div>
-        ) : (
-          <div className="flex shrink-0 items-center gap-2 text-amber-50/50">
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-full border border-amber-50/15">
-              <span
-                className="material-symbols-outlined"
-                style={{ fontSize: '17px' }}
-                aria-hidden="true"
-              >
-                person
-              </span>
-            </span>
-            <span className="text-xs">等待发送者加入</span>
-          </div>
-        )}
-      </div>
+      <TransferPeerFlow
+        sender={sender}
+        receivers={receivers}
+        phase={flowPhase}
+        accessibleLabel={flowLabel}
+      />
 
       <div className="mt-6 flex min-h-56 flex-col items-center justify-center rounded-xl border border-amber-50/15 px-5 text-center">
         <span

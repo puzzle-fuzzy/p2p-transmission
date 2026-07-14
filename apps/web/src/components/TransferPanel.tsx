@@ -93,10 +93,10 @@ export default function TransferPanel({
       ? connectedCount === 0 ? '暂无接收者连接' : '请选择接收者'
       : `发送 ${String(files.length)} 项`
   const activePeerIds = new Set(activity?.peerIds ?? [])
-  const flowReceivers = activity
+  const flowReceivers = activity && !terminal
     ? receivers.filter(receiver => activePeerIds.has(receiver.id))
     : receivers
-  const flowPhase = activity?.phase ?? 'idle'
+  const flowPhase = activity?.phase ?? (receivers.length > 0 ? 'idle' : 'connecting')
 
   useEffect(() => {
     if (selectedReceiverIds === undefined) return
@@ -184,23 +184,18 @@ export default function TransferPanel({
       className="native-scrollbar flex max-h-[calc(100svh-2rem)] w-[calc(100vw-2rem)] max-w-xl flex-col gap-5 overflow-y-auto py-0.5 sm:gap-6"
       aria-label="发送内容"
     >
-      <div className="flex justify-end">
-        <div className="flex w-full flex-nowrap items-center justify-between gap-2 sm:w-auto sm:justify-end sm:gap-3">
-          <div className="shrink-0 whitespace-nowrap text-[11px] text-amber-50/60 tabular-nums sm:text-xs">
-            {connectedLabel}
-          </div>
-           <TransferPeerFlow
-             sender={visitor}
-             receivers={flowReceivers}
-             phase={flowPhase}
-             accessibleLabel={activityLabel}
-             onClick={receivers.length > 0 && !pickerLocked
-               ? () => setPickerOpen(true)
-               : undefined}
-             selectedCount={selectedCount}
-             triggerRef={pickerTriggerRef}
-           />
-        </div>
+      <div className="w-full">
+        <TransferPeerFlow
+          sender={visitor}
+          receivers={flowReceivers}
+          phase={flowPhase}
+          accessibleLabel={activityLabel}
+          onClick={receivers.length > 0 && !pickerLocked
+            ? () => setPickerOpen(true)
+            : undefined}
+          selectedCount={selectedCount}
+          triggerRef={pickerTriggerRef}
+        />
       </div>
 
       {(sendError || selectionError) && (

@@ -100,47 +100,46 @@ const createFailedFileTransfer = (
 })
 
 describe('TransferPanel', () => {
-  test('keeps the connected label and peer flow together while filtering active recipients', () => {
+  test('uses the unified flow and filters receivers to the active transfer', () => {
     const initialProps = createProps()
     const { rerender } = render(<TransferPanel {...initialProps} />)
-
-    const label = screen.getByText('2 位接收者已连接')
     const status = screen.getByRole('status')
-    expect(label.parentElement).toBe(status.parentElement)
-    expect(label.parentElement?.className).toContain('flex-nowrap')
-    expect(label.parentElement?.className).toContain('gap-2')
-    expect(label.className).toContain('text-[11px]')
-    expect(label.className).toContain('sm:text-xs')
+
+    expect(screen.queryByText('2 位接收者已连接')).toBeNull()
     expect(status.getAttribute('data-phase')).toBe('idle')
-    expect(status.getAttribute('data-active')).toBe('false')
+    expect(screen.getByTitle(sender.displayName)).not.toBeNull()
     expect(screen.getByTitle(receiverOne.displayName)).not.toBeNull()
     expect(screen.getByTitle(receiverTwo.displayName)).not.toBeNull()
-    expect(screen.queryByText(/房间\s+012345/)).toBeNull()
 
     const activeActivity = createActiveFileTransfer('file-flow')
     activeActivity.peerIds = [receiverTwo.id]
-    rerender(
-      <TransferPanel
-        {...initialProps}
-        activity={activeActivity}
-      />,
-    )
+    rerender(<TransferPanel {...initialProps} activity={activeActivity} />)
 
-    expect(screen.getByText('2 位接收者已连接')).not.toBeNull()
     expect(status.getAttribute('data-phase')).toBe('transferring')
-    expect(status.getAttribute('data-active')).toBe('true')
+    expect(status.querySelector('.transfer-peer-flow__dash')).not.toBeNull()
     expect(screen.queryByTitle(receiverOne.displayName)).toBeNull()
     expect(screen.getByTitle(receiverTwo.displayName)).not.toBeNull()
   })
 
-  test('renders a sender-only idle flow when no receiver is ready', () => {
-    render(<TransferPanel {...createProps({ receivers: [] })} />)
+  test('restores all current receivers after a transfer reaches a terminal phase', () => {
+    const terminalActivity = createFailedFileTransfer('file-terminal')
+    terminalActivity.peerIds = [receiverTwo.id]
+
+    render(<TransferPanel {...createProps({ activity: terminalActivity })} />)
 
     const status = screen.getByRole('status')
-    expect(screen.getByText('0 位接收者已连接')).not.toBeNull()
-    expect(screen.getByTitle(sender.displayName)).not.toBeNull()
-    expect(status.querySelector('.transfer-peer-flow__line')).toBeNull()
-    expect(status.querySelectorAll('.transfer-peer-flow__dot')).toHaveLength(0)
+    expect(status.getAttribute('data-phase')).toBe('error')
+    expect(screen.getByTitle(receiverOne.displayName)).not.toBeNull()
+    expect(screen.getByTitle(receiverTwo.displayName)).not.toBeNull()
+  })
+
+  test('shows the waiting flow when no receiver is ready', () => {
+    render(<TransferPanel {...createProps({ receivers: [] })} />)
+    const status = screen.getByRole('status')
+
+    expect(status.getAttribute('data-phase')).toBe('connecting')
+    expect(status.querySelectorAll('.transfer-peer-flow__dot')).toHaveLength(3)
+    expect(status.querySelector('.transfer-peer-flow__placeholder')).not.toBeNull()
   })
 
   test('shows one upload surface and no text/file tabs', () => {
