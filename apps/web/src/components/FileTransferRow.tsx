@@ -120,7 +120,7 @@ export default function FileTransferRow({
       {action && (
         <div
           data-testid={`file-transfer-action-${fileId}`}
-          className="absolute inset-y-0 right-0 z-20 flex items-center"
+          className="absolute inset-y-0 right-0 z-20 flex items-center rounded-r-lg"
         >
           {action}
         </div>

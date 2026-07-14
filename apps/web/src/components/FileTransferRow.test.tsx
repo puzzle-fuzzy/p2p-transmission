@@ -37,6 +37,7 @@ describe('FileTransferRow', () => {
     expect(actionSlot.className).toContain('absolute')
     expect(actionSlot.className).toContain('inset-y-0')
     expect(actionSlot.className).toContain('right-0')
+    expect(actionSlot.className).toContain('rounded-r-lg')
     expect(progress.className).toContain('bg-accent/15')
     expect(progress.className).toContain('motion-safe:transition-[width]')
     expect(progress.className).toContain('motion-safe:duration-150')
