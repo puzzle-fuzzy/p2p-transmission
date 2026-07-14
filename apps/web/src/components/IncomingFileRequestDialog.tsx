@@ -76,10 +76,11 @@ export default function IncomingFileRequestDialog({
 
   useEffect(() => {
     const dialog = dialogRef.current
+    const copyTimers = copyTimersRef.current
     if (!dialog) return undefined
 
-    for (const timer of copyTimersRef.current.values()) clearTimeout(timer)
-    copyTimersRef.current.clear()
+    for (const timer of copyTimers.values()) clearTimeout(timer)
+    copyTimers.clear()
     setCopyStatusByFileId({})
     decisionMadeRef.current = false
     closingRef.current = false
@@ -87,15 +88,19 @@ export default function IncomingFileRequestDialog({
     if (!dialog.open) dialog.showModal()
 
     return () => {
-      for (const timer of copyTimersRef.current.values()) clearTimeout(timer)
-      copyTimersRef.current.clear()
+      for (const timer of copyTimers.values()) clearTimeout(timer)
+      copyTimers.clear()
       if (dialog.open) dialog.close()
     }
   }, [requestKey])
 
-  useEffect(() => () => {
-    for (const timer of copyTimersRef.current.values()) clearTimeout(timer)
-    copyTimersRef.current.clear()
+  useEffect(() => {
+    const copyTimers = copyTimersRef.current
+
+    return () => {
+      for (const timer of copyTimers.values()) clearTimeout(timer)
+      copyTimers.clear()
+    }
   }, [])
 
   useEffect(() => {
