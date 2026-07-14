@@ -33,7 +33,7 @@ describe('FileTransferRow', () => {
 
     expect(row.className).toContain('bg-white/5')
     expect(content.className).toContain('min-h-11')
-    expect(content.className).toContain('pr-14')
+    expect(content.className).toContain('pr-12')
     expect(actionSlot.className).toContain('absolute')
     expect(actionSlot.className).toContain('inset-y-0')
     expect(actionSlot.className).toContain('right-0')

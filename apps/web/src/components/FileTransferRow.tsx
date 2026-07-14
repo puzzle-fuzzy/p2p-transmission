@@ -86,7 +86,7 @@ export default function FileTransferRow({
       <div
         data-testid={`file-transfer-content-${fileId}`}
         className={`relative z-10 flex min-h-11 items-center gap-3 py-2 pl-3 ${
-          action ? 'pr-14' : 'pr-3'
+          action ? 'pr-12' : 'pr-3'
         }`}
       >
         <span
