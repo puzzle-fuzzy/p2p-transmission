@@ -15,7 +15,8 @@ cp services/api/.env.example services/api/.env
 bun run --cwd services/api dev
 ```
 
-默认监听 `PORT=3000`。未设置 `TURN_URLS` 和 `TURN_SHARED_SECRET` 时，服务仍可在
+未设置 `PORT` 时默认监听 `PORT=3332`，适合本地开发并避开常见的 `3000` 端口冲突。
+生产 Compose 会显式设置 `PORT=3000`。未设置 `TURN_URLS` 和 `TURN_SHARED_SECRET` 时，服务仍可在
 STUN-only/off 模式下用于本地开发。
 
 ```bash

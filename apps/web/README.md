@@ -36,7 +36,7 @@ bun run dev
 ```
 
 - Web：<http://localhost:5713>
-- API：<http://localhost:3000>
+- API：<http://localhost:3332>
 
 也可以分别运行：
 

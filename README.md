@@ -73,7 +73,7 @@ bun run dev
 开发服务地址：
 
 - Web：<http://localhost:5713>
-- API：<http://localhost:3000>
+- API：<http://localhost:3332>
 
 各工作区的配置和技术细节见：
 
