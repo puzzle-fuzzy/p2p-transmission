@@ -109,7 +109,7 @@ export default function RoomJoin({
             aria-describedby={error ? errorId : undefined}
             aria-invalid={error ? true : undefined}
             value={digits[index]}
-            className="h-14 min-w-0 w-full rounded-lg border border-amber-50/15 bg-transparent text-center font-mono text-xl text-amber-50 outline-none transition-colors focus:border-accent aria-invalid:border-amber-50/50"
+            className="aspect-4/5 min-h-12 min-w-0 w-full rounded-lg border border-amber-50/15 bg-transparent text-center font-mono text-xl text-amber-50 outline-none transition-colors focus:border-amber-50/90 focus:ring-2 focus:ring-amber-50/20 aria-invalid:border-amber-50/50"
             onChange={event => handleInput(index, event)}
             onKeyDown={event => handleKeyDown(index, event)}
           />

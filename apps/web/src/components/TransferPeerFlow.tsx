@@ -18,6 +18,7 @@ export type TransferPeerFlowProps = {
   onClick?(): void
   selectedCount?: number
   triggerRef?: Ref<HTMLButtonElement>
+  highlightedReceiverId?: string
 }
 
 const MAX_AVATAR_SLOTS = 5
@@ -27,9 +28,9 @@ const StateTrack = ({ phase }: { phase: TransferPeerFlowPhase }) => {
   if (phase === 'connecting' || phase === 'requesting') {
     return (
       <span className="flex items-center gap-1.5">
-        <span className="transfer-peer-flow__dot size-1 rounded-full bg-accent" />
-        <span className="transfer-peer-flow__dot size-1 rounded-full bg-accent" />
-        <span className="transfer-peer-flow__dot size-1 rounded-full bg-accent" />
+        <span className="transfer-peer-flow__dot size-1 rounded-full bg-amber-50/80" />
+        <span className="transfer-peer-flow__dot size-1 rounded-full bg-amber-50/80" />
+        <span className="transfer-peer-flow__dot size-1 rounded-full bg-amber-50/80" />
       </span>
     )
   }
@@ -97,6 +98,7 @@ export default function TransferPeerFlow({
   onClick,
   selectedCount,
   triggerRef,
+  highlightedReceiverId,
 }: TransferPeerFlowProps) {
   const overflow = receivers.length > MAX_AVATAR_SLOTS
   const visibleReceivers = overflow
@@ -106,9 +108,61 @@ export default function TransferPeerFlow({
     || phase === 'requesting'
     || phase === 'transferring'
 
+  const receiverVisual = receivers.length === 0 ? (
+    <span className="transfer-peer-flow__placeholder flex size-9 items-center justify-center rounded-full border border-amber-50/15 text-amber-50/50 max-sm:size-8!">
+      <span className="material-symbols-outlined" style={{ fontSize: '17px' }}>
+        person_add
+      </span>
+    </span>
+  ) : (
+    <>
+      {visibleReceivers.map((receiver, index) => (
+        <Avatar
+          key={receiver.id}
+          seed={receiver.avatarSeed}
+          label={receiver.displayName}
+          highlighted={receiver.id === highlightedReceiverId}
+          className={`shrink-0 max-sm:size-8! ${index === 0 ? '' : '-ml-5'}`}
+        />
+      ))}
+      {overflow && (
+        <span
+          className="-ml-5 flex size-9 shrink-0 items-center justify-center rounded-full border-2 border-surface bg-white/10 px-1 text-[11px] tabular-nums text-amber-50/70 max-sm:size-8!"
+          title={`共 ${String(receivers.length)} 位接收者`}
+        >
+          {receivers.length}
+        </span>
+      )}
+    </>
+  )
+
+  const receiverGroup = onClick ? (
+    <button
+      type="button"
+      ref={triggerRef}
+      className="flex min-h-9 min-w-9 shrink-0 items-center justify-end rounded-lg border border-transparent p-2 transition-colors hover:bg-white/5 focus-visible:border-accent focus-visible:outline-none"
+      onClick={onClick}
+      aria-label={`选择接收者，已选择 ${String(selectedCount ?? receivers.length)} 位`}
+      title="选择接收者"
+      data-side="receivers"
+    >
+      <span className="flex items-center justify-end" aria-hidden="true">
+        {receiverVisual}
+      </span>
+    </button>
+  ) : (
+    <span
+      className="flex min-w-9 shrink-0 items-center justify-end pl-2"
+      data-side="receivers"
+      aria-hidden="true"
+    >
+      {receiverVisual}
+    </span>
+  )
+
   const visualFlow = (
-    <div className="flex w-full min-w-0 items-center" aria-hidden="true">
-      <span className="flex size-9 shrink-0 items-center" data-side="sender">
+    <div className="flex min-w-0 items-center m-auto justify-center">
+      <span className="flex size-9 shrink-0 items-center" data-side="sender" aria-hidden="true">
         {sender && (
           <Avatar
             seed={sender.avatarSeed}
@@ -118,41 +172,11 @@ export default function TransferPeerFlow({
         )}
       </span>
 
-      <span className="flex min-w-8 flex-1 items-center justify-center px-3 sm:px-5">
+      <span className="flex min-w-8 w-22 items-center justify-center px-3 sm:px-5" aria-hidden="true">
         <StateTrack phase={phase} />
       </span>
 
-      <span
-        className="flex min-w-9 shrink-0 items-center justify-end pl-2"
-        data-side="receivers"
-      >
-        {receivers.length === 0 ? (
-          <span className="transfer-peer-flow__placeholder flex size-9 items-center justify-center rounded-full border border-amber-50/15 text-amber-50/50 max-sm:size-8!">
-            <span className="material-symbols-outlined" style={{ fontSize: '17px' }}>
-              person_add
-            </span>
-          </span>
-        ) : (
-          <>
-            {visibleReceivers.map((receiver, index) => (
-              <Avatar
-                key={receiver.id}
-                seed={receiver.avatarSeed}
-                label={receiver.displayName}
-                className={`shrink-0 max-sm:size-8! ${index === 0 ? '' : '-ml-2'}`}
-              />
-            ))}
-            {overflow && (
-              <span
-                className="-ml-2 flex size-9 shrink-0 items-center justify-center rounded-full border-2 border-surface bg-white/10 px-1 text-[11px] tabular-nums text-amber-50/70 max-sm:size-8!"
-                title={`共 ${String(receivers.length)} 位接收者`}
-              >
-                {receivers.length}
-              </span>
-            )}
-          </>
-        )}
-      </span>
+      {receiverGroup}
     </div>
   )
 
@@ -171,18 +195,7 @@ export default function TransferPeerFlow({
           ? '暂无接收者'
           : `共 ${String(receivers.length)} 位接收者`}
       </span>
-      {onClick ? (
-        <button
-          type="button"
-          ref={triggerRef}
-          className="min-h-11 w-full rounded-lg border border-transparent text-left transition-colors hover:bg-white/5 focus-visible:border-accent focus-visible:outline-none"
-          onClick={onClick}
-          aria-label={`选择接收者，已选择 ${String(selectedCount ?? receivers.length)} 位`}
-          title="选择接收者"
-        >
-          {visualFlow}
-        </button>
-      ) : visualFlow}
+      {visualFlow}
     </div>
   )
 }

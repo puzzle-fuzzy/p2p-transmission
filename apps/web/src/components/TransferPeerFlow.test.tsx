@@ -73,6 +73,8 @@ describe('TransferPeerFlow', () => {
     const status = screen.getByRole('status')
 
     expect(status.querySelectorAll('.transfer-peer-flow__dot')).toHaveLength(3)
+    expect(Array.from(status.querySelectorAll('.transfer-peer-flow__dot'))
+      .every(dot => dot.className.includes('bg-amber-50/80'))).toBe(true)
     expect(status.querySelector('.transfer-peer-flow__line')).toBeNull()
 
     rerender(<TransferPeerFlow {...props} phase="idle" />)
@@ -125,9 +127,17 @@ describe('TransferPeerFlow', () => {
       />,
     )
 
+    const status = screen.getByRole('status', { name: 'Ready to send' })
     const trigger = screen.getByRole('button', { name: '选择接收者，已选择 1 位' })
     trigger.focus()
     expect(document.activeElement).toBe(trigger)
+
+    expect(screen.getByTitle('Sender').closest('button')).toBeNull()
+    expect(status.querySelector('[data-side="receivers"]')).toBe(trigger)
+
+    screen.getByTitle('Sender').click()
+    expect(onClick).not.toHaveBeenCalled()
+
     trigger.click()
     expect(onClick).toHaveBeenCalledTimes(1)
   })

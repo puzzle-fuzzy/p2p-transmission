@@ -65,10 +65,10 @@ export default function AboutDialog({ version, onClose }: AboutDialogProps) {
           <section>
             <h3 className="text-sm font-medium text-amber-50/85">隐私与安全</h3>
             <p className="mt-2">
-              文本和文件通过浏览器 WebRTC DataChannel 在双方之间传输。API 只负责临时访客、房间、加入授权、WebSocket 信令和短期 TURN 凭据；它不保存或中继应用载荷。
+              文件（包括粘贴的文本）会在浏览器端通过加密的 WebRTC DataChannel 在双方之间传输。系统优先尝试点对点直连，必要时通过 TURN 中继转发加密流量。应用服务器负责临时访客、房间、加入授权、WebSocket 信令和短期 TURN 凭据，不保存文件或文本内容。
             </p>
             <p className="mt-2">
-              coturn 只在需要时中继加密的 WebRTC 流量，不能读取文本正文或文件内容。邀请链接包含加入权限，请只发送给可信接收者；6 位房间码只是公开标识，不是成员授权凭证。
+              TURN 中继只能看到加密的 WebRTC 流量，不能读取文本正文或文件内容。邀请链接包含加入权限，请只发送给可信接收者；6 位房间码只是公开标识，不是成员授权凭证。
             </p>
           </section>
 
@@ -78,6 +78,7 @@ export default function AboutDialog({ version, onClose }: AboutDialogProps) {
               <li>房间默认有效 30 分钟，过期后需要重新创建房间。</li>
               <li>单个文件批次最多 10 个文件，总大小最多 100 MiB。</li>
               <li>网络限制可能让连接需要 TURN 中继；重要文件请保留原始备份。</li>
+              <li>接收完成的文件（包括粘贴的文本）会暂存在当前页面中；关闭接收结果、退出房间或连接断开后，页面会释放这些临时数据。</li>
             </ul>
           </section>
 

@@ -22,12 +22,21 @@ const receiver: PublicVisitor = {
   lastSeenAt: 1,
 }
 
+const otherReceiver: PublicVisitor = {
+  id: 'receiver-other',
+  avatarSeed: 'other-receiver-seed',
+  displayName: '接收者丙',
+  createdAt: 1,
+  lastSeenAt: 1,
+}
+
 describe('ReceiverPanel', () => {
   test('uses one sender-left receiver-group flow across receiver states', () => {
     const { rerender } = render(
       <ReceiverPanel
+        visitor={receiver}
         sender={sender}
-        receivers={[receiver]}
+        receivers={[receiver, otherReceiver]}
         connected={false}
         state={{ status: 'waiting' }}
       />,
@@ -37,11 +46,15 @@ describe('ReceiverPanel', () => {
     expect(status.getAttribute('data-phase')).toBe('connecting')
     expect(screen.getAllByTitle('接收者乙')).toHaveLength(1)
     expect(screen.getByTitle('发送者甲')).not.toBeNull()
+    expect(screen.getByTitle('接收者乙').querySelector('[data-avatar-face]')?.getAttribute('style'))
+      .toContain('border-color: rgb(255, 255, 255)')
+    expect(screen.getByTitle('接收者丙').style.borderColor).toBe('')
 
     rerender(
       <ReceiverPanel
+        visitor={receiver}
         sender={sender}
-        receivers={[receiver]}
+        receivers={[receiver, otherReceiver]}
         connected
         state={{ status: 'waiting' }}
       />,
@@ -51,8 +64,9 @@ describe('ReceiverPanel', () => {
 
     rerender(
       <ReceiverPanel
+        visitor={receiver}
         sender={sender}
-        receivers={[receiver]}
+        receivers={[receiver, otherReceiver]}
         connected
         state={{ status: 'receiving' }}
       />,
@@ -62,8 +76,9 @@ describe('ReceiverPanel', () => {
 
     rerender(
       <ReceiverPanel
+        visitor={receiver}
         sender={sender}
-        receivers={[receiver]}
+        receivers={[receiver, otherReceiver]}
         connected={false}
         state={{ status: 'error', message: '发送者已离开' }}
       />,

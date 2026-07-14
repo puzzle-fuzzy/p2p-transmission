@@ -7,6 +7,7 @@ export type ReceiverPanelState =
   | { status: 'error'; message?: string }
 
 export type ReceiverPanelProps = {
+  visitor: PublicVisitor
   sender?: PublicVisitor
   receivers: PublicVisitor[]
   connected: boolean
@@ -35,6 +36,7 @@ const statusCopy = {
 } as const
 
 export default function ReceiverPanel({
+  visitor,
   sender,
   receivers,
   connected,
@@ -67,6 +69,7 @@ export default function ReceiverPanel({
       <TransferPeerFlow
         sender={sender}
         receivers={receivers}
+        highlightedReceiverId={visitor.id}
         phase={flowPhase}
         accessibleLabel={flowLabel}
       />

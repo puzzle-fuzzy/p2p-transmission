@@ -30,6 +30,24 @@ describe('RoomJoin', () => {
     expect(screen.getByText('输入发送者提供的 6 位房间码，或直接打开邀请链接')).not.toBeNull()
   })
 
+  test('uses a gently tall shape for room-code inputs', () => {
+    renderRoomJoin()
+
+    for (const input of roomCodeInputs()) {
+      expect(input.className).toContain('aspect-[4/5]')
+      expect(input.className).toContain('min-h-12')
+    }
+  })
+
+  test('uses a high-contrast focus treatment for room-code inputs', () => {
+    renderRoomJoin()
+
+    const [input] = roomCodeInputs()
+    expect(input?.className).toContain('focus:border-amber-50/90')
+    expect(input?.className).toContain('focus:ring-2')
+    expect(input?.className).toContain('focus:ring-amber-50/20')
+  })
+
   test('prefills an invitation but waits for explicit confirmation', async () => {
     const user = userEvent.setup()
     const props = renderRoomJoin({ initialCode: '123456', mode: 'invite' })

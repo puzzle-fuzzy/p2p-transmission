@@ -650,6 +650,20 @@ describe('App transfer integration', () => {
     expect(boundary.createPeerSession).not.toHaveBeenCalled()
   })
 
+  test('shows a Chinese message when creating a room fails because of a network error', async () => {
+    boundary.createRoom.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    const user = userEvent.setup()
+    render(<App initialNavigation={absentNavigation} />)
+
+    await user.click(await screen.findByRole('button', { name: '创建测试房间' }))
+
+    await waitFor(() => expect(boundary.showToast).toHaveBeenCalledWith(
+      '网络连接失败，请稍后重试',
+    ))
+    expect(screen.getByTestId('join-error').textContent).toBe('网络连接失败，请稍后重试')
+    expect(boundary.createRealtimeClient).not.toHaveBeenCalled()
+  })
+
   test('rejects a bootstrap that omits the authenticated membership', async () => {
     const invalidRoom: PublicRoom = {
       ...room,
@@ -2071,22 +2085,12 @@ describe('App transfer integration', () => {
     expect(screen.getByRole('button', { name: '创建测试房间' })).not.toBeNull()
   })
 
-  test('opens the same About dialog from the room toolbar', async () => {
-    const user = await enterRoom('sender')
+  test('does not show About in the room toolbar', async () => {
+    await enterRoom('sender')
 
-    await user.click(screen.getByRole('button', {
+    expect(screen.queryByRole('button', {
       name: '关于 P2P Transmission',
-    }))
-
-    const dialog = screen.getByRole('dialog', {
-      name: '关于 P2P Transmission',
-    })
-    expect(dialog.textContent).toContain('不注册，不上传，直接把内容传给对方。')
-
-    await user.click(screen.getByRole('button', { name: '关闭' }))
-    await waitFor(() => expect(screen.queryByRole('dialog', {
-      name: '关于 P2P Transmission',
-    })).toBeNull())
+    })).toBeNull()
     expect(screen.getByTestId('transfer-panel')).not.toBeNull()
   })
 

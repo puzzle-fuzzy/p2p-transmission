@@ -42,6 +42,22 @@ label:has(input:not(:disabled)) {
   }
 }
 
+@keyframes avatar-ripple {
+  0% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+
+  58% {
+    opacity: 0.16;
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(1.62);
+  }
+}
+
 @keyframes transfer-dash-flow {
   to {
     stroke-dashoffset: -28;
@@ -113,6 +129,23 @@ label:has(input:not(:disabled)) {
 .transfer-peer-flow__dot {
   opacity: 0.6;
   transform: scale(1);
+}
+
+.avatar__ripple {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 9999px;
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(1);
+  animation: avatar-ripple 2.4s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+  will-change: opacity, transform;
+}
+
+.avatar__ripple--delayed {
+  animation-delay: 1.2s;
 }
 
 .transfer-peer-flow[data-phase="connecting"] .transfer-peer-flow__dot,
@@ -201,5 +234,11 @@ label:has(input:not(:disabled)) {
   .transfer-peer-flow .transfer-peer-flow__dot {
     opacity: 0.6;
     transform: none;
+  }
+
+  .avatar__ripple {
+    animation: none;
+    opacity: 0.18;
+    transform: scale(1.08);
   }
 }

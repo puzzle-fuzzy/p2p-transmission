@@ -194,6 +194,17 @@ const removeParticipant = (room: PublicRoom, visitorId: string): PublicRoom => (
 const isTerminalActivity = (activity?: OutgoingActivity) =>
   activity?.phase === 'complete' || activity?.phase === 'error'
 
+const isNetworkFetchError = (error: unknown) => (
+  error instanceof Error
+  && (
+    error.name === 'NetworkError'
+    || (
+      error instanceof TypeError
+      && /failed to fetch|load failed|networkerror/iu.test(error.message)
+    )
+  )
+)
+
 const createFileId = () => `file_${crypto.randomUUID()}`
 
 const assertBootstrapMembership = (
@@ -1108,7 +1119,9 @@ function App({ initialNavigation }: AppProps) {
       setOwnerInviteRoomCode(result.value.room.code)
     } catch (error) {
       if (operationGenerationRef.current !== operationGeneration) return
-      const message = error instanceof Error ? error.message : '创建房间失败'
+      const message = isNetworkFetchError(error)
+        ? '网络连接失败，请稍后重试'
+        : error instanceof Error ? error.message : '创建房间失败'
       showToast(message)
       dispatch({ type: 'error', message })
     }
@@ -2038,15 +2051,6 @@ function App({ initialNavigation }: AppProps) {
                      {state.readyPeerIds.length > 0 ? '点对点已连接' : '正在建立点对点连接'}
                    </div>
                  </div>
-                 <button
-                   type="button"
-                   className="flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-full border border-transparent text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:border-accent focus-visible:outline-none"
-                   onClick={() => setAboutOpen(true)}
-                   aria-label="关于 P2P Transmission"
-                   title="关于 P2P Transmission"
-                 >
-                   <span className="material-symbols-outlined" style={{ fontSize: '17px' }} aria-hidden="true">info</span>
-                 </button>
                  {state.role === 'receiver' && (
                   <button
                     type="button"
@@ -2078,6 +2082,7 @@ function App({ initialNavigation }: AppProps) {
               />
             ) : (
               <ReceiverPanel
+                visitor={roomView.session.visitor}
                 sender={receiverSender}
                 receivers={roomReceivers}
                 connected={Boolean(
