@@ -17,7 +17,7 @@
 - 文本作为 UTF-8 的 `.txt` 传输项目进入现有文件队列，并复用文件数量、大小和批次校验。
 - 接收方继续使用统一的文件请求和接收流程。
 - 接收完成后，`.txt` / `text/plain` 项显示明确的“复制内容”操作；复制成功反馈需要保持可感知，同时保留下载能力。
-- 保留旧版本文本传输的接收兼容路径，但新版本不再提供文本发送入口。
+- 删除旧版本的文本传输协议、文本接收状态和文本接收弹窗；新版本只保留文件传输协议。
 
 ## 已确认的交互决策
 
@@ -71,7 +71,7 @@ new File([plainText], '粘贴内容.txt', {
 
 接收方对新版本发送的文本项目不增加独立文本请求流程，仍使用 `IncomingFileRequestDialog`。文件请求列表可以通过 `.txt` 后缀或 `text/plain` 类型识别文本项目，但不改变接受、拒绝、取消和传输状态机。
 
-为兼容用户可能尚未刷新页面的旧客户端，暂时保留 `transfer:text` 的接收处理和旧文本弹窗；该路径只用于兼容旧版本发送者，不再出现在新版本的发送 UI、重试 payload 或 E2E 主流程中。待旧协议退出窗口确定后，可单独删除。
+由于产品尚未大规模使用，本次直接删除 `transfer:text`、文本 receipt、`offerText`、文本接收队列、`planIncomingText` 和 `ReceivedTextDialog`。这样协议、状态机、发送 UI 和接收 UI 只有一套文件传输模型，不保留已经废弃的分支。
 
 ### 5. 接收完成后的 TXT 复制
 
@@ -100,10 +100,14 @@ new File([plainText], '粘贴内容.txt', {
 - `apps/web/src/App.tsx`：移除新发送的文本 payload、文本发送处理和重试分支；接入粘贴项目；增加接收 TXT 复制回调或 Blob 读取能力。
 - `apps/web/src/features/transfer/file-selection.ts`：增加文本项目的 File 创建、文件名去重或相关测试辅助逻辑。
 - `apps/web/src/components/IncomingFileRequestDialog.tsx`：在接收完成的文本项目上显示“复制内容”，保持下载按钮和持久化成功反馈。
+- `packages/contracts/src/transfer.ts`：移除旧文本控制帧、文本 receipt 和文本字符数限制。
+- `apps/web/src/features/transfer/peer-session.ts`：移除文本 offer、文本接收事件、文本 receipt 和文本专用状态。
+- `apps/web/src/features/transfer/ui-state.ts`：移除文本 outgoing activity 和文本接收队列规划器。
+- 删除 `apps/web/src/components/ReceivedTextDialog.tsx` 及其测试。
 - 相关 `TransferPanel`、`App`、`IncomingFileRequestDialog`、文件选择和 `peer-session` 测试。
 - `apps/web/e2e/room-transfer.spec.ts`：增加真实浏览器粘贴确认、取消、文本项目按文件协议传输、接收端复制内容和上传区域焦点范围测试。
 
-协议是否彻底删除 `transfer:text` 不属于本次发送体验改造的必要范围；本次先停止产生新文本协议消息，保留兼容接收路径。
+本次直接删除 `transfer:text`，不保留旧客户端兼容路径；产品尚未大规模使用，统一协议模型的长期维护成本更低。
 
 ## 测试验收标准
 
@@ -117,11 +121,11 @@ new File([plainText], '粘贴内容.txt', {
 - 接收端接受文本项目后显示在文件接收流程中。
 - 接收完成后，点击明确的“复制内容”可以复制完整文本；成功状态至少保持可感知时间，且下载仍可用。
 - 剪贴板写入失败、文本过大或缺少 Clipboard API 时有稳定错误提示。
-- 旧客户端发送的 `transfer:text` 仍能按原兼容路径接收。
+- 协议解析器拒绝旧 `transfer:text`，所有可接受的内容都必须是文件请求。
 - `bun run verify` 和真实浏览器 E2E 全部通过。
 
 ## 风险与回滚
 
 主要风险是浏览器对剪贴板文件、权限和 `navigator.clipboard.writeText` 的支持差异。功能必须提供清晰的取消、失败和下载回退路径，E2E 测试使用真实浏览器上下文验证授权和焦点行为。
 
-如果需要回滚，可恢复发送端文本 Tab、`offerText` payload 分支和原文本接收流程；新增加的粘贴确认和 TXT 复制逻辑可以独立移除，不需要改变文件传输协议。
+如果需要回滚，可恢复发送端文本 Tab、`offerText` 和旧文本接收流程；本次删除的协议分支与接收 UI 不应通过新增兼容代码重新保留。
