@@ -11,17 +11,17 @@ const toneStyles: Record<ToastTone, {
   icon: string
 }> = {
   error: {
-    container: 'border-accent/30 bg-surface-elevated text-amber-50/80',
+    container: 'bg-surface-elevated text-amber-50/80',
     dismiss: 'text-amber-50/50 hover:text-amber-50/90',
     icon: 'error',
   },
   success: {
-    container: 'border-accent/20 bg-surface-elevated text-amber-50/80',
+    container: 'bg-surface-elevated text-amber-50/80',
     dismiss: 'text-amber-50/50 hover:text-amber-50/90',
     icon: 'check_circle',
   },
   info: {
-    container: 'border-amber-50/15 bg-surface-elevated text-amber-50/70',
+    container: 'bg-surface-elevated text-amber-50/70',
     dismiss: 'text-amber-50/60 hover:text-amber-50/80',
     icon: 'info',
   },
@@ -34,12 +34,12 @@ export default function ToastViewport({ toast, onDismiss }: ToastViewportProps) 
 
   return (
     <div
-      className="fixed left-1/2 top-4 z-50 w-[min(360px,calc(100vw-2rem))] -translate-x-1/2 sm:top-6"
+      className="fixed right-4 top-4 z-50 w-[min(320px,calc(100vw-2rem))] sm:right-6 sm:top-6"
       role={toast.tone === 'error' ? 'alert' : 'status'}
       aria-live={toast.tone === 'error' ? 'assertive' : 'polite'}
       aria-atomic="true"
     >
-      <div className={`toast-surface flex min-h-11 items-center gap-3 rounded-xl border px-4 py-3 ${styles.container}`}>
+      <div className={`toast-surface flex min-h-10 items-center gap-2.5 rounded-xl px-3 py-2.5 ${styles.container}`}>
         <span
           className="material-symbols-outlined shrink-0 leading-none"
           style={{ fontSize: '16px' }}
