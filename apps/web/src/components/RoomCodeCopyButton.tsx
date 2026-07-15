@@ -46,7 +46,7 @@ export default function RoomCodeCopyButton({ code, onCopy }: RoomCodeCopyButtonP
     <>
       <button
         type="button"
-        className="group flex min-h-11 shrink-0 cursor-pointer items-center gap-1 rounded-xl text-amber-50/50 transition-colors hover:text-amber-50/80 focus-visible:text-amber-50/80 focus-visible:outline-none disabled:cursor-wait disabled:text-amber-50/20"
+        className="flex min-h-11 shrink-0 cursor-pointer items-center gap-1 rounded-xl text-amber-50/50 transition-colors hover:bg-white/5 hover:text-amber-50/80 focus-visible:bg-white/5 focus-visible:text-amber-50/80 focus-visible:outline-none disabled:cursor-wait disabled:bg-transparent disabled:text-amber-50/20"
         aria-label="复制房间码"
         data-status={status}
         disabled={status === 'copying'}
@@ -56,7 +56,7 @@ export default function RoomCodeCopyButton({ code, onCopy }: RoomCodeCopyButtonP
           {code}
         </span>
         <span
-          className="flex size-11 shrink-0 items-center justify-center rounded-full transition-colors group-hover:bg-white/5 group-focus-visible:bg-white/5 group-disabled:bg-transparent"
+          className="flex size-11 shrink-0 items-center justify-center"
         >
           <span
             className="material-symbols-outlined"

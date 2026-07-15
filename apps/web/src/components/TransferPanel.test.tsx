@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type { ComponentProps } from 'react'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import '../test/dom'
@@ -142,12 +142,36 @@ describe('TransferPanel', () => {
     expect(status.querySelector('.transfer-peer-flow__placeholder')).not.toBeNull()
   })
 
+  test('marks a receiver avatar for entry motion when the peer becomes connected', async () => {
+    const initialProps = createProps({ receivers: [] })
+    const { rerender } = render(<TransferPanel {...initialProps} />)
+
+    rerender(<TransferPanel {...initialProps} receivers={[receiverOne]} />)
+
+    await waitFor(() => expect(screen.getByTitle(receiverOne.displayName).className)
+      .toContain('transfer-peer-flow__receiver-avatar--entering'))
+    expect(screen.getByTitle(sender.displayName).className)
+      .not.toContain('transfer-peer-flow__receiver-avatar--entering')
+  })
+
   test('shows one upload surface and no text/file tabs', () => {
     render(<TransferPanel {...createProps()} />)
 
     expect(screen.getByRole('button', { name: '上传要传输的内容' })).not.toBeNull()
     expect(screen.queryByRole('tab')).toBeNull()
     expect(screen.queryByRole('textbox', { name: '要传输的文本' })).toBeNull()
+  })
+
+  test('adds restrained lift feedback while files are dragged over the upload surface', () => {
+    render(<TransferPanel {...createProps()} />)
+    const upload = screen.getByRole('button', { name: '上传要传输的内容' })
+
+    fireEvent.dragEnter(upload)
+    expect(upload.className).toContain('motion-safe:scale-[1.01]')
+    expect(upload.className).toContain('bg-accent/5')
+
+    fireEvent.dragLeave(upload, { relatedTarget: null })
+    expect(upload.className).not.toContain('motion-safe:scale-[1.01]')
   })
 
   test('opens paste confirmation only from the upload surface', async () => {

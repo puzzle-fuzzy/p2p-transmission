@@ -1,5 +1,6 @@
 node_modules
 dist
+target/
 .turbo
 *.tsbuildinfo
 __pycache__/
@@ -15,7 +16,14 @@ deploy/coturn/**/*.pem
 deploy/coturn/**/*.key
 deploy/.env
 deploy/data/
+deploy/v2/data/
+deploy/v2/backups/
+deploy/v2/.nginx-rollback.conf
 deploy/**/*.sqlite
 deploy/**/*.sqlite-*
 apps/web/playwright-report/
 apps/web/test-results/
+
+# Rust 2.0 local control-plane database
+/data/*.sqlite3
+/data/*.sqlite3-*

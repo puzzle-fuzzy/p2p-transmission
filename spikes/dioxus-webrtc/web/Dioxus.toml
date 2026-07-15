@@ -1,0 +1,10 @@
+[application]
+name = "p2p-spike-web"
+default_platform = "web"
+
+[web.app]
+title = "P2P Transmission Rust WebRTC Spike"
+
+[web.watcher]
+reload_html = true
+watch_path = ["src", "assets"]

@@ -51,6 +51,22 @@ test('two real browser contexts can approve a peer and transfer a pasted text fi
 
     await expect(senderPage.getByRole('status', { name: '1 位接收者已连接' })).toBeVisible({ timeout: 30_000 })
     await expect(receiverPage.getByRole('heading', { name: '等待对方发送' })).toBeVisible({ timeout: 30_000 })
+    const enteringAvatar = senderPage.locator('.transfer-peer-flow__receiver-avatar--entering')
+    await expect(enteringAvatar).toHaveCount(1)
+    await expect.poll(() => enteringAvatar.evaluate(element => (
+      getComputedStyle(element).animationName
+    ))).toBe('receiver-avatar-enter')
+    await senderPage.emulateMedia({ reducedMotion: 'reduce' })
+    const reducedMotionAnimation = await senderPage
+      .locator('.transfer-peer-flow__receiver-avatar')
+      .evaluate(element => {
+        element.classList.add('transfer-peer-flow__receiver-avatar--entering')
+        const animationName = getComputedStyle(element).animationName
+        element.classList.remove('transfer-peer-flow__receiver-avatar--entering')
+        return animationName
+      })
+    expect(reducedMotionAnimation).toBe('none')
+    await senderPage.emulateMedia({ reducedMotion: 'no-preference' })
 
     const text = `真实浏览器 E2E 粘贴文本 ${Date.now()}`
     await senderPage.evaluate(async value => {

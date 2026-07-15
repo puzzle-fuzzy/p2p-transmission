@@ -1651,12 +1651,13 @@ function App({ initialNavigation }: AppProps) {
     )
     if (!result.ok) {
       setSelectionError(result.message)
+      showToast(result.message)
       return false
     }
     replaceFileSelections(result.selections)
     setSelectionError('')
     return true
-  }, [replaceFileSelections])
+  }, [replaceFileSelections, showToast])
 
   const handleFileRemoved = useCallback((fileId: string) => {
     if (transferUiStateRef.current.activity) return
@@ -1986,13 +1987,23 @@ function App({ initialNavigation }: AppProps) {
              onSubmit={handleJoinRoom}
              onCodeEdited={handleRoomCodeEdited}
            />
-            <button
-              type="button"
-              className="mt-5 min-h-11 cursor-pointer self-center px-3 text-xs text-amber-50/50 underline decoration-amber-50/30 underline-offset-4 transition-colors hover:text-amber-50/80 hover:decoration-amber-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-              onClick={() => setAboutOpen(true)}
-            >
-              关于 P2P Transmission
-            </button>
+            <div className="mt-5 flex items-center justify-center">
+              <button
+                type="button"
+                className="inline-flex min-h-11 cursor-pointer items-center px-3 text-xs text-amber-50/50 underline decoration-amber-50/30 underline-offset-4 transition-colors hover:text-amber-50/80 hover:decoration-amber-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                onClick={() => setAboutOpen(true)}
+              >
+                关于 P2P Transmission
+              </button>
+              <a
+                className="inline-flex min-h-11 items-center px-3 text-xs text-amber-50/50 underline decoration-amber-50/30 underline-offset-4 transition-colors hover:text-amber-50/80 hover:decoration-amber-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                href="https://github.com/puzzle-fuzzy/p2p-transmission"
+                target="_blank"
+                rel="noreferrer"
+              >
+                GitHub
+              </a>
+            </div>
           </div>
         )}
 

@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "bun build src/index.ts --target=bun --outdir=dist",
-    "dev": "bun run --watch src/index.ts",
+    "dev": "bun run src/index.ts",
     "lint": "oxlint src scripts",
     "test": "bun test",
     "turn:config": "bun run scripts/render-coturn-config.ts",

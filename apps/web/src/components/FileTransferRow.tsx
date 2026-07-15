@@ -71,7 +71,7 @@ export default function FileTransferRow({
   return (
     <div
       data-testid={`file-transfer-row-${fileId}`}
-      className="relative overflow-hidden rounded-lg bg-white/5"
+      className="file-transfer-row relative overflow-hidden rounded-lg bg-white/5"
     >
       <div
         className="absolute inset-y-0 left-0 bg-accent/15 motion-safe:transition-[width] motion-safe:duration-150"

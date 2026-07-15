@@ -22,6 +22,7 @@ import TransferPeerFlow from './TransferPeerFlow'
 
 const MEBIBYTE_BYTES = 1024 * 1024
 const MAX_FILE_BATCH_MEBIBYTES = MAX_FILE_BATCH_BYTES / MEBIBYTE_BYTES
+const RECEIVER_ENTRY_HOLD_MS = 700
 
 export type TransferPanelProps = {
   visitor: PublicVisitor
@@ -36,6 +37,44 @@ export type TransferPanelProps = {
   onCancel(): void
   onRetry?(): Promise<void>
   onDismissActivity?(): void
+}
+
+const useEnteringReceiverIds = (receivers: readonly PublicVisitor[]) => {
+  const previousIdsRef = useRef(new Set(receivers.map(receiver => receiver.id)))
+  const clearTimersRef = useRef(new Map<string, number>())
+  const [enteringIds, setEnteringIds] = useState<string[]>([])
+
+  useEffect(() => {
+    const nextIds = new Set(receivers.map(receiver => receiver.id))
+    const addedIds = receivers.flatMap(receiver => (
+      previousIdsRef.current.has(receiver.id) ? [] : [receiver.id]
+    ))
+    previousIdsRef.current = nextIds
+
+    if (addedIds.length === 0) return
+
+    setEnteringIds(current => Array.from(new Set([...current, ...addedIds])))
+    for (const receiverId of addedIds) {
+      const activeTimer = clearTimersRef.current.get(receiverId)
+      if (activeTimer !== undefined) window.clearTimeout(activeTimer)
+
+      const timer = window.setTimeout(() => {
+        clearTimersRef.current.delete(receiverId)
+        setEnteringIds(current => current.filter(id => id !== receiverId))
+      }, RECEIVER_ENTRY_HOLD_MS)
+      clearTimersRef.current.set(receiverId, timer)
+    }
+  }, [receivers])
+
+  useEffect(() => {
+    const clearTimers = clearTimersRef.current
+    return () => {
+      for (const timer of clearTimers.values()) window.clearTimeout(timer)
+      clearTimers.clear()
+    }
+  }, [])
+
+  return enteringIds
 }
 
 const terminalErrorProgress = (
@@ -74,6 +113,7 @@ export default function TransferPanel({
   const [selectedReceiverIds, setSelectedReceiverIds] = useState<string[] | undefined>()
   const [pickerOpen, setPickerOpen] = useState(false)
   const [pasteCandidate, setPasteCandidate] = useState<PasteCandidate>()
+  const enteringReceiverIds = useEnteringReceiverIds(receivers)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const pickerTriggerRef = useRef<HTMLButtonElement>(null)
   const terminal = activity?.phase === 'complete' || activity?.phase === 'error'
@@ -188,6 +228,7 @@ export default function TransferPanel({
         <TransferPeerFlow
           sender={visitor}
           receivers={flowReceivers}
+          enteringReceiverIds={enteringReceiverIds}
           phase={flowPhase}
           accessibleLabel={activityLabel}
           onClick={receivers.length > 0 && !pickerLocked
@@ -220,8 +261,8 @@ export default function TransferPanel({
             tabIndex={locked ? -1 : 0}
             aria-label="上传要传输的内容"
             aria-disabled={locked}
-            className={`flex min-h-52 flex-col rounded-xl border-2 border-dashed px-3 py-3 transition-colors focus-visible:border-accent focus-visible:outline-none sm:min-h-56 ${
-              dragActive ? 'border-accent' : 'border-amber-50/15'
+            className={`flex min-h-52 flex-col rounded-xl border-2 border-dashed px-3 py-3 transition-[border-color,background-color,transform] duration-200 focus-visible:border-accent focus-visible:outline-none sm:min-h-56 ${
+              dragActive ? 'border-accent bg-accent/5 motion-safe:scale-[1.01]' : 'border-amber-50/15'
             } ${locked ? 'cursor-default' : 'cursor-pointer hover:border-amber-50/30'}`}
             onClick={event => {
               if (event.target === fileInputRef.current || locked) return

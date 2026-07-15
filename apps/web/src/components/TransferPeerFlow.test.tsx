@@ -24,6 +24,7 @@ describe('TransferPeerFlow', () => {
       <TransferPeerFlow
         sender={sender}
         receivers={receivers}
+        enteringReceiverIds={[receivers[5]!.id]}
         phase="idle"
         accessibleLabel="6 receivers connected"
       />,
@@ -42,6 +43,8 @@ describe('TransferPeerFlow', () => {
     expect(screen.queryByTitle('Receiver 5')).toBeNull()
     expect(screen.queryByTitle('Receiver 6')).toBeNull()
     expect(screen.getByTitle('共 6 位接收者').textContent).toBe('6')
+    expect(screen.getByTitle('共 6 位接收者').className)
+      .toContain('transfer-peer-flow__receiver-count--entering')
     const receiverSummary = screen.getByText('共 6 位接收者')
     expect(receiverSummary.className).toContain('sr-only')
     expect(receiverSummary.closest('[aria-hidden="true"]')).toBeNull()
@@ -107,7 +110,9 @@ describe('TransferPeerFlow', () => {
     )
 
     const status = screen.getByRole('status')
-    expect(status.querySelector('.transfer-peer-flow__placeholder')).not.toBeNull()
+    const placeholder = status.querySelector('.transfer-peer-flow__placeholder')
+    expect(placeholder).not.toBeNull()
+    expect(placeholder?.className).toContain('size-12')
     expect(status.querySelectorAll('.transfer-peer-flow__dot')).toHaveLength(3)
   })
 

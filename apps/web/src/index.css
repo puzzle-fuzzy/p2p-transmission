@@ -64,6 +64,42 @@ label:has(input:not(:disabled)) {
   }
 }
 
+@keyframes receiver-avatar-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.68);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes flow-state-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes file-row-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @keyframes dialog-enter {
   from {
     opacity: 0;
@@ -167,6 +203,21 @@ label:has(input:not(:disabled)) {
   animation: transfer-dash-flow 800ms linear infinite;
 }
 
+.transfer-peer-flow__receiver-avatar--entering,
+.transfer-peer-flow__receiver-count--entering {
+  transform-origin: center;
+  animation: receiver-avatar-enter 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.transfer-peer-flow__state-icon {
+  transform-origin: center;
+  animation: flow-state-enter 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.file-transfer-row {
+  animation: file-row-enter 180ms cubic-bezier(0.25, 1, 0.5, 1) both;
+}
+
 /* Scrollbar 定制 — 适配暗色背景 */
 .os-scrollbar {
   --os-size: 6px;
@@ -227,7 +278,11 @@ label:has(input:not(:disabled)) {
   }
 
   .transfer-peer-flow .transfer-peer-flow__dot,
-  .transfer-peer-flow .transfer-peer-flow__dash-line {
+  .transfer-peer-flow .transfer-peer-flow__dash-line,
+  .transfer-peer-flow__receiver-avatar--entering,
+  .transfer-peer-flow__receiver-count--entering,
+  .transfer-peer-flow__state-icon,
+  .file-transfer-row {
     animation: none;
   }
 

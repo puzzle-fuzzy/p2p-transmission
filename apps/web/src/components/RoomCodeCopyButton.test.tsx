@@ -17,12 +17,13 @@ describe('RoomCodeCopyButton', () => {
     const icon = within(button).getByText('content_copy')
     const liveRegion = document.querySelector('[aria-live="polite"]')
     expect(button.classList.contains('min-h-11')).toBe(true)
-    expect(button.classList.contains('group')).toBe(true)
     expect(button.classList.contains('rounded-xl')).toBe(true)
+    expect(button.classList.contains('hover:bg-white/5')).toBe(true)
+    expect(button.classList.contains('focus-visible:bg-white/5')).toBe(true)
     expect(Array.from(button.classList).some(className =>
       className === 'border' || className.startsWith('border-'))).toBe(false)
-    expect(icon.parentElement?.classList.contains('rounded-full')).toBe(true)
-    expect(icon.parentElement?.classList.contains('group-hover:bg-white/5')).toBe(true)
+    expect(icon.parentElement?.classList.contains('size-11')).toBe(true)
+    expect(icon.parentElement?.classList.contains('rounded-full')).toBe(false)
     expect(liveRegion).not.toBeNull()
 
     await user.click(code)

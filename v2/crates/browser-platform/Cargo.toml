@@ -1,0 +1,72 @@
+[package]
+name = "p2p-browser-platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+blake3.workspace = true
+p2p-protocol = { path = "../protocol" }
+p2p-transfer = { path = "../transfer" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+futures-channel.workspace = true
+futures-util.workspace = true
+gloo-timers = { version = "0.3.0", features = ["futures"] }
+js-sys = "0.3.103"
+serde-wasm-bindgen.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys = { workspace = true, features = [
+  "Clipboard",
+  "Blob",
+  "BlobPropertyBag",
+  "CloseEvent",
+  "Document",
+  "DomStringList",
+  "DomException",
+  "Element",
+  "Event",
+  "File",
+  "FileList",
+  "Headers",
+  "History",
+  "HtmlInputElement",
+  "IdbDatabase",
+  "IdbFactory",
+  "IdbObjectStore",
+  "IdbOpenDbRequest",
+  "IdbRequest",
+  "IdbTransaction",
+  "IdbTransactionMode",
+  "Location",
+  "MessageEvent",
+  "Navigator",
+  "Request",
+  "RequestCredentials",
+  "RequestInit",
+  "RequestMode",
+  "Response",
+  "RtcConfiguration",
+  "RtcDataChannel",
+  "RtcDataChannelEvent",
+  "RtcDataChannelState",
+  "RtcDataChannelType",
+  "RtcIceCandidate",
+  "RtcIceCandidateInit",
+  "RtcIceServer",
+  "RtcPeerConnection",
+  "RtcPeerConnectionIceEvent",
+  "RtcPeerConnectionState",
+  "RtcSdpType",
+  "RtcSessionDescriptionInit",
+  "Storage",
+  "VisibilityState",
+  "WebSocket",
+  "Window",
+  "Url",
+] }

@@ -1,0 +1,14 @@
+[package]
+name = "p2p-web"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+console_error_panic_hook.workspace = true
+dioxus.workspace = true
+p2p-browser-platform = { path = "../../crates/browser-platform" }
+p2p-protocol = { path = "../../crates/protocol" }
+serde.workspace = true
+serde_json.workspace = true

@@ -32,6 +32,7 @@ describe('FileTransferRow', () => {
     const actionSlot = screen.getByTestId('file-transfer-action-file-1')
 
     expect(row.className).toContain('bg-white/5')
+    expect(row.className).toContain('file-transfer-row')
     expect(content.className).toContain('min-h-11')
     expect(content.className).toContain('pr-12')
     expect(actionSlot.className).toContain('absolute')

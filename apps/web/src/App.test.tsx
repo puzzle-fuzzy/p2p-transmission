@@ -223,6 +223,15 @@ vi.mock('./components/TransferPanel', () => ({
         <button
           type="button"
           disabled={Boolean(props.activity)}
+          onClick={() => props.onFilesAdded(Array.from({ length: 11 }, (_, index) => (
+            new File(['file body'], `超限-${String(index)}.txt`, { type: 'text/plain' })
+          )))}
+        >
+          添加超限测试文件
+        </button>
+        <button
+          type="button"
+          disabled={Boolean(props.activity)}
           onClick={() => {
             props.onFilesAdded([
               new File(['精确文本\n🙂'], '粘贴内容.txt', { type: 'text/plain' }),
@@ -2070,6 +2079,11 @@ describe('App transfer integration', () => {
     expect(aboutButton.className).toContain('cursor-pointer')
     expect(aboutButton.className).toContain('underline')
     expect(aboutButton.className).toContain('underline-offset-4')
+    const githubLink = screen.getByRole('link', { name: 'GitHub' })
+    expect(githubLink.parentElement).toBe(aboutButton.parentElement)
+    expect(githubLink.getAttribute('href')).toBe('https://github.com/puzzle-fuzzy/p2p-transmission')
+    expect(githubLink.getAttribute('target')).toBe('_blank')
+    expect(githubLink.getAttribute('rel')).toBe('noreferrer')
     await user.click(aboutButton)
 
     const dialog = screen.getByRole('dialog', {
@@ -2091,6 +2105,7 @@ describe('App transfer integration', () => {
     expect(screen.queryByRole('button', {
       name: '关于 P2P Transmission',
     })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'GitHub' })).toBeNull()
     expect(screen.getByTestId('transfer-panel')).not.toBeNull()
   })
 
@@ -2114,5 +2129,14 @@ describe('App transfer integration', () => {
     )
     await user.click(screen.getByRole('button', { name: '取消测试传输' }))
     expect(peerSession.cancelTransfer).toHaveBeenCalledWith('files-1')
+  })
+
+  test('shows an immediate message when adding more than ten files', async () => {
+    const user = await enterRoom('sender')
+
+    await user.click(screen.getByRole('button', { name: '添加超限测试文件' }))
+
+    await waitFor(() => expect(boundary.showToast).toHaveBeenCalledWith('每批最多选择 10 个文件'))
+    expect(peerSession.offerFiles).not.toHaveBeenCalled()
   })
 })

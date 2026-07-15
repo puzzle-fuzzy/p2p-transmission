@@ -19,6 +19,7 @@ export type TransferPeerFlowProps = {
   selectedCount?: number
   triggerRef?: Ref<HTMLButtonElement>
   highlightedReceiverId?: string
+  enteringReceiverIds?: readonly string[]
 }
 
 const MAX_AVATAR_SLOTS = 5
@@ -63,7 +64,7 @@ const StateTrack = ({ phase }: { phase: TransferPeerFlowPhase }) => {
       <span className="flex w-full items-center gap-2 text-amber-50/50">
         <span className="transfer-peer-flow__line h-px flex-1 bg-current" />
         <span
-          className="material-symbols-outlined"
+          className="material-symbols-outlined transfer-peer-flow__state-icon"
           style={{ fontSize: '15px' }}
           data-state-icon="link_off"
         >
@@ -79,7 +80,7 @@ const StateTrack = ({ phase }: { phase: TransferPeerFlowPhase }) => {
       <span className="transfer-peer-flow__line h-px flex-1 bg-current" />
       {phase === 'complete' && (
         <span
-          className="material-symbols-outlined text-accent"
+          className="material-symbols-outlined transfer-peer-flow__state-icon text-accent"
           style={{ fontSize: '15px' }}
           data-state-icon="check"
         >
@@ -99,6 +100,7 @@ export default function TransferPeerFlow({
   selectedCount,
   triggerRef,
   highlightedReceiverId,
+  enteringReceiverIds = [],
 }: TransferPeerFlowProps) {
   const overflow = receivers.length > MAX_AVATAR_SLOTS
   const visibleReceivers = overflow
@@ -107,9 +109,13 @@ export default function TransferPeerFlow({
   const animated = phase === 'connecting'
     || phase === 'requesting'
     || phase === 'transferring'
+  const enteringReceiverIdSet = new Set(enteringReceiverIds)
+  const hiddenReceiverEntered = overflow && receivers
+    .slice(VISIBLE_BEFORE_TOTAL)
+    .some(receiver => enteringReceiverIdSet.has(receiver.id))
 
   const receiverVisual = receivers.length === 0 ? (
-    <span className="transfer-peer-flow__placeholder flex size-9 items-center justify-center rounded-full border border-amber-50/15 text-amber-50/50 max-sm:size-8!">
+    <span className="transfer-peer-flow__placeholder flex size-12 items-center justify-center rounded-full border border-amber-50/15 text-amber-50/50 max-sm:size-8!">
       <span className="material-symbols-outlined" style={{ fontSize: '17px' }}>
         person_add
       </span>
@@ -122,12 +128,18 @@ export default function TransferPeerFlow({
           seed={receiver.avatarSeed}
           label={receiver.displayName}
           highlighted={receiver.id === highlightedReceiverId}
-          className={`shrink-0 max-sm:size-8! ${index === 0 ? '' : '-ml-5'}`}
+          className={`transfer-peer-flow__receiver-avatar shrink-0 max-sm:size-8! ${
+            enteringReceiverIdSet.has(receiver.id)
+              ? 'transfer-peer-flow__receiver-avatar--entering'
+              : ''
+          } ${index === 0 ? '' : '-ml-5'}`}
         />
       ))}
       {overflow && (
         <span
-          className="-ml-5 flex size-9 shrink-0 items-center justify-center rounded-full border-2 border-surface bg-white/10 px-1 text-[11px] tabular-nums text-amber-50/70 max-sm:size-8!"
+          className={`-ml-5 flex size-9 shrink-0 items-center justify-center rounded-full border-2 border-surface bg-white/10 px-1 text-[11px] tabular-nums text-amber-50/70 max-sm:size-8! ${
+            hiddenReceiverEntered ? 'transfer-peer-flow__receiver-count--entering' : ''
+          }`}
           title={`共 ${String(receivers.length)} 位接收者`}
         >
           {receivers.length}
@@ -152,7 +164,7 @@ export default function TransferPeerFlow({
     </button>
   ) : (
     <span
-      className="flex min-w-9 shrink-0 items-center justify-end pl-2"
+      className="flex min-w-9 shrink-0 items-center justify-end"
       data-side="receivers"
       aria-hidden="true"
     >
@@ -162,7 +174,7 @@ export default function TransferPeerFlow({
 
   const visualFlow = (
     <div className="flex min-w-0 items-center m-auto justify-center">
-      <span className="flex size-9 shrink-0 items-center" data-side="sender" aria-hidden="true">
+      <span className="flex size-12 shrink-0 items-center" data-side="sender" aria-hidden="true">
         {sender && (
           <Avatar
             seed={sender.avatarSeed}
