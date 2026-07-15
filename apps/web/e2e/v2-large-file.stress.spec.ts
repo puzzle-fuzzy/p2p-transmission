@@ -5,13 +5,14 @@ import { open, rm, writeFile } from 'node:fs/promises'
 const GIB = 1024 ** 3
 const MIB = 1024 ** 2
 const SEGMENT_BYTES = 8 * MIB
-const sizeGiB = Number(process.env.P2P_STRESS_GIB ?? 0)
+const stressEnabled = process.env.P2P_STRESS_GIB !== undefined
+const sizeGiB = Number(process.env.P2P_STRESS_GIB ?? 1)
 const delayMs = Number(process.env.P2P_STRESS_DELAY_MS ?? 0)
 const disconnectCount = Number(process.env.P2P_STRESS_DISCONNECTS ?? 0)
 const sinkMode = process.env.P2P_STRESS_SINK ?? 'opfs'
 const sinkUrl = process.env.P2P_STRESS_SINK_URL ?? ''
 
-if (![1, 5].includes(sizeGiB)) {
+if (stressEnabled && ![1, 5].includes(sizeGiB)) {
   throw new Error('P2P_STRESS_GIB must be 1 or 5; use scripts/test_v2_large_file.py')
 }
 if (!Number.isInteger(delayMs) || delayMs < 0) {
@@ -233,6 +234,7 @@ test(`${sizeGiB} GiB streamed transfer writes to ${sinkMode} under the selected 
   browser,
   baseURL,
 }, testInfo) => {
+  test.skip(!stressEnabled, 'Run large-file stress tests through scripts/test_v2_large_file.py')
   test.setTimeout(sizeGiB === 5 ? 30 * 60 * 1000 : 12 * 60 * 1000)
   const sizeBytes = sizeGiB * GIB
   const segmentCount = sizeBytes / SEGMENT_BYTES
