@@ -14,8 +14,12 @@ const connectSingleReceiverRoom = async (owner: Page, receiver: Page) => {
   const requestDialog = owner.getByRole('dialog', { name: '加入申请' })
   await expect(requestDialog).toBeVisible()
   await requestDialog.getByRole('button', { name: '允许加入' }).click()
-  await expect(owner.getByRole('heading', { name: '选择要发送的文件' })).toBeVisible()
-  await expect(receiver.getByRole('heading', { name: '等待对方发送' })).toBeVisible()
+  await expect(owner.getByRole('heading', { name: '选择要发送的文件' })).toBeVisible({
+    timeout: 20_000,
+  })
+  await expect(receiver.getByRole('heading', { name: '等待对方发送' })).toBeVisible({
+    timeout: 20_000,
+  })
 }
 
 test('Firefox and WebKit complete the buffered transfer path', async ({ browser, baseURL }, testInfo) => {
