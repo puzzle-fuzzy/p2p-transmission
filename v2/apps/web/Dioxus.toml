@@ -7,4 +7,4 @@ title = "P2P Transmission 2.0"
 
 [web.watcher]
 reload_html = true
-watch_path = ["src", "assets"]
+watch_path = ["src", "assets", "index.html"]

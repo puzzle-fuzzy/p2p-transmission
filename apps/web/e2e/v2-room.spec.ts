@@ -23,10 +23,16 @@ test('two browsers can create, approve, connect, and restore a Rust 2.0 room', a
     const roomCode = (await roomCodeButton.textContent())?.trim() ?? ''
     expect(roomCode).toMatch(/^[A-Z2-9]{6}$/)
 
-    await owner.getByRole('button', { name: '分享房间' }).click()
+    const shareButton = owner.getByRole('button', { name: '分享房间' })
+    await shareButton.click()
     const shareDialog = owner.getByRole('dialog', { name: '分享房间' })
     await expect(shareDialog).toBeVisible()
     await expect(shareDialog).toContainText(roomCode)
+    await owner.keyboard.press('Escape')
+    await expect(shareDialog).toBeHidden()
+    await expect(shareButton).toBeFocused()
+
+    await shareButton.click()
     await shareDialog.getByRole('button', { name: '关闭' }).click()
     await expect(shareDialog).toBeHidden()
 
@@ -37,6 +43,8 @@ test('two browsers can create, approve, connect, and restore a Rust 2.0 room', a
     await expect(receiver.getByRole('status')).toContainText('等待确认')
 
     const requestDialog = owner.getByRole('dialog', { name: '加入申请' })
+    await expect(requestDialog).toBeVisible()
+    await owner.keyboard.press('Escape')
     await expect(requestDialog).toBeVisible()
     await requestDialog.getByRole('button', { name: '允许加入' }).click()
 

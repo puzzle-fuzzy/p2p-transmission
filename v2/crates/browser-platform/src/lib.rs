@@ -591,6 +591,63 @@ pub fn build_invite_url(
 }
 
 #[cfg(target_arch = "wasm32")]
+fn modal_dialog(id: &str) -> Result<web_sys::HtmlDialogElement, BrowserPlatformError> {
+    use wasm_bindgen::JsCast;
+
+    web_sys::window()
+        .ok_or(BrowserPlatformError::MissingWindow)?
+        .document()
+        .ok_or_else(|| BrowserPlatformError::Browser("browser document is unavailable".to_owned()))?
+        .get_element_by_id(id)
+        .ok_or_else(|| BrowserPlatformError::Browser(format!("dialog #{id} is unavailable")))?
+        .dyn_into::<web_sys::HtmlDialogElement>()
+        .map_err(|_| BrowserPlatformError::Browser(format!("element #{id} is not a dialog")))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn show_modal_dialog(id: &str) -> Result<(), BrowserPlatformError> {
+    let dialog = modal_dialog(id)?;
+    if !dialog.open() {
+        dialog
+            .show_modal()
+            .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?;
+    }
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn show_modal_dialog(_id: &str) -> Result<(), BrowserPlatformError> {
+    Err(BrowserPlatformError::UnsupportedTarget)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn close_modal_dialog(id: &str) -> Result<(), BrowserPlatformError> {
+    let dialog = modal_dialog(id)?;
+    if dialog.open() {
+        dialog.close();
+    }
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn close_modal_dialog(_id: &str) -> Result<(), BrowserPlatformError> {
+    Err(BrowserPlatformError::UnsupportedTarget)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn remove_boot_fallback() {
+    if let Some(fallback) = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.get_element_by_id("boot-fallback"))
+    {
+        fallback.remove();
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn remove_boot_fallback() {}
+
+#[cfg(target_arch = "wasm32")]
 pub async fn copy_text(value: &str) -> Result<(), BrowserPlatformError> {
     use wasm_bindgen_futures::JsFuture;
 

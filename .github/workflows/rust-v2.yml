@@ -3,6 +3,18 @@ name: Rust 2.0
 on:
   push:
     branches: [rust-dev, main]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "v2/**"
+      - "scripts/*v2*.py"
+      - "apps/web/e2e/v2-*.spec.ts"
+      - "apps/web/playwright.v2.config.ts"
+      - "deploy/v2/**"
+      - "deploy/scripts/deploy-release.py"
+      - "deploy/scripts/test_deploy_release.py"
+      - ".github/workflows/rust-v2.yml"
   pull_request:
     paths:
       - "Cargo.toml"
@@ -29,6 +41,8 @@ jobs:
           toolchain: 1.97.0
           components: clippy,rustfmt
       - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-audit --version 0.22.2 --locked
+      - run: cargo audit --deny warnings
       - run: cargo fmt --all -- --check
       - run: python -X utf8 -m unittest discover -s deploy/scripts -p "test_*.py"
       - run: cargo clippy --locked -p p2p-domain -p p2p-protocol -p p2p-transfer -p p2p-test-support -p p2p-server --all-targets -- -D warnings

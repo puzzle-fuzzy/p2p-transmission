@@ -6,8 +6,11 @@ import { fileURLToPath } from 'node:url'
 const currentDirectory = dirname(fileURLToPath(import.meta.url))
 
 test('Rust 2.0 shell is healthy, accessible, and responsive', async ({ page }, testInfo) => {
+  const pageErrors: string[] = []
+  page.on('pageerror', error => pageErrors.push(error.message))
   const response = await page.goto('/')
   expect(response?.ok()).toBe(true)
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN')
 
   await expect(page.getByRole('heading', { name: '加入房间' })).toBeVisible()
   await expect(page.getByRole('button', { name: '创建房间' })).toBeEnabled()
@@ -17,10 +20,19 @@ test('Rust 2.0 shell is healthy, accessible, and responsive', async ({ page }, t
     'https://github.com/puzzle-fuzzy/p2p-transmission',
   )
 
-  await page.getByRole('button', { name: '关于 P2P Transmission' }).click()
-  await expect(page.getByRole('heading', { name: '关于 P2P Transmission 2.0' })).toBeVisible()
+  const aboutButton = page.getByRole('button', { name: '关于 P2P Transmission' })
+  await aboutButton.click()
+  const aboutDialog = page.getByRole('dialog', { name: '关于 P2P Transmission 2.0' })
+  await expect(aboutDialog).toBeVisible()
+  await expect(aboutDialog).toHaveAttribute('open', '')
+  await page.keyboard.press('Escape')
+  await expect(aboutDialog).toBeHidden()
+  await expect(aboutButton).toBeFocused()
+
+  await aboutButton.click()
   await page.getByRole('button', { name: '关闭' }).click()
-  await expect(page.getByRole('heading', { name: '关于 P2P Transmission 2.0' })).toBeHidden()
+  await expect(aboutDialog).toBeHidden()
+  await expect(aboutButton).toBeFocused()
 
   const health = await page.request.get('/health/ready')
   expect(health.ok()).toBe(true)
@@ -28,11 +40,15 @@ test('Rust 2.0 shell is healthy, accessible, and responsive', async ({ page }, t
     status: 'ready',
     service: 'p2p-server',
   })
+  const favicon = await page.request.get('/favicon.svg')
+  expect(favicon.ok()).toBe(true)
+  expect(favicon.headers()['content-type']).toContain('image/svg+xml')
 
   const hasHorizontalOverflow = await page.evaluate(
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
   )
   expect(hasHorizontalOverflow).toBe(false)
+  expect(pageErrors).toEqual([])
 
   if (process.env.CAPTURE_V2_SHELL === '1') {
     const output = resolve(

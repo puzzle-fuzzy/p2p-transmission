@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+import sqlite3
+import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 
@@ -27,12 +30,12 @@ class DeployReleaseTests(unittest.TestCase):
                 'TURN_URLS': 'turn:turn.p2p.yxswy.com:3478?transport=udp',
                 'TURN_SHARED_SECRET': 'turn-secret-0123456789abcdef',
             },
-            '2.0.0-rc.1-abcdef0',
+            '2.0.0-abcdef0',
             capability_secret='capability-secret-0123456789abcdef0123456789',
         )
         self.assertEqual(values['P2P_ALLOWED_ORIGINS'], 'https://p2p.yxswy.com')
         self.assertEqual(values['P2P_BIND_IP'], '127.0.0.1')
-        self.assertEqual(values['P2P_IMAGE_TAG'], '2.0.0-rc.1-abcdef0')
+        self.assertEqual(values['P2P_IMAGE_TAG'], '2.0.0-abcdef0')
         self.assertEqual(values['P2P_TURN_SECRET'], 'turn-secret-0123456789abcdef')
 
     def test_preserves_existing_v2_secrets_during_update(self) -> None:
@@ -43,7 +46,7 @@ class DeployReleaseTests(unittest.TestCase):
                 'P2P_TURN_URLS': 'turns:existing.example:5349',
             },
             {},
-            '2.0.0-rc.1-abcdef1',
+            '2.0.0-abcdef1',
             capability_secret='unused-capability-secret-0123456789012345',
         )
         self.assertEqual(
@@ -55,6 +58,48 @@ class DeployReleaseTests(unittest.TestCase):
     def test_rejects_newlines_in_env_values(self) -> None:
         with self.assertRaises(ValueError):
             deploy_release.format_env({'P2P_TURN_SECRET': 'secret\ninjected=true'})
+
+    def test_creates_verified_database_backup_and_prunes_old_copies(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original_values = (
+                deploy_release.APP_DIR,
+                deploy_release.V2_DATABASE,
+                deploy_release.V2_BACKUPS,
+            )
+            deploy_release.APP_DIR = root
+            deploy_release.V2_DATABASE = root / 'deploy/v2/data/control.sqlite3'
+            deploy_release.V2_BACKUPS = root / 'deploy/v2/backups'
+            try:
+                deploy_release.V2_DATABASE.parent.mkdir(parents=True)
+                with closing(sqlite3.connect(deploy_release.V2_DATABASE)) as database:
+                    database.execute('CREATE TABLE rooms (code TEXT PRIMARY KEY)')
+                    database.execute('INSERT INTO rooms VALUES (?)', ('ABC123',))
+                    database.commit()
+
+                deploy_release.V2_BACKUPS.mkdir(parents=True)
+                for index in range(11):
+                    (deploy_release.V2_BACKUPS / f'control-20000101T0000000000{index}Z-old.sqlite3').touch()
+
+                backup = deploy_release.backup_v2_database('2.0.0-test')
+
+                self.assertIsNotNone(backup)
+                assert backup is not None
+                with closing(sqlite3.connect(backup)) as database:
+                    self.assertEqual(
+                        database.execute('SELECT code FROM rooms').fetchall(),
+                        [('ABC123',)],
+                    )
+                self.assertEqual(
+                    len(list(deploy_release.V2_BACKUPS.glob('control-*.sqlite3'))),
+                    deploy_release.DATABASE_BACKUP_LIMIT,
+                )
+            finally:
+                (
+                    deploy_release.APP_DIR,
+                    deploy_release.V2_DATABASE,
+                    deploy_release.V2_BACKUPS,
+                ) = original_values
 
 
 if __name__ == '__main__':

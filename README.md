@@ -1,132 +1,112 @@
 # P2P Transmission
 
-P2P Transmission 是一个临时、点对点的文本与文件传输工具。打开
-[https://p2p.yxswy.com](https://p2p.yxswy.com)，创建房间后把邀请链接或房间码交给对方，
-浏览器会优先建立 WebRTC DataChannel；网络条件不允许直连时，可以通过 coturn 中继加密的
-WebRTC 流量。
+P2P Transmission 是一个无需注册的临时点对点文本与文件传输工具。正式地址：
+[https://p2p.yxswy.com](https://p2p.yxswy.com)。
 
-项目不需要注册账号，也不提供云端文件存储或历史记录。API 只负责临时访客、房间、加入
-授权、WebSocket 信令和短期 TURN 凭据；文本正文和文件内容不经过 API 的应用载荷存储或
-中继路径。
+当前生产版本是以 Rust 全量重构的 2.0：前端使用 Dioxus WebAssembly，服务端使用 Axum，
+浏览器之间通过 WebRTC DataChannel 传输正文。Axum 只处理临时会话、房间、加入审批、
+WebSocket 信令和短期 TURN 凭据，不接收或保存文本与文件正文。
 
 ## 快速使用
 
-1. 打开 [p2p.yxswy.com](https://p2p.yxswy.com)，点击创建房间。
-2. 房主复制邀请链接，发送给可信的接收者。
-3. 接收者打开邀请链接并确认加入；如果只有 6 位房间码，则输入房间码提交申请，等待
-   房主批准，然后完成加入。
-4. 连接建立后，在文本区域发送文字，或选择文件并发送。发送者和接收者都应等待页面显示
-   完成状态后再关闭标签页。
+1. 房主打开正式地址并创建房间。
+2. 房主把邀请链接发给可信接收者；只有房间码时，接收者需要提交申请并等待房主批准。
+3. 页面显示接收者已连接后，选择目标接收者并发送文本或文件。
+4. 双方等待页面显示完成及 BLAKE3 校验结果后再关闭标签页。
 
-普通用户可按任务阅读[用户指南](docs/user-guide.md)。
+完整操作和故障处理见[普通用户指南](docs/user-guide.md)。
+
+## 文件大小与浏览器边界
+
+- 每批最多 10 个文件，总大小最多 5 GiB（5,368,709,120 字节），不是每个文件各 5 GiB。
+- 单个不超过 100 MiB 的文件使用内存缓冲接收，可在 Chromium 和 Firefox 中使用。
+- 超过 100 MiB 的单文件以及多文件批次使用流式写盘，接收端需要桌面版 Chrome 或 Edge，
+  并在开始前选择目标文件或文件夹。
+- 流式传输按分段确认进度，支持同页面断线、刷新、网络切换和系统休眠后的检查点恢复；
+  仍应保留原文件，不要把临时传输当作备份。
+- 无法直连时会使用 coturn 中继加密的 WebRTC 流量。大文件中继会消耗相同量级的公网流量，
+  实际速度和费用取决于双方网络与服务器带宽。
+
+5 GiB 桌面 Chromium 实盘门禁、恢复策略和已知限制见
+[Rust 2.0 发布手册](docs/rust-v2/RELEASE.md#5-gib-文件边界)。
 
 ## 隐私与安全边界
 
-- 6 位房间码只是公开的房间标识，不是成员授权凭证。仅知道房间码不能直接加入房间。
-- 邀请链接包含加入权限。它等同于一次性邀请 capability，只应发送给可信接收者；不要把
-  邀请链接发布到公开群组、日志或截图中。
-- 文本和文件通过浏览器之间的 WebRTC DataChannel 传输。API 不保存或中继应用载荷；它仍
-  会处理建立连接所需的临时访客、房间、成员、加入申请和信令状态。
-- 直连失败时，coturn 只中继加密的 WebRTC 流量，不能读取文本正文或文件内容。是否需要
-  中继取决于两端网络和浏览器的 ICE 协商结果。
-- 房间默认有效期为 30 分钟。关闭页面、刷新页面或切换网络可能让当前连接断开并需要重新
-  建立；本项目不把传输内容保存为可恢复的云端历史。
+- 房间码只是 6 位房间标识，不是加入凭据；房主仍需批准仅凭房间码提交的申请。
+- 邀请链接包含加入 capability，应像一次性凭据一样只发给可信接收者，不要公开到日志、
+  工单、群组或截图中。
+- 文本和文件通过 WebRTC DataChannel 传输。TURN 只中继 DTLS 加密流量，Axum 和 SQLite
+  不保存应用载荷。
+- 房间默认有效期为 30 分钟。系统不提供账号、云端历史、匿名性或永久可用承诺。
+- 生产运行单个 Axum 实例；SQLite 保存生命周期内的控制面状态，在线连接仍位于进程内存。
+  服务重启会断开 WebSocket，浏览器会重新连接并恢复仍有效的会话。
 
-这些边界说明传输路径，不等同于匿名、永久可用或对重要文件的备份保证。重要文件请保留
-原始副本，并通过可信渠道发送邀请链接。
-
-## 使用限制与运行边界
-
-- 单个文件批次最多 10 个文件，总大小最多 100 MiB。
-- 房间和加入申请受生命周期限制；房间过期后请创建新房间。
-- 浏览器需要支持 WebRTC DataChannel。严格 NAT、企业网络或防火墙可能阻止直连，需要
-  已正确配置的 coturn 中继。
-- 生产环境是腾讯云单机部署，当前只运行一个 API 实例。SQLite 持久化仍在生命周期内
-  的访客、房间、成员和加入申请；在线 WebSocket 连接表仍在 API 进程内存中。
-- API 重启后，SQLite 中仍有效的业务状态可以恢复，但已有在线 WebSocket 会断开，浏览器
-  需要重新申请短期 ticket 并重连。当前不承诺多 API 实例之间的状态同步。
-
-## 项目结构与数据流
+## Rust 2.0 工程结构
 
 ```text
-apps/web              React + Vite 前端，房间交互和 WebRTC DataChannel
-services/api          Bun API，访客、房间、加入授权、信令和 TURN 凭据
-packages/contracts    Web/API 共用的类型与 schema
-services/api/src/storage  SQLite 持久化层
-deploy                腾讯云单机的 Docker Compose、宿主机 Nginx 和 coturn 配置
+v2/apps/web                 Dioxus WebAssembly 前端
+v2/apps/server              Axum 同源 Web/API/WebSocket 服务
+v2/crates/browser-platform  浏览器、WebRTC 与流式文件系统适配
+v2/crates/domain            房间与传输领域模型
+v2/crates/protocol          HTTP、信令和 DataChannel 协议
+v2/crates/transfer          分段、校验、背压与恢复状态机
+deploy/v2                   生产容器与 Nginx 配置
+deploy/scripts              原子发布、SQLite 备份与回滚脚本
 ```
 
-一次传输的大致路径是：浏览器向 API 创建临时访客和房间 → API 通过 HTTP/WebSocket 协助
-加入授权与 WebRTC 协商 → 两个浏览器通过 DataChannel 传文本和文件；只有在网络无法直连
-时，WebRTC 才会把加密流量交给 coturn 中继。API 不接收文件正文，也不把正文写入 SQLite。
+根目录下的 `apps/`、`services/`、`packages/` 和旧 `deploy/` 配置是 1.x Bun/React 实现，
+仅作为历史体验基线和回归参考；它们不是当前生产运行时。
 
 ## 本地开发
 
-项目固定使用 Bun 1.3.14：
+需要 Rust 1.97、`wasm32-unknown-unknown` target 和 Dioxus CLI 0.7.6。仓库脚本负责构建前端
+并由 Axum 同源提供：
 
 ```bash
-bun --version
-bun install --frozen-lockfile
-bun run dev
+python scripts/dev_v2.py
 ```
 
-开发服务地址：
-
-- Web：<http://localhost:5713>
-- API：<http://localhost:3332>
-
-各工作区的配置和技术细节见：
-
-- [Web 前端说明](apps/web/README.md)
-- [API 说明](services/api/README.md)
-- [腾讯云单机部署说明](deploy/README.md)
-- [coturn 说明](deploy/coturn/README.md)
+默认本地地址是 `http://127.0.0.1:3410`。生产地址始终是
+[https://p2p.yxswy.com](https://p2p.yxswy.com)，请勿把本地地址作为公开入口。
 
 ## 验证
 
 ```bash
-bun run check:docs
-bun run verify -- --force
-bun run e2e
+python scripts/verify_v2.py
+python scripts/test_v2_e2e.py
+python -X utf8 -m unittest discover -s deploy/scripts -p "test_*.py"
 git diff --check
 ```
 
-`bun run e2e` 使用真实 Chromium 和两个隔离浏览器上下文，验证建房、加入审批、WebRTC
-DataChannel、文本和文件传输。公网 TURN 的 UDP/TLS 回退仍需要在真实网络和部署环境中
-单独验收。
+验证覆盖 native/WASM 格式与 Clippy、Rust 单元/集成测试、release 构建、Chromium/Firefox/
+WebKit 浏览器矩阵、真实 DataChannel 传输以及部署脚本。`Cargo.lock` 还会在 CI 中通过 RustSec
+审计，已知漏洞或警告会阻止发布。
 
-## 腾讯云单机部署
+## 生产部署
 
-生产地址是 [https://p2p.yxswy.com](https://p2p.yxswy.com)。部署方案使用单个 API 实例、
-SQLite 数据卷、Docker Compose、宿主机 Nginx 和 coturn。需要配置的公网端口包括：
+`main` 分支的 Rust 2.0 工作流在测试通过后构建固定版本镜像，通过 SSH 原子发布到腾讯云，
+然后验证 [健康检查](https://p2p.yxswy.com/health/ready) 和 Web 页面。发布前会为在线 SQLite
+数据库创建一致性快照并保留最近 10 份；失败时恢复上一镜像、环境与 Nginx 配置。
 
-- TCP `80`、`443`：Web、API 和 HTTPS/WSS。
+公网端口：
+
+- TCP `80`、`443`：HTTPS/WSS 和跳转。
 - TCP/UDP `3478`：TURN。
 - TCP `5349`：TURN TLS。
-- UDP `49160-49259`：coturn relay 端口范围。
+- UDP `49160-49259`：coturn relay 范围。
 
-完整的 DNS、安全组、证书、环境变量、启动、备份和验收步骤见
-[腾讯云单机部署说明](deploy/README.md)。部署 Web 与 API 时必须同步发布；API 重启或协议
-硬切部署后，旧页面应重新载入。
+完整环境变量、备份、回滚和验收流程见
+[Rust 2.0 发布手册](docs/rust-v2/RELEASE.md)。
 
 ## 故障排查
 
-| 现象 | 发生了什么 | 下一步 |
-| --- | --- | --- |
-| 页面提示无法连接服务器 | 浏览器没有成功访问当前 API 或 WebSocket | 确认使用 `https://p2p.yxswy.com`，检查域名解析、HTTPS 证书和 `/health`；部署环境再查看 API 与 Nginx 日志。 |
-| 房间码无效或房间已结束 | 房间不存在、已被关闭或已超过 30 分钟 | 返回大厅创建新房间，并重新发送新的邀请链接或房间码。 |
-| 只有房间码，长时间没有进入房间 | 房间码只定位房间，当前请求仍在等待房主决定 | 把页面保持打开并联系房主批准；被拒绝或申请失效后重新提交申请。 |
-| 两端一直连接中或传输失败 | 两端网络可能无法直连，或 TURN/防火墙配置不可用 | 先切换到稳定网络并重试；生产环境检查 coturn 域名、3478/5349 端口和 `49160-49259/udp`，再用真实浏览器做 relay 验收。 |
-| 文件无法加入批次 | 批次超过 10 个文件或总大小超过 100 MiB | 分成多个批次后重试，并保留原始文件备份。 |
-| 部署后页面行为异常 | Web 与 API 可能不是同一版，或浏览器仍使用旧页面 | 同时更新 Web/API，重新加载页面；房间授权协议硬切部署后创建新房间和新邀请链接。 |
+| 现象 | 处理方式 |
+| --- | --- |
+| 页面无法连接服务器 | 确认打开正式 HTTPS 地址；维护者检查 `/health/ready`、Nginx 和容器日志。 |
+| 房间码无效或房间结束 | 创建新房间并发送新的邀请链接或房间码。 |
+| 加入申请长时间等待 | 保持双方页面打开，让房主处理申请；失效后重新提交。 |
+| 大文件接收按钮不可用 | 接收端改用桌面 Chrome 或 Edge，并允许页面选择目标文件或文件夹。 |
+| 传输暂停或提示磁盘空间不足 | 释放足够空间、恢复文件权限后使用页面的继续操作；不要删除未完成目标文件。 |
+| 两端一直连接中 | 切换稳定网络重试；维护者检查 TURN 域名、证书、端口与 UDP relay 范围。 |
 
-## 文档索引
-
-- [普通用户指南](docs/user-guide.md)：创建房间、加入、审批、传输和失败后的处理。
-- [Web 前端说明](apps/web/README.md)：React、ICE/TURN 模式、配置和前端验证。
-- [API 说明](services/api/README.md)：HTTP、WebSocket、SQLite、TURN 和单实例边界。
-- [腾讯云单机部署说明](deploy/README.md)：DNS、安全组、Nginx、Compose、证书和备份。
-- [coturn 说明](deploy/coturn/README.md)：公网 TURN 的配置生成与验收。
-
-当前的产品边界是“单 API 实例 + SQLite 业务状态 + 进程内在线连接”。如果要横向扩展，
-需要引入共享状态、事件广播和连接路由，不能仅通过增加 API 容器数量完成。
+设计与实现记录位于 [Rust 2.0 文档索引](docs/rust-v2/README.md)。

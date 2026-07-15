@@ -2252,7 +2252,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "p2p-browser-platform"
-version = "2.0.0-rc.1"
+version = "2.0.0"
 dependencies = [
  "blake3",
  "futures-channel",
@@ -2272,14 +2272,14 @@ dependencies = [
 
 [[package]]
 name = "p2p-domain"
-version = "2.0.0-rc.1"
+version = "2.0.0"
 dependencies = [
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "p2p-protocol"
-version = "2.0.0-rc.1"
+version = "2.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2288,7 +2288,7 @@ dependencies = [
 
 [[package]]
 name = "p2p-server"
-version = "2.0.0-rc.1"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2317,15 +2317,15 @@ dependencies = [
 
 [[package]]
 name = "p2p-test-support"
-version = "2.0.0-rc.1"
+version = "2.0.0"
 
 [[package]]
 name = "p2p-transfer"
-version = "2.0.0-rc.1"
+version = "2.0.0"
 
 [[package]]
 name = "p2p-web"
-version = "2.0.0-rc.1"
+version = "2.0.0"
 dependencies = [
  "console_error_panic_hook",
  "dioxus",

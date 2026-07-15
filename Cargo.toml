@@ -19,7 +19,7 @@ exclude = ["spikes/dioxus-webrtc"]
 resolver = "2"
 
 [workspace.package]
-version = "2.0.0-rc.1"
+version = "2.0.0"
 edition = "2024"
 rust-version = "1.97"
 license = "MIT"

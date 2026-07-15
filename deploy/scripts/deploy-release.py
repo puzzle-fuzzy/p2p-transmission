@@ -9,11 +9,14 @@ import os
 import re
 import secrets
 import shutil
+import sqlite3
 import stat
 import subprocess
 import tarfile
 import time
 import urllib.request
+from contextlib import closing
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -26,6 +29,9 @@ ENV_KEY_RE = re.compile(r'^[A-Z][A-Z0-9_]*$')
 
 V2_ENV = APP_DIR / 'deploy/v2/.env'
 V2_DATA = APP_DIR / 'deploy/v2/data'
+V2_DATABASE = V2_DATA / 'control.sqlite3'
+V2_BACKUPS = APP_DIR / 'deploy/v2/backups'
+DATABASE_BACKUP_LIMIT = 10
 LEGACY_ENV = APP_DIR / 'deploy/.env'
 NGINX_SOURCE = APP_DIR / 'deploy/v2/nginx/p2p.yxswy.com.conf'
 NGINX_TARGET = Path('/etc/nginx/conf.d/p2p.yxswy.com.conf')
@@ -238,6 +244,44 @@ def snapshot_nginx() -> None:
     shutil.copy2(NGINX_TARGET, NGINX_ROLLBACK)
 
 
+def backup_v2_database(version: str) -> Optional[Path]:
+    """Create and verify a consistent SQLite backup before changing the runtime."""
+    if not V2_DATABASE.is_file():
+        print('Rust 2.0 database is not present; backup is not required', flush=True)
+        return None
+
+    backup_root = V2_BACKUPS.resolve()
+    expected_parent = (APP_DIR / 'deploy/v2').resolve()
+    if backup_root.parent != expected_parent:
+        raise SystemExit('database backup directory escapes the deployment directory')
+    backup_root.mkdir(parents=True, exist_ok=True)
+    os.chmod(backup_root, 0o700)
+
+    timestamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+    destination = backup_root / f'control-{timestamp}-{version}.sqlite3'
+    try:
+        source_uri = f'{V2_DATABASE.resolve().as_uri()}?mode=ro'
+        with closing(sqlite3.connect(source_uri, uri=True, timeout=30.0)) as source:
+            with closing(sqlite3.connect(destination, timeout=30.0)) as target:
+                source.backup(target)
+                result = target.execute('PRAGMA quick_check').fetchone()
+                if result != ('ok',):
+                    raise sqlite3.DatabaseError(f'backup quick_check failed: {result!r}')
+        os.chmod(destination, 0o600)
+    except (OSError, sqlite3.Error) as error:
+        destination.unlink(missing_ok=True)
+        raise SystemExit(f'Rust 2.0 database backup failed: {error}') from error
+
+    backups = sorted(backup_root.glob('control-*.sqlite3'), reverse=True)
+    for old_backup in backups[DATABASE_BACKUP_LIMIT:]:
+        if old_backup.resolve().parent != backup_root:
+            raise SystemExit('database backup cleanup encountered an unsafe path')
+        old_backup.unlink()
+
+    print(f'Rust 2.0 database backup ready: {destination}', flush=True)
+    return destination
+
+
 def install_v2_nginx() -> None:
     if not NGINX_SOURCE.is_file():
         raise SystemExit('Rust 2.0 Nginx configuration is missing')
@@ -301,6 +345,7 @@ def deploy_v2(image_archive: Path, version: str) -> None:
 
     expected_image = f'p2p-transmission-v2:{version}'
     try:
+        backup_v2_database(version)
         run(['docker', 'load', '--input', str(image_archive)])
         if not image_exists(expected_image):
             raise SystemExit(f'image archive did not contain {expected_image}')

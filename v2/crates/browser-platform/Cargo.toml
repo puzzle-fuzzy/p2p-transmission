@@ -35,6 +35,7 @@ web-sys = { workspace = true, features = [
   "FileList",
   "Headers",
   "History",
+  "HtmlDialogElement",
   "HtmlInputElement",
   "IdbDatabase",
   "IdbFactory",

@@ -2,7 +2,7 @@
 
 这里保存 Rust 2.0 各里程碑的固定视口截图，用于与 [`docs/product-baseline`](../product-baseline/README.md) 的 1.x 体验基线比较。
 
-RC1 的生产发布、5 GiB 边界、备份与回滚说明见 [`RELEASE.md`](RELEASE.md)。
+2.0 的生产发布、5 GiB 边界、备份与回滚说明见 [`RELEASE.md`](RELEASE.md)。
 
 M2 当前截图：
 

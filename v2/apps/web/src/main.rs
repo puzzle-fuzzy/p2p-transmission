@@ -6,11 +6,12 @@ use p2p_browser_platform::{
     RealtimeEvent, RtcConnectionPhase, RtcEvent, RtcPeer, SLEEP_RESUME_GAP_MS,
     StreamingStorageSupport, TransferDirection, TransferFile, bootstrap_room,
     browser_files_from_input, build_invite_url, choose_persistent_source_files,
-    choose_stream_files, clear_room_session, connect_browser_lifecycle, connect_realtime,
-    copy_text, create_invite, create_room, create_session, decide_join, fetch_rtc_config,
-    join_request_status, leave_room, load_room_session, new_client_id,
-    persistent_source_file_support, request_join, save_room_session, sleep_ms,
-    streaming_batch_storage_supported, streaming_storage_support, take_invite_intent,
+    choose_stream_files, clear_room_session, close_modal_dialog, connect_browser_lifecycle,
+    connect_realtime, copy_text, create_invite, create_room, create_session, decide_join,
+    fetch_rtc_config, join_request_status, leave_room, load_room_session, new_client_id,
+    persistent_source_file_support, remove_boot_fallback, request_join, save_room_session,
+    show_modal_dialog, sleep_ms, streaming_batch_storage_supported, streaming_storage_support,
+    take_invite_intent,
 };
 use p2p_protocol::{
     CURRENT_PROTOCOL, CancelReason, ClientRealtimeMessage, CreateInviteResponse,
@@ -30,6 +31,7 @@ const BACKGROUND_CONTROL_RECOVERY_MS: u64 = 15_000;
 
 fn main() {
     console_error_panic_hook::set_once();
+    remove_boot_fallback();
     dioxus::launch(App);
 }
 
@@ -1482,6 +1484,9 @@ fn TransferRequestDialog(
     files: Vec<TransferFile>,
     recovery_available: bool,
 ) -> Element {
+    use_effect(|| {
+        let _ = show_modal_dialog("transfer-request-dialog");
+    });
     let streamed = matches!(mode, TransferMode::Streamed { .. });
     let batch = files.len() > 1;
     let stream_supported = if batch {
@@ -1500,12 +1505,11 @@ fn TransferRequestDialog(
         .map(|file| file.name.clone())
         .collect::<Vec<_>>();
     rsx! {
-        div { class: "dialog-scrim",
-            section {
+        dialog {
+                id: "transfer-request-dialog",
                 class: "transfer-request-dialog",
-                role: "dialog",
-                aria_modal: "true",
                 aria_labelledby: "transfer-request-title",
+                oncancel: move |event| event.prevent_default(),
                 h2 { id: "transfer-request-title",
                     if batch { "接收 {files.len()} 个文件" } else { "接收文件" }
                 }
@@ -1627,7 +1631,6 @@ fn TransferRequestDialog(
                         "拒绝接收"
                     }
                 }
-            }
         }
     }
 }
@@ -1639,16 +1642,22 @@ fn RecipientPickerDialog(
     mut picker_open: Signal<bool>,
     mut selected_receiver_ids: Signal<Option<Vec<String>>>,
 ) -> Element {
+    use_effect(|| {
+        let _ = show_modal_dialog("recipient-picker-dialog");
+    });
     let mut draft_ids = use_signal(|| selected_ids);
     let mut error = use_signal(String::new);
     let selected_count = draft_ids.read().len();
     rsx! {
-        div { class: "dialog-scrim",
-            section {
+        dialog {
+                id: "recipient-picker-dialog",
                 class: "recipient-picker-dialog",
-                role: "dialog",
-                aria_modal: "true",
                 aria_labelledby: "recipient-picker-title",
+                oncancel: move |event| {
+                    event.prevent_default();
+                    let _ = close_modal_dialog("recipient-picker-dialog");
+                    picker_open.set(false);
+                },
                 div { class: "recipient-picker-heading",
                     div {
                         h2 { id: "recipient-picker-title", "选择接收者" }
@@ -1718,7 +1727,10 @@ fn RecipientPickerDialog(
                     button {
                         class: "secondary-button",
                         r#type: "button",
-                        onclick: move |_| picker_open.set(false),
+                        onclick: move |_| {
+                            let _ = close_modal_dialog("recipient-picker-dialog");
+                            picker_open.set(false);
+                        },
                         "取消"
                     }
                     button {
@@ -1731,12 +1743,12 @@ fn RecipientPickerDialog(
                                 return;
                             }
                             selected_receiver_ids.set(Some(selected));
+                            let _ = close_modal_dialog("recipient-picker-dialog");
                             picker_open.set(false);
                         },
                         "确定"
                     }
                 }
-            }
         }
     }
 }
@@ -2557,15 +2569,17 @@ fn Avatar(
 
 #[component]
 fn JoinRequestDialog(mut model: Signal<AppModel>, request: JoinRequestSnapshot) -> Element {
+    use_effect(|| {
+        let _ = show_modal_dialog("join-request-dialog");
+    });
     let state = model.read().clone();
     let pending = state.decision_request_id.is_some();
     rsx! {
-        div { class: "dialog-scrim",
-            section {
+        dialog {
+                id: "join-request-dialog",
                 class: "join-request-dialog",
-                role: "dialog",
-                aria_modal: "true",
                 aria_labelledby: "join-request-title",
+                oncancel: move |event| event.prevent_default(),
                 div { class: "request-person",
                     Avatar { seed: request.session_id.clone(), label: request.display_name.clone(), entering: false, highlighted: false }
                     div {
@@ -2599,7 +2613,6 @@ fn JoinRequestDialog(mut model: Signal<AppModel>, request: JoinRequestSnapshot) 
                         if pending { "处理中…" } else { "允许加入" }
                     }
                 }
-            }
         }
     }
 }
@@ -2640,9 +2653,19 @@ fn ShareDialog(
     room_code: String,
     capability: String,
 ) -> Element {
+    use_effect(|| {
+        let _ = show_modal_dialog("share-dialog");
+    });
     rsx! {
-        div { class: "dialog-scrim",
-            section { class: "share-dialog", role: "dialog", aria_modal: "true", aria_labelledby: "share-title",
+        dialog {
+            id: "share-dialog",
+            class: "share-dialog",
+            aria_labelledby: "share-title",
+            oncancel: move |event| {
+                event.prevent_default();
+                let _ = close_modal_dialog("share-dialog");
+                share_open.set(false);
+            },
                 h2 { id: "share-title", "分享房间" }
                 p { "将邀请链接发给接收者，链接中的授权信息不会显示在页面正文中。" }
                 div { class: "share-code",
@@ -2665,6 +2688,7 @@ fn ShareDialog(
                             } else {
                                 "无法自动复制，请改用房间码加入".to_owned()
                             });
+                            let _ = close_modal_dialog("share-dialog");
                             share_open.set(false);
                         });
                     },
@@ -2673,23 +2697,35 @@ fn ShareDialog(
                 button {
                     class: "dialog-close",
                     r#type: "button",
-                    onclick: move |_| share_open.set(false),
+                    onclick: move |_| {
+                        let _ = close_modal_dialog("share-dialog");
+                        share_open.set(false);
+                    },
                     "关闭"
                 }
-            }
         }
     }
 }
 
 #[component]
 fn AboutDialog(mut model: Signal<AppModel>) -> Element {
+    use_effect(|| {
+        let _ = show_modal_dialog("about-dialog");
+    });
     rsx! {
-        div { class: "dialog-scrim",
-            section { class: "about-dialog", role: "dialog", aria_modal: "true", aria_labelledby: "about-title",
+        dialog {
+            id: "about-dialog",
+            class: "about-dialog",
+            aria_labelledby: "about-title",
+            oncancel: move |event| {
+                event.prevent_default();
+                let _ = close_modal_dialog("about-dialog");
+                model.write().about_open = false;
+            },
                 h2 { id: "about-title", "关于 P2P Transmission 2.0" }
                 p { "2.0 使用 Dioxus Web、Axum 与共享 Rust crates 重新实现产品。页面样式和用户功能以 1.x 体验基线为准。" }
                 dl {
-                    div { dt { "当前阶段" } dd { "2.0 RC1 · 发布候选版" } }
+                    div { dt { "当前阶段" } dd { "2.0 · 正式版" } }
                     div { dt { "前端" } dd { "Dioxus / WebAssembly" } }
                     div { dt { "服务端" } dd { "Axum" } }
                     div { dt { "数据通道" } dd { "WebRTC / BLAKE3" } }
@@ -2697,10 +2733,12 @@ fn AboutDialog(mut model: Signal<AppModel>) -> Element {
                 button {
                     class: "close-button",
                     r#type: "button",
-                    onclick: move |_| model.write().about_open = false,
+                    onclick: move |_| {
+                        let _ = close_modal_dialog("about-dialog");
+                        model.write().about_open = false;
+                    },
                     "关闭"
                 }
-            }
         }
     }
 }
