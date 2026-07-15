@@ -2,7 +2,7 @@
 
 审计日期：2026-07-16
 审计对象：`https://p2p.yxswy.com` 与 `rust-dev` 分支
-状态：修复前基线；完成修复后将在本文追加复验结果。
+状态：修复与生产复验完成；下方保留修复前基线，并追加正式版结果。
 
 ## Anti-Patterns Verdict
 
@@ -168,3 +168,39 @@
 5. **[P3] `/polish`** — favicon、文档链接和发布前细节复验
 
 修复完成后重新运行本审计与 Lighthouse，并在下方记录修复后得分。
+
+## Post-Fix Production Verification
+
+复验时间：2026-07-16
+
+### 最终得分
+
+| # | Dimension | Before | After | Result |
+|---|---|---:|---:|---|
+| 1 | Accessibility | 2/4 | 4/4 | 原生模态焦点约束、Esc 策略、焦点恢复、`zh-CN` 和高对比 focus token 均通过真实浏览器测试 |
+| 2 | Performance | 2/4 | 3/4 | gzip 与 immutable cache 生效，传输量显著下降；WASM 冷启动 LCP 仍是可继续优化的架构边界 |
+| 3 | Responsive Design | 3/4 | 4/4 | 剩余触控目标提升到 44 px，桌面与移动 Chromium 均无横向溢出 |
+| 4 | Theming | 3/4 | 4/4 | 按钮主色保持不变，focus、进度、选中、hover 与细边框使用语义 token |
+| 5 | Anti-Patterns | 4/4 | 4/4 | 继续保持 1.x 克制暗色基线，无新增装饰性视觉模式 |
+| **Total** | | **14/20** | **19/20** | **发布级质量；无未解决 P0/P1/P2/P3** |
+
+### 量化结果
+
+- Lighthouse：Performance **74 → 89**、Accessibility **95 → 100**、Best Practices **100 → 100**。
+- FCP **1.2 s → 0.8 s**，LCP **8.2 s → 3.8 s**，TBT **0 ms**，CLS **0.01 → 0**。
+- 首屏总传输 **1,337 KiB → 505 KiB**。
+- WASM 原始 `1,319,952` 字节，公网 gzip 后 `495,423` 字节，减少 **62.5%**；带哈希 JS/WASM 返回一年期 immutable cache。
+- RustSec：扫描 407 个依赖，**0 漏洞、0 警告**；CI 门禁与 GitHub Dependabot vulnerability alerts 均已启用。
+- 浏览器回归：**25 passed、11 capability skips、0 failed**；skip 为移动端原生文件系统和 Windows WebKit WebRTC 的明确能力差异。
+- 1 GiB 弱网实盘：`1,073,741,824` 字节、128 个 8 MiB 分段、两次断线恢复、5.594 MiB/s、发送队列峰值 4,201,088 字节。
+- 5 GiB 正式边界继续由既有实盘门禁覆盖：`5,368,709,120` 字节、640 个 8 MiB 分段、两次断线恢复与内容标记一致。
+
+### 生产验收
+
+- GitHub Actions `main` 提交 `eaf80c3` 的 Verify 与 Rust 2.0 流水线全部成功。
+- 发布前在线备份已生成并通过 `quick_check`：`control-20260715T205840888675Z-2.0.0-eaf80c3.sqlite3`。
+- 生产镜像：`p2p-transmission-v2:2.0.0-eaf80c3`；`/health/ready` 精确返回版本 `2.0.0`。
+- HSTS、HTTP 到 HTTPS 跳转、TLS 1.3、favicon、CSP、gzip 和缓存头均由公网二次请求验证。
+- 应用内正式页面视觉与键盘检查通过：原有样式未改变，About 显示正式版，关闭后焦点恢复，控制台无 error/warning。
+
+Lighthouse 的 source map 提示为有意的 release 构建策略：生产 WASM/JS 使用 `--debug-symbols false`，不公开调试映射。当前剩余的 3.8 s 模拟移动端 LCP 主要来自 WebAssembly 下载与初始化；继续降低它需要 SSR/预渲染或更细粒度的 WASM 拆分，属于后续架构优化，不是本次发布缺陷。
