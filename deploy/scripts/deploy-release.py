@@ -191,8 +191,12 @@ def parse_env_text(text: str) -> dict[str, str]:
 
 def set_data_owner(path: Path) -> None:
     chown = getattr(os, 'chown', None)
-    if chown is not None:
-        chown(path, 10001, 10001)
+    if chown is None:
+        return
+    geteuid = getattr(os, 'geteuid', None)
+    if geteuid is not None and geteuid() != 0:
+        return
+    chown(path, 10001, 10001)
 
 
 def verify_sqlite_database(path: Path) -> None:
