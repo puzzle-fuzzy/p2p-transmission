@@ -1387,26 +1387,6 @@ fn TransferPanel(
             }
             div { class: "transfer-actions",
                 if can_offer && !active {
-                    input {
-                        id: "transfer-file-input",
-                        class: "sr-only",
-                        r#type: "file",
-                        multiple: true,
-                        aria_label: "选择要发送的文件",
-                        onchange: {
-                            let selected_peer_ids = selected_peer_ids.clone();
-                            move |_| {
-                                let offered = submit_selected_files(
-                                    model,
-                                    rtc_peers,
-                                    selected_peer_ids.clone(),
-                                );
-                                if !offered.is_empty() {
-                                    batch_peer_ids.set(offered);
-                                }
-                            }
-                        },
-                    }
                     if persistent_source_file_support() {
                         button {
                             class: "primary-button file-picker-button",
@@ -1430,6 +1410,26 @@ fn TransferPanel(
                             "选择文件"
                         }
                     } else {
+                        input {
+                            id: "transfer-file-input",
+                            class: "sr-only",
+                            r#type: "file",
+                            multiple: true,
+                            aria_label: "选择要发送的文件",
+                            onchange: {
+                                let selected_peer_ids = selected_peer_ids.clone();
+                                move |_| {
+                                    let offered = submit_selected_files(
+                                        model,
+                                        rtc_peers,
+                                        selected_peer_ids.clone(),
+                                    );
+                                    if !offered.is_empty() {
+                                        batch_peer_ids.set(offered);
+                                    }
+                                }
+                            },
+                        }
                         label { class: "primary-button file-picker-button", r#for: "transfer-file-input",
                             "选择文件"
                         }

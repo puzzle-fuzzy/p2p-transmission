@@ -1275,7 +1275,10 @@ test('a streamed sender reloads and resumes from its persisted source checkpoint
 
   try {
     await connectSingleReceiverRoom(owner, receiver)
-    await owner.getByRole('button', { name: '选择文件' }).click()
+    await expect(owner.locator('#transfer-file-input')).toHaveCount(0)
+    const persistentFilePicker = owner.getByRole('button', { name: '选择文件' })
+    await expect(persistentFilePicker).toHaveCount(1)
+    await persistentFilePicker.click()
     const transferDialog = receiver.getByRole('dialog', { name: '接收文件' })
     await expect(transferDialog).toContainText('m7-sender-refresh-recovery.bin')
     await transferDialog.getByRole('button', { name: '选择位置并接收' }).click()
