@@ -221,12 +221,6 @@ mod browser {
         Ok(files)
     }
 
-    pub fn browser_file_from_input(
-        element_id: &str,
-    ) -> Result<Option<BrowserFile>, BrowserPlatformError> {
-        Ok(browser_files_from_input(element_id)?.into_iter().next())
-    }
-
     pub fn persistent_source_file_support() -> bool {
         source_file_support()
     }
@@ -475,10 +469,6 @@ mod browser {
                     peer.fail(None, error.to_string());
                 }
             });
-        }
-
-        pub fn offer_file(&self, file: BrowserFile) -> Result<String, BrowserPlatformError> {
-            self.offer_files(vec![file])
         }
 
         pub fn offer_files(&self, files: Vec<BrowserFile>) -> Result<String, BrowserPlatformError> {
@@ -4437,8 +4427,8 @@ mod browser {
 
 #[cfg(target_arch = "wasm32")]
 pub use browser::{
-    BrowserFile, RtcPeer, browser_file_from_input, browser_files_from_input,
-    choose_persistent_source_files, persistent_source_file_support,
+    BrowserFile, RtcPeer, browser_files_from_input, choose_persistent_source_files,
+    persistent_source_file_support,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -4506,10 +4496,6 @@ mod native {
 
         pub fn accept_signal(&self, _from_peer: String, _signal: Signal) {}
 
-        pub fn offer_file(&self, _file: BrowserFile) -> Result<String, BrowserPlatformError> {
-            Err(BrowserPlatformError::UnsupportedTarget)
-        }
-
         pub fn offer_files(
             &self,
             _files: Vec<BrowserFile>,
@@ -4555,12 +4541,6 @@ mod native {
         pub fn prepare_reconnect(&self) {}
     }
 
-    pub fn browser_file_from_input(
-        _element_id: &str,
-    ) -> Result<Option<BrowserFile>, BrowserPlatformError> {
-        Err(BrowserPlatformError::UnsupportedTarget)
-    }
-
     pub fn browser_files_from_input(
         _element_id: &str,
     ) -> Result<Vec<BrowserFile>, BrowserPlatformError> {
@@ -4579,6 +4559,6 @@ mod native {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{
-    BrowserFile, RtcPeer, browser_file_from_input, browser_files_from_input,
-    choose_persistent_source_files, persistent_source_file_support,
+    BrowserFile, RtcPeer, browser_files_from_input, choose_persistent_source_files,
+    persistent_source_file_support,
 };

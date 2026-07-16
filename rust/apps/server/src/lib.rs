@@ -37,6 +37,10 @@ const APP_SHELL_JS: &str = include_str!("../assets/app-shell.js");
 const WEB_MANIFEST: &str = include_str!("../assets/manifest.webmanifest");
 const SERVICE_WORKER: &str = include_str!("../assets/sw.js");
 
+pub fn release_version() -> &'static str {
+    option_env!("P2P_RELEASE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
+}
+
 pub fn app(web_root: impl Into<PathBuf>, state: AppState) -> Router {
     let web_root = web_root.into();
     let index = web_root.join("index.html");
@@ -139,6 +143,7 @@ async fn meta() -> Json<BuildInfo> {
     Json(BuildInfo {
         product: PRODUCT_NAME.to_owned(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
+        release: release_version().to_owned(),
         api_major: API_MAJOR_VERSION,
     })
 }
@@ -211,6 +216,7 @@ mod tests {
             .to_bytes();
         let value: Value = serde_json::from_slice(&body).expect("health json");
         assert_eq!(value["status"], "ready");
+        assert_eq!(value["release"], release_version());
 
         let metadata = router
             .oneshot(
@@ -221,6 +227,14 @@ mod tests {
             .await
             .expect("metadata response");
         assert_eq!(metadata.status(), StatusCode::OK);
+        let metadata = metadata
+            .into_body()
+            .collect()
+            .await
+            .expect("collect metadata body")
+            .to_bytes();
+        let metadata: Value = serde_json::from_slice(&metadata).expect("metadata json");
+        assert_eq!(metadata["release"], release_version());
 
         state.services.storage.close().await;
         fs::remove_dir_all(web_root).expect("remove static fixture directory");

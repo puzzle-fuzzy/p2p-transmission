@@ -45,14 +45,21 @@ pub struct HealthResponse {
     pub status: HealthState,
     pub service: String,
     pub version: String,
+    #[serde(default)]
+    pub release: String,
 }
 
 impl HealthResponse {
-    pub fn ready(service: impl Into<String>, version: impl Into<String>) -> Self {
+    pub fn ready(
+        service: impl Into<String>,
+        version: impl Into<String>,
+        release: impl Into<String>,
+    ) -> Self {
         Self {
             status: HealthState::Ready,
             service: service.into(),
             version: version.into(),
+            release: release.into(),
         }
     }
 }
@@ -61,6 +68,7 @@ impl HealthResponse {
 pub struct BuildInfo {
     pub product: String,
     pub version: String,
+    pub release: String,
     pub api_major: u16,
 }
 
@@ -70,9 +78,14 @@ mod tests {
 
     #[test]
     fn health_wire_format_is_stable() {
-        let value = serde_json::to_value(HealthResponse::ready("p2p-server", "2.0.0"))
-            .expect("health response serializes");
+        let value = serde_json::to_value(HealthResponse::ready(
+            "p2p-server",
+            "2.0.0",
+            "2.0.0-abcdef0",
+        ))
+        .expect("health response serializes");
         assert_eq!(value["status"], "ready");
         assert_eq!(value["service"], "p2p-server");
+        assert_eq!(value["release"], "2.0.0-abcdef0");
     }
 }

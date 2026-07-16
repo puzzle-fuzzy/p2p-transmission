@@ -2594,15 +2594,6 @@ fn Avatar(
     #[props(default = false)] overlap: bool,
 ) -> Element {
     let hash = hash_seed(&seed);
-    let palettes = [
-        ("#241846", "#8b6cff", "#d9d0ff"),
-        ("#12382f", "#52c995", "#b8f5dd"),
-        ("#3b2a17", "#e2aa5f", "#ffe2ad"),
-        ("#153149", "#5fb8ff", "#c7ebff"),
-        ("#411d35", "#ee77ae", "#ffd0e5"),
-        ("#233b32", "#93d86f", "#e0fac8"),
-    ];
-    let (background, primary, highlight) = palettes[hash as usize % palettes.len()];
     let cells = avatar_cells(hash);
     let class = format!(
         "avatar{}{}{}",
@@ -2620,15 +2611,18 @@ fn Avatar(
             role: "img",
             aria_label: "{label}",
             title: "{label}",
-            style: "background:{background}",
             for (index, active) in cells.into_iter().enumerate() {
                 if active {
                     span {
+                        class: if (index + hash as usize).is_multiple_of(4) {
+                            "avatar-cell avatar-cell-strong"
+                        } else {
+                            "avatar-cell"
+                        },
                         style: format!(
-                            "grid-column:{};grid-row:{};background:{}",
+                            "grid-column:{};grid-row:{}",
                             index % 5 + 1,
                             index / 5 + 1,
-                            if (index + hash as usize).is_multiple_of(4) { highlight } else { primary },
                         )
                     }
                 }

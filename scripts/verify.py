@@ -12,7 +12,6 @@ NATIVE_PACKAGES = (
     "p2p-domain",
     "p2p-protocol",
     "p2p-transfer",
-    "p2p-test-support",
     "p2p-server",
 )
 

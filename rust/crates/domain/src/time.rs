@@ -50,18 +50,6 @@ impl Revision {
     }
 }
 
-pub trait Clock {
-    fn now(&self) -> EpochMillis;
-}
-
-pub trait IdGenerator<T> {
-    fn next_id(&mut self) -> T;
-}
-
-pub trait RandomSource {
-    fn fill_bytes(&mut self, output: &mut [u8]);
-}
-
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum TimeError {
     #[error("time or revision overflow")]

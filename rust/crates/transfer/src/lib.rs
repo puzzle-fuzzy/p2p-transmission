@@ -11,36 +11,6 @@ pub const DEFAULT_STREAM_ACK_WINDOW_BYTES: u64 = 16 * 1024 * 1024;
 pub enum TransferPlanError {
     ZeroChunkSize,
     ZeroSegmentSize,
-    ZeroWindowSize,
-    ProgressRegressed {
-        current: u64,
-        next: u64,
-    },
-    ProgressExceeded {
-        total: u64,
-        next: u64,
-    },
-    SendRegressed {
-        current: u64,
-        next: u64,
-    },
-    SendExceeded {
-        total: u64,
-        next: u64,
-    },
-    SendWindowExceeded {
-        committed: u64,
-        next: u64,
-        window: u64,
-    },
-    CommitRegressed {
-        current: u64,
-        next: u64,
-    },
-    CommitBeyondSent {
-        sent: u64,
-        next: u64,
-    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,14 +37,6 @@ impl ChunkPlan {
             total_bytes,
             chunk_bytes,
         })
-    }
-
-    pub const fn total_bytes(self) -> u64 {
-        self.total_bytes
-    }
-
-    pub const fn chunk_bytes(self) -> u32 {
-        self.chunk_bytes
     }
 
     pub const fn chunk_count(self) -> u64 {
@@ -128,14 +90,6 @@ impl SegmentPlan {
         })
     }
 
-    pub const fn total_bytes(self) -> u64 {
-        self.total_bytes
-    }
-
-    pub const fn segment_bytes(self) -> u32 {
-        self.segment_bytes
-    }
-
     pub const fn segment_count(self) -> u64 {
         if self.total_bytes == 0 {
             return 0;
@@ -156,52 +110,6 @@ impl SegmentPlan {
             length,
             is_last: index + 1 == self.segment_count(),
         })
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ProgressCounter {
-    total_bytes: u64,
-    completed_bytes: u64,
-}
-
-impl ProgressCounter {
-    pub const fn new(total_bytes: u64) -> Self {
-        Self {
-            total_bytes,
-            completed_bytes: 0,
-        }
-    }
-
-    pub const fn total_bytes(self) -> u64 {
-        self.total_bytes
-    }
-
-    pub const fn completed_bytes(self) -> u64 {
-        self.completed_bytes
-    }
-
-    pub const fn is_complete(self) -> bool {
-        self.completed_bytes == self.total_bytes
-    }
-
-    pub fn advance_to(&mut self, next: u64) -> Result<bool, TransferPlanError> {
-        if next < self.completed_bytes {
-            return Err(TransferPlanError::ProgressRegressed {
-                current: self.completed_bytes,
-                next,
-            });
-        }
-        if next > self.total_bytes {
-            return Err(TransferPlanError::ProgressExceeded {
-                total: self.total_bytes,
-                next,
-            });
-        }
-
-        let changed = next != self.completed_bytes;
-        self.completed_bytes = next;
-        Ok(changed)
     }
 }
 
@@ -229,103 +137,6 @@ impl BackpressurePolicy {
 
     pub fn can_resume(self, buffered_bytes: u64) -> bool {
         buffered_bytes <= self.low_watermark_bytes
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct AckWindow {
-    total_bytes: u64,
-    sent_bytes: u64,
-    committed_bytes: u64,
-    window_bytes: u64,
-}
-
-impl AckWindow {
-    pub fn new(total_bytes: u64, window_bytes: u64) -> Result<Self, TransferPlanError> {
-        if window_bytes == 0 {
-            return Err(TransferPlanError::ZeroWindowSize);
-        }
-        Ok(Self {
-            total_bytes,
-            sent_bytes: 0,
-            committed_bytes: 0,
-            window_bytes,
-        })
-    }
-
-    pub const fn total_bytes(self) -> u64 {
-        self.total_bytes
-    }
-
-    pub const fn sent_bytes(self) -> u64 {
-        self.sent_bytes
-    }
-
-    pub const fn committed_bytes(self) -> u64 {
-        self.committed_bytes
-    }
-
-    pub const fn in_flight_bytes(self) -> u64 {
-        self.sent_bytes - self.committed_bytes
-    }
-
-    pub const fn available_bytes(self) -> u64 {
-        self.window_bytes - self.in_flight_bytes()
-    }
-
-    pub const fn is_complete(self) -> bool {
-        self.committed_bytes == self.total_bytes
-    }
-
-    pub fn can_send(self, payload_bytes: u64) -> bool {
-        self.sent_bytes
-            .checked_add(payload_bytes)
-            .is_some_and(|next| {
-                next <= self.total_bytes && next - self.committed_bytes <= self.window_bytes
-            })
-    }
-
-    pub fn advance_sent_to(&mut self, next: u64) -> Result<bool, TransferPlanError> {
-        if next < self.sent_bytes {
-            return Err(TransferPlanError::SendRegressed {
-                current: self.sent_bytes,
-                next,
-            });
-        }
-        if next > self.total_bytes {
-            return Err(TransferPlanError::SendExceeded {
-                total: self.total_bytes,
-                next,
-            });
-        }
-        if next - self.committed_bytes > self.window_bytes {
-            return Err(TransferPlanError::SendWindowExceeded {
-                committed: self.committed_bytes,
-                next,
-                window: self.window_bytes,
-            });
-        }
-        let changed = next != self.sent_bytes;
-        self.sent_bytes = next;
-        Ok(changed)
-    }
-
-    pub fn commit_to(&mut self, next: u64) -> Result<bool, TransferPlanError> {
-        if next < self.committed_bytes {
-            return Err(TransferPlanError::CommitRegressed {
-                current: self.committed_bytes,
-                next,
-            });
-        }
-        if next > self.sent_bytes {
-            return Err(TransferPlanError::CommitBeyondSent {
-                sent: self.sent_bytes,
-                next,
-            });
-        }
-        let changed = next != self.committed_bytes;
-        self.committed_bytes = next;
-        Ok(changed)
     }
 }
 
@@ -365,29 +176,6 @@ mod tests {
         assert_eq!(plan.chunk_count(), 0);
         assert_eq!(plan.chunk(0), None);
         assert_eq!(ChunkPlan::new(1, 0), Err(TransferPlanError::ZeroChunkSize));
-    }
-
-    #[test]
-    fn progress_is_monotonic_bounded_and_idempotent() {
-        let mut progress = ProgressCounter::new(10);
-        assert_eq!(progress.advance_to(4), Ok(true));
-        assert_eq!(progress.advance_to(4), Ok(false));
-        assert_eq!(
-            progress.advance_to(3),
-            Err(TransferPlanError::ProgressRegressed {
-                current: 4,
-                next: 3,
-            })
-        );
-        assert_eq!(
-            progress.advance_to(11),
-            Err(TransferPlanError::ProgressExceeded {
-                total: 10,
-                next: 11,
-            })
-        );
-        assert_eq!(progress.advance_to(10), Ok(true));
-        assert!(progress.is_complete());
     }
 
     #[test]
@@ -436,49 +224,5 @@ mod tests {
         assert!(last.is_last);
         assert_eq!(last.offset + u64::from(last.length), five_gib);
         assert_eq!(plan.segment(640), None);
-    }
-
-    #[test]
-    fn ack_window_bounds_uncommitted_network_and_disk_data() {
-        let mib = 1024_u64 * 1024;
-        let mut window = AckWindow::new(32 * mib, 16 * mib).expect("valid ack window");
-        assert!(window.can_send(16 * mib));
-        assert!(!window.can_send(16 * mib + 1));
-        assert_eq!(window.advance_sent_to(16 * mib), Ok(true));
-        assert_eq!(window.available_bytes(), 0);
-        assert_eq!(
-            window.advance_sent_to(16 * mib + 1),
-            Err(TransferPlanError::SendWindowExceeded {
-                committed: 0,
-                next: 16 * mib + 1,
-                window: 16 * mib,
-            })
-        );
-        assert_eq!(window.commit_to(8 * mib), Ok(true));
-        assert_eq!(window.available_bytes(), 8 * mib);
-        assert!(window.can_send(8 * mib));
-        assert_eq!(window.advance_sent_to(24 * mib), Ok(true));
-        assert_eq!(window.commit_to(24 * mib), Ok(true));
-        assert_eq!(window.advance_sent_to(32 * mib), Ok(true));
-        assert_eq!(window.commit_to(32 * mib), Ok(true));
-        assert!(window.is_complete());
-    }
-
-    #[test]
-    fn ack_window_rejects_invalid_resume_order() {
-        let mut window = AckWindow::new(10, 4).expect("valid ack window");
-        assert_eq!(window.advance_sent_to(4), Ok(true));
-        assert_eq!(
-            window.commit_to(5),
-            Err(TransferPlanError::CommitBeyondSent { sent: 4, next: 5 })
-        );
-        assert_eq!(window.commit_to(2), Ok(true));
-        assert_eq!(
-            window.commit_to(1),
-            Err(TransferPlanError::CommitRegressed {
-                current: 2,
-                next: 1,
-            })
-        );
     }
 }

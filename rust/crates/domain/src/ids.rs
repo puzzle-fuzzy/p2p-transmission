@@ -67,8 +67,6 @@ id_type!(SessionId, "session id");
 id_type!(RoomId, "room id");
 id_type!(PeerId, "peer id");
 id_type!(RequestId, "request id");
-id_type!(TransferId, "transfer id");
-id_type!(FileId, "file id");
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RoomCode(String);
@@ -124,7 +122,7 @@ mod tests {
     #[test]
     fn identifiers_reject_whitespace_and_path_characters() {
         assert!(SessionId::parse("session 1").is_err());
-        assert!(FileId::parse("../file").is_err());
+        assert!(SessionId::parse("../session").is_err());
         assert!(PeerId::parse("peer_1").is_ok());
     }
 

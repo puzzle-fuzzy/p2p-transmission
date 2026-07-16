@@ -23,6 +23,21 @@ M6 单文件传输截图：
 - [`m6-transfer-owner-mobile-chromium.png`](screenshots/m6-transfer-owner-mobile-chromium.png)
 - [`m6-transfer-receiver-mobile-chromium.png`](screenshots/m6-transfer-receiver-mobile-chromium.png)
 
+M7 多接收者与流式存储截图：
+
+- [`m7-recipient-picker-desktop-chromium.png`](screenshots/m7-recipient-picker-desktop-chromium.png)
+- [`m7-recipient-picker-mobile-chromium.png`](screenshots/m7-recipient-picker-mobile-chromium.png)
+- [`m7-multi-result-desktop-chromium.png`](screenshots/m7-multi-result-desktop-chromium.png)
+- [`m7-multi-result-mobile-chromium.png`](screenshots/m7-multi-result-mobile-chromium.png)
+- [`m7-stream-storage-dialog-desktop-chromium.png`](screenshots/m7-stream-storage-dialog-desktop-chromium.png)
+- [`m7-stream-storage-complete-desktop-chromium.png`](screenshots/m7-stream-storage-complete-desktop-chromium.png)
+
+M8 存储异常恢复截图：
+
+- [`m8-storage-permission-error-desktop-chromium.png`](screenshots/m8-storage-permission-error-desktop-chromium.png)
+- [`m8-pending-write-cancelled-desktop-chromium.png`](screenshots/m8-pending-write-cancelled-desktop-chromium.png)
+- [`m8-storage-quota-paused-desktop-chromium.png`](screenshots/m8-storage-quota-paused-desktop-chromium.png)
+
 刷新命令：
 
 ```bash

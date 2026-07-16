@@ -51,10 +51,11 @@ curl -fsS http://127.0.0.1:3410/health/ready
 部署脚本会：
 
 1. 校验源码归档与 GitHub Runner 构建的不可变镜像。
-2. 复用当前生产环境中的 TURN、能力密钥、限流参数和 ICE 配置。
-3. 使用 SQLite 在线 backup 创建并校验发布前备份。
-4. 保留上一 Rust 镜像并校验 Compose 配置。
-5. 启动新容器，检查本机 ready，再原子更新 Nginx。
+2. 根据已部署源码清单删除仓库中已退役的文件，并保留 `.env`、SQLite、备份及 TURN 私密配置。
+3. 复用当前生产环境中的 TURN、能力密钥、限流参数和 ICE 配置。
+4. 使用 SQLite 在线 backup 创建并校验发布前备份。
+5. 保留上一 Rust 镜像并校验 Compose 配置。
+6. 启动新容器，核对本机 ready 中的不可变 release 标识，再原子更新 Nginx。
 
 如果启动、ready 或 Nginx 检查失败，脚本会恢复发布前的环境文件、数据库备份、Nginx 配置和上一 Rust 镜像。
 

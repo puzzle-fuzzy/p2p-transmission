@@ -2,7 +2,7 @@ name: Production
 
 on:
   push:
-    branches: [rust-dev, main]
+    branches: [main]
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
@@ -51,7 +51,7 @@ jobs:
       - run: cargo audit --deny warnings
       - run: cargo fmt --all -- --check
       - run: python -X utf8 -m unittest discover -s deploy/scripts -p "test_*.py"
-      - run: cargo clippy --locked -p p2p-domain -p p2p-protocol -p p2p-transfer -p p2p-test-support -p p2p-server --all-targets -- -D warnings
+      - run: cargo clippy --locked -p p2p-domain -p p2p-protocol -p p2p-transfer -p p2p-server --all-targets -- -D warnings
       - run: cargo test --locked
       - run: cargo test --locked -p p2p-browser-platform -p p2p-web
       - run: cargo build --locked -p p2p-server --release
@@ -121,7 +121,7 @@ jobs:
       - name: Build release image
         env:
           RELEASE_VERSION: ${{ steps.release.outputs.release-version }}
-        run: docker build --file deploy/production/Dockerfile --tag "p2p-transmission:$RELEASE_VERSION" .
+        run: docker build --build-arg "P2P_RELEASE_VERSION=$RELEASE_VERSION" --file deploy/production/Dockerfile --tag "p2p-transmission:$RELEASE_VERSION" .
       - name: Export release image
         env:
           GITHUB_SHA: ${{ github.sha }}
@@ -148,11 +148,39 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check release is still current main
+        id: release_head
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import subprocess
+          from pathlib import Path
+
+          expected = os.environ['EXPECTED_SHA']
+          output = subprocess.check_output(
+              ['git', 'ls-remote', '--exit-code', 'origin', 'refs/heads/main'],
+              text=True,
+          )
+          current = output.split()[0]
+          is_current = current == expected
+          with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as result:
+              result.write(f"current={str(is_current).lower()}\n")
+          if not is_current:
+              print(f"::notice::Skipping superseded release {expected}; main is {current}")
+          PY
+
       - uses: actions/download-artifact@v4
+        if: steps.release_head.outputs.current == 'true'
         with:
           name: production-image-${{ github.sha }}
 
       - name: Configure deployment SSH
+        if: steps.release_head.outputs.current == 'true'
         env:
           SSH_PRIVATE_KEY_B64: ${{ secrets.TENCENT_SSH_PRIVATE_KEY_B64 }}
           SSH_KNOWN_HOSTS: ${{ secrets.TENCENT_SSH_KNOWN_HOSTS }}
@@ -164,11 +192,55 @@ jobs:
           chmod 644 "$HOME/.ssh/known_hosts"
 
       - name: Create source release archive
+        if: steps.release_head.outputs.current == 'true'
         env:
+          BEFORE_SHA: ${{ github.event.before }}
           GITHUB_SHA: ${{ github.sha }}
-        run: git archive --format=tar.gz --output="p2p-transmission-$GITHUB_SHA.tar.gz" "$GITHUB_SHA"
+        run: |
+          git archive --format=tar.gz --output="p2p-transmission-$GITHUB_SHA.tar.gz" "$GITHUB_SHA"
+          git archive --format=tar.gz --output="p2p-transmission-deployer-$GITHUB_SHA.tar.gz" "$GITHUB_SHA" deploy/scripts/deploy-release.py
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          before = os.environ['BEFORE_SHA']
+          current = os.environ['GITHUB_SHA']
+          retired: list[str] = []
+          if re.fullmatch(r'[0-9a-f]{40}', before) and before != '0' * 40:
+              subprocess.run(
+                  ['git', 'cat-file', '-e', f'{before}^{{commit}}'],
+                  check=True,
+              )
+              output = subprocess.check_output(
+                  [
+                      'git',
+                      'diff',
+                      '--name-only',
+                      '--diff-filter=D',
+                      '--no-renames',
+                      '-z',
+                      before,
+                      current,
+                  ]
+              )
+              retired = [
+                  name.decode('utf-8')
+                  for name in output.split(b'\0')
+                  if name
+              ]
+          target = Path(f'p2p-transmission-retired-{current}.json')
+          target.write_text(
+              json.dumps(retired, ensure_ascii=False, indent=2) + '\n',
+              encoding='utf-8',
+          )
+          print(f'bootstrap retired source files: {len(retired)}')
+          PY
 
       - name: Deploy the Rust image and switch production
+        if: steps.release_head.outputs.current == 'true'
         env:
           DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
           DEPLOY_USER: ${{ secrets.TENCENT_DEPLOY_USER }}
@@ -176,16 +248,36 @@ jobs:
           RELEASE_VERSION: ${{ needs.container.outputs.release-version }}
         run: |
           SOURCE_ARCHIVE="p2p-transmission-$GITHUB_SHA.tar.gz"
+          DEPLOYER_ARCHIVE="p2p-transmission-deployer-$GITHUB_SHA.tar.gz"
           IMAGE_ARCHIVE="p2p-transmission-image-$GITHUB_SHA.tar.gz"
-          scp "$SOURCE_ARCHIVE" "$IMAGE_ARCHIVE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/"
+          RETIRED_FILES="p2p-transmission-retired-$GITHUB_SHA.json"
+          scp "$SOURCE_ARCHIVE" "$IMAGE_ARCHIVE" "$RETIRED_FILES" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/"
           # Release values are locally validated identifiers.
           # shellcheck disable=SC2029
-          ssh "$DEPLOY_USER@$DEPLOY_HOST" \
-            "sudo /usr/local/sbin/p2p-transmission-deploy --archive /tmp/$SOURCE_ARCHIVE --image-archive /tmp/$IMAGE_ARCHIVE --version $RELEASE_VERSION"
+          if ssh "$DEPLOY_USER@$DEPLOY_HOST" \
+            "sudo /usr/local/sbin/p2p-transmission-deploy --help" 2>&1 \
+            | grep -q -- '--retired-files'; then
+            # shellcheck disable=SC2029
+            ssh "$DEPLOY_USER@$DEPLOY_HOST" \
+              "sudo /usr/local/sbin/p2p-transmission-deploy --archive /tmp/$SOURCE_ARCHIVE --image-archive /tmp/$IMAGE_ARCHIVE --retired-files /tmp/$RETIRED_FILES --version $RELEASE_VERSION"
+          else
+            echo "::notice::Bootstrapping the source-manifest capable deployer"
+            scp "$DEPLOYER_ARCHIVE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/$SOURCE_ARCHIVE"
+            # The old CLI supports a source-only update when no image archive is supplied.
+            # shellcheck disable=SC2029
+            ssh "$DEPLOY_USER@$DEPLOY_HOST" \
+              "sudo /usr/local/sbin/p2p-transmission-deploy --archive /tmp/$SOURCE_ARCHIVE --version $RELEASE_VERSION"
+            scp "$SOURCE_ARCHIVE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/"
+            # shellcheck disable=SC2029
+            ssh "$DEPLOY_USER@$DEPLOY_HOST" \
+              "sudo /usr/local/sbin/p2p-transmission-deploy --archive /tmp/$SOURCE_ARCHIVE --image-archive /tmp/$IMAGE_ARCHIVE --retired-files /tmp/$RETIRED_FILES --version $RELEASE_VERSION"
+          fi
 
       - name: Verify the public Rust service
+        if: steps.release_head.outputs.current == 'true'
         env:
           EXPECTED_APP_VERSION: ${{ needs.container.outputs.app-version }}
+          EXPECTED_RELEASE_VERSION: ${{ needs.container.outputs.release-version }}
         run: |
           python3 - <<'PY'
           import json
@@ -193,7 +285,8 @@ jobs:
           import time
           import urllib.request
 
-          expected = os.environ['EXPECTED_APP_VERSION']
+          expected_app = os.environ['EXPECTED_APP_VERSION']
+          expected_release = os.environ['EXPECTED_RELEASE_VERSION']
           for attempt in range(30):
               try:
                   with urllib.request.urlopen(
@@ -204,7 +297,8 @@ jobs:
                       response.status == 200
                       and payload.get('status') == 'ready'
                       and payload.get('service') == 'p2p-server'
-                      and payload.get('version') == expected
+                      and payload.get('version') == expected_app
+                      and payload.get('release') == expected_release
                   ):
                       break
               except (OSError, ValueError):
@@ -215,8 +309,23 @@ jobs:
 
           with urllib.request.urlopen('https://p2p.yxswy.com/', timeout=5) as response:
               index = response.read().decode('utf-8')
-          if response.status != 200 or 'P2P Transmission' not in index:
-              raise SystemExit('public web shell check failed')
+          if (
+              response.status != 200
+              or 'P2P Transmission' not in index
+              or 'action="/app"' not in index
+              or 'p2p-web-' in index
+              or '.wasm' in index
+          ):
+              raise SystemExit('public SSR landing check failed')
+
+          with urllib.request.urlopen('https://p2p.yxswy.com/app', timeout=5) as response:
+              app_shell = response.read().decode('utf-8')
+          if (
+              response.status != 200
+              or 'id="boot-fallback"' not in app_shell
+              or 'assets/p2p-web-' not in app_shell
+          ):
+              raise SystemExit('public Dioxus application shell check failed')
           print(json.dumps(payload, ensure_ascii=False))
           PY
 

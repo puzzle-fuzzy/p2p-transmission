@@ -16,9 +16,10 @@ COPY rust ./rust
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     dx build --web --package p2p-web --locked --release --debug-symbols false
+ARG P2P_RELEASE_VERSION=development
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    cargo build --locked --release -p p2p-server
+    P2P_RELEASE_VERSION="$P2P_RELEASE_VERSION" cargo build --locked --release -p p2p-server
 
 FROM ${RUNTIME_IMAGE} AS runtime
 

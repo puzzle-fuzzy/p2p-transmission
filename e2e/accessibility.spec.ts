@@ -28,6 +28,12 @@ test('the WebAssembly application entrypoint passes WCAG axe rules', async ({ pa
   await page.goto('/app')
   await expect(page.getByRole('heading', { name: '加入房间' })).toBeVisible()
   await expectNoAccessibilityViolations(page)
+
+  await page.getByRole('button', { name: '关于 P2P Transmission' }).click()
+  const aboutDialog = page.getByRole('dialog', { name: '关于 P2P Transmission' })
+  await expect(aboutDialog).toBeVisible()
+  await expect(aboutDialog).toHaveCSS('opacity', '1')
+  await expectNoAccessibilityViolations(page)
 })
 
 test('essential flows survive forced colors and 200% text scaling', async ({

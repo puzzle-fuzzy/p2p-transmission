@@ -2,8 +2,8 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::{Context, Result};
 use p2p_server::{
-    app, config::AppConfig, default_web_root, http_api::AppState, services::AppServices,
-    storage::Storage,
+    app, config::AppConfig, default_web_root, http_api::AppState, release_version,
+    services::AppServices, storage::Storage,
 };
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -42,6 +42,7 @@ async fn main() -> Result<()> {
     info!(
         address = %listener.local_addr()?,
         web_root = %web_root.display(),
+        release = release_version(),
         "P2P Transmission listening"
     );
 

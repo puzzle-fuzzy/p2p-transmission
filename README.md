@@ -41,7 +41,7 @@ P2P Transmission 是一个无需注册的临时点对点文本与文件传输工
   工单、群组或截图中。
 - 文本和文件通过 WebRTC DataChannel 传输。TURN 只中继 DTLS 加密流量，Axum 和 SQLite
   不保存应用载荷。
-- 房间默认有效期为 30 分钟。系统不提供账号、云端历史、匿名性或永久可用承诺。
+- 房间默认有效期为 6 小时。系统不提供账号、云端历史、匿名性或永久可用承诺。
 - 生产运行单个 Axum 实例；SQLite 保存生命周期内的控制面状态，在线连接仍位于进程内存。
   服务重启会断开 WebSocket，浏览器会重新连接并恢复仍有效的会话。
 
@@ -51,7 +51,7 @@ P2P Transmission 是一个无需注册的临时点对点文本与文件传输工
 rust/apps/web                 Dioxus WebAssembly 前端
 rust/apps/server              Axum 同源 Web/API/WebSocket 服务
 rust/crates/browser-platform  浏览器、WebRTC 与流式文件系统适配
-rust/crates/domain            房间与传输领域模型
+rust/crates/domain            房间与会话领域模型
 rust/crates/protocol          HTTP、信令和 DataChannel 协议
 rust/crates/transfer          分段、校验、背压与恢复状态机
 e2e                           当前 Rust Web 的 Playwright 浏览器验收

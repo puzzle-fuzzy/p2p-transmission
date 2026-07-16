@@ -66,12 +66,6 @@ pub enum JoinDecision {
     Reject,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RoomExpiryReason {
-    Deadline,
-    OwnerLeft,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RoomCommand {
     RequestJoin {
@@ -107,57 +101,17 @@ pub enum RoomCommand {
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RoomEvent {
-    RoomCreated {
-        room_id: RoomId,
-        owner: SessionId,
-    },
-    JoinRequested {
-        request_id: RequestId,
-        session_id: SessionId,
-    },
-    JoinApproved {
-        request_id: RequestId,
-        session_id: SessionId,
-    },
-    JoinRejected {
-        request_id: RequestId,
-        session_id: SessionId,
-    },
-    JoinCancelled {
-        request_id: RequestId,
-        session_id: SessionId,
-    },
-    JoinExpired {
-        request_id: RequestId,
-        session_id: SessionId,
-    },
-    PeerOnline {
-        session_id: SessionId,
-        peer_id: PeerId,
-    },
-    PeerOffline {
-        session_id: SessionId,
-        peer_id: PeerId,
-    },
-    MemberLeft {
-        session_id: SessionId,
-    },
-    RoomExpired {
-        reason: RoomExpiryReason,
-    },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RoomCommandOutcome {
-    pub revision: Revision,
-    pub events: Vec<RoomEvent>,
+    changed: bool,
 }
 
 impl RoomCommandOutcome {
-    pub fn changed(&self) -> bool {
-        !self.events.is_empty()
+    const CHANGED: Self = Self { changed: true };
+    const UNCHANGED: Self = Self { changed: false };
+
+    pub const fn changed(&self) -> bool {
+        self.changed
     }
 }
 
@@ -192,20 +146,16 @@ impl Room {
             },
         )]);
         let room = Self {
-            id: id.clone(),
+            id,
             code,
-            owner: owner.clone(),
+            owner,
             expires_at,
             state: RoomState::Active,
             revision: Revision::new(1),
             memberships,
             join_requests: BTreeMap::new(),
         };
-        let outcome = RoomCommandOutcome {
-            revision: room.revision,
-            events: vec![RoomEvent::RoomCreated { room_id: id, owner }],
-        };
-        Ok((room, outcome))
+        Ok((room, RoomCommandOutcome::CHANGED))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -299,12 +249,6 @@ impl Room {
         self.memberships
             .get(session_id)
             .map(|membership| &membership.state)
-    }
-
-    pub fn membership_role(&self, session_id: &SessionId) -> Option<MembershipRole> {
-        self.memberships
-            .get(session_id)
-            .map(|membership| membership.role)
     }
 
     pub fn join_request_state(&self, request_id: &RequestId) -> Option<JoinRequestState> {
@@ -405,24 +349,15 @@ impl Room {
     }
 
     fn unchanged(&self) -> RoomCommandOutcome {
-        RoomCommandOutcome {
-            revision: self.revision,
-            events: Vec::new(),
-        }
+        RoomCommandOutcome::UNCHANGED
     }
 
-    fn commit(&mut self, events: Vec<RoomEvent>) -> Result<RoomCommandOutcome, RoomError> {
-        if events.is_empty() {
-            return Ok(self.unchanged());
-        }
+    fn commit(&mut self) -> Result<RoomCommandOutcome, RoomError> {
         self.revision = self
             .revision
             .next()
             .map_err(|_| RoomError::RevisionOverflow)?;
-        Ok(RoomCommandOutcome {
-            revision: self.revision,
-            events,
-        })
+        Ok(RoomCommandOutcome::CHANGED)
     }
 
     fn request_join(
@@ -456,17 +391,14 @@ impl Room {
         }
 
         self.join_requests.insert(
-            request_id.clone(),
+            request_id,
             JoinRequest {
-                session_id: session_id.clone(),
+                session_id,
                 expires_at,
                 state: JoinRequestState::Pending,
             },
         );
-        self.commit(vec![RoomEvent::JoinRequested {
-            request_id,
-            session_id,
-        }])
+        self.commit()
     }
 
     fn decide_join(
@@ -481,7 +413,7 @@ impl Room {
             return Err(RoomError::Unauthorized);
         }
 
-        let (session_id, event) = {
+        let approved_session = {
             let request = self
                 .join_requests
                 .get_mut(&request_id)
@@ -492,21 +424,11 @@ impl Room {
             match (request.state, decision) {
                 (JoinRequestState::Pending, JoinDecision::Approve) => {
                     request.state = JoinRequestState::Approved;
-                    let session_id = request.session_id.clone();
-                    let event = RoomEvent::JoinApproved {
-                        request_id: request_id.clone(),
-                        session_id: session_id.clone(),
-                    };
-                    (session_id, event)
+                    Some(request.session_id.clone())
                 }
                 (JoinRequestState::Pending, JoinDecision::Reject) => {
                     request.state = JoinRequestState::Rejected;
-                    let session_id = request.session_id.clone();
-                    let event = RoomEvent::JoinRejected {
-                        request_id: request_id.clone(),
-                        session_id: session_id.clone(),
-                    };
-                    (session_id, event)
+                    None
                 }
                 (JoinRequestState::Approved, JoinDecision::Approve)
                 | (JoinRequestState::Rejected, JoinDecision::Reject) => {
@@ -516,7 +438,7 @@ impl Room {
             }
         };
 
-        if decision == JoinDecision::Approve {
+        if let Some(session_id) = approved_session {
             self.memberships.insert(
                 session_id,
                 Membership {
@@ -525,7 +447,7 @@ impl Room {
                 },
             );
         }
-        self.commit(vec![event])
+        self.commit()
     }
 
     fn expire_join_request(
@@ -534,7 +456,7 @@ impl Room {
         now: EpochMillis,
     ) -> Result<RoomCommandOutcome, RoomError> {
         self.ensure_active(now)?;
-        let session_id = {
+        {
             let request = self
                 .join_requests
                 .get_mut(&request_id)
@@ -546,12 +468,8 @@ impl Room {
                 return Err(RoomError::RequestExpiryNotReached);
             }
             request.state = JoinRequestState::Expired;
-            request.session_id.clone()
-        };
-        self.commit(vec![RoomEvent::JoinExpired {
-            request_id,
-            session_id,
-        }])
+        }
+        self.commit()
     }
 
     fn attach(
@@ -572,13 +490,8 @@ impl Room {
             MembershipState::Left => return Err(RoomError::MembershipLeft),
             MembershipState::Offline | MembershipState::Online { .. } => {}
         }
-        membership.state = MembershipState::Online {
-            peer_id: peer_id.clone(),
-        };
-        self.commit(vec![RoomEvent::PeerOnline {
-            session_id,
-            peer_id,
-        }])
+        membership.state = MembershipState::Online { peer_id };
+        self.commit()
     }
 
     fn detach(
@@ -599,10 +512,7 @@ impl Room {
             }
             MembershipState::Left => return Err(RoomError::MembershipLeft),
         }
-        self.commit(vec![RoomEvent::PeerOffline {
-            session_id,
-            peer_id,
-        }])
+        self.commit()
     }
 
     fn leave(&mut self, session_id: SessionId) -> Result<RoomCommandOutcome, RoomError> {
@@ -611,9 +521,7 @@ impl Room {
                 return Ok(self.unchanged());
             }
             self.state = RoomState::Expired;
-            return self.commit(vec![RoomEvent::RoomExpired {
-                reason: RoomExpiryReason::OwnerLeft,
-            }]);
+            return self.commit();
         }
 
         if let Some(membership) = self.memberships.get_mut(&session_id) {
@@ -621,19 +529,15 @@ impl Room {
                 return Ok(self.unchanged());
             }
             membership.state = MembershipState::Left;
-            return self.commit(vec![RoomEvent::MemberLeft { session_id }]);
+            return self.commit();
         }
 
         let pending = self.join_requests.iter_mut().find(|(_, request)| {
             request.session_id == session_id && request.state == JoinRequestState::Pending
         });
-        if let Some((request_id, request)) = pending {
+        if let Some((_, request)) = pending {
             request.state = JoinRequestState::Cancelled;
-            let request_id = request_id.clone();
-            return self.commit(vec![RoomEvent::JoinCancelled {
-                request_id,
-                session_id,
-            }]);
+            return self.commit();
         }
         Err(RoomError::MembershipNotFound)
     }
@@ -651,9 +555,7 @@ impl Room {
                 request.state = JoinRequestState::Expired;
             }
         }
-        self.commit(vec![RoomEvent::RoomExpired {
-            reason: RoomExpiryReason::Deadline,
-        }])
+        self.commit()
     }
 }
 
@@ -919,7 +821,7 @@ mod tests {
             })
             .expect("expire request");
         assert!(expired.changed());
-        assert_eq!(expired.revision.value(), 3);
+        assert_eq!(room.revision().value(), 3);
         let replay = room
             .handle(RoomCommand::ExpireJoinRequest {
                 request_id: id("request_1"),

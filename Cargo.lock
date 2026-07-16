@@ -2262,7 +2262,6 @@ dependencies = [
  "p2p-protocol",
  "p2p-transfer",
  "serde",
- "serde-wasm-bindgen",
  "serde_json",
  "thiserror 2.0.18",
  "wasm-bindgen",
@@ -2314,10 +2313,6 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
 ]
-
-[[package]]
-name = "p2p-test-support"
-version = "2.0.1"
 
 [[package]]
 name = "p2p-transfer"

@@ -13,7 +13,7 @@ use std::fmt;
 use p2p_protocol::{
     ApiErrorCode, CURRENT_PROTOCOL, ClientRealtimeMessage, CreateInviteRequest,
     CreateInviteResponse, CreateRoomRequest, CreateRoomResponse, CreateSessionRequest,
-    DecideJoinRequest, HealthResponse, JoinDecisionRequest, JoinRequestResponse, LeaveRoomRequest,
+    DecideJoinRequest, JoinDecisionRequest, JoinRequestResponse, LeaveRoomRequest,
     RequestJoinRequest, RoomBootstrapResponse, RoomMutationResponse, RtcConfigResponse,
     ServerRealtimeMessage, SessionResponse,
 };
@@ -25,8 +25,7 @@ pub use lifecycle::{
 };
 pub use rtc::{
     BrowserFile, RtcConnectionPhase, RtcEvent, RtcPeer, TransferDirection, TransferFile,
-    browser_file_from_input, browser_files_from_input, choose_persistent_source_files,
-    persistent_source_file_support,
+    browser_files_from_input, choose_persistent_source_files, persistent_source_file_support,
 };
 pub use stream_storage::{
     StreamingFileWriter, StreamingStorageSupport, choose_stream_file, choose_stream_files,
@@ -159,10 +158,6 @@ pub enum RealtimeEvent {
     Message(ServerRealtimeMessage),
     Error(String),
     Closed { code: u16, reason: String },
-}
-
-pub async fn fetch_readiness() -> Result<HealthResponse, BrowserPlatformError> {
-    request_json::<(), HealthResponse>("GET", "/health/ready", None).await
 }
 
 pub async fn fetch_rtc_config() -> Result<RtcConfigResponse, BrowserPlatformError> {

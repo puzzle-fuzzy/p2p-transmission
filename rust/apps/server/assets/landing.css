@@ -203,10 +203,17 @@ h1 {
 
 .footer-links a,
 .about-details summary {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
   color: var(--ink-muted);
   text-decoration: underline;
   text-decoration-color: var(--ink-dim);
   text-underline-offset: 4px;
+}
+
+.footer-links > span {
+  line-height: 44px;
 }
 
 .footer-links a:hover,

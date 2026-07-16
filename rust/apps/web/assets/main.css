@@ -11,7 +11,7 @@
   --ink: rgba(255, 255, 255, 0.8);
   --ink-strong: rgba(255, 248, 231, 0.9);
   --ink-on-accent: rgba(255, 255, 255, 0.9);
-  --ink-muted: rgba(255, 255, 255, 0.5);
+  --ink-muted: rgba(255, 255, 255, 0.56);
   --ink-dim: rgba(255, 255, 255, 0.2);
   --border: rgba(255, 251, 235, 0.15);
   --border-subtle: rgba(255, 251, 235, 0.08);
@@ -554,11 +554,17 @@ h1 {
   padding: 8px;
   border: 2px solid var(--surface);
   border-radius: 50%;
+  background: var(--surface-hover);
   overflow: hidden;
 }
 
-.avatar span {
+.avatar-cell {
+  background: var(--ink-dim);
   border-radius: 1px;
+}
+
+.avatar-cell-strong {
+  background: var(--ink-muted);
 }
 
 .avatar-overlap {
@@ -574,7 +580,6 @@ h1 {
   animation: receiver-avatar-enter 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-.transfer-placeholder,
 .transfer-panel {
   display: flex;
   min-height: 224px;
@@ -588,13 +593,11 @@ h1 {
   text-align: center;
 }
 
-.transfer-placeholder h1,
 .transfer-panel h1 {
   color: var(--ink);
   font-size: 0.88rem;
 }
 
-.transfer-placeholder p,
 .transfer-panel-copy p {
   max-width: 384px;
   margin: 8px 0 0;

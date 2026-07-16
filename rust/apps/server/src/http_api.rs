@@ -98,6 +98,7 @@ pub async fn ready(
     Ok(Json(p2p_protocol::HealthResponse::ready(
         "p2p-server",
         env!("CARGO_PKG_VERSION"),
+        crate::release_version(),
     )))
 }
 
