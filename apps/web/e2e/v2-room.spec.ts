@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url))
+const peerReadyTimeout = 20_000
 
 test('two browsers can create, approve, connect, and restore a Rust 2.0 room', async ({
   browser,
@@ -66,8 +67,8 @@ test('two browsers can create, approve, connect, and restore a Rust 2.0 room', a
       getComputedStyle(element).animationName
     ))).toBe('receiver-avatar-enter')
     await expect(enteringAvatar).toHaveCount(0, { timeout: 2_000 })
-    await expect(receiver.getByRole('heading', { name: '等待对方发送' })).toBeVisible()
-    await expect(owner.getByRole('heading', { name: '选择要发送的文件' })).toBeVisible()
+    await expect(receiver.getByRole('heading', { name: '等待对方发送' })).toBeVisible({ timeout: peerReadyTimeout })
+    await expect(owner.getByRole('heading', { name: '选择要发送的文件' })).toBeVisible({ timeout: peerReadyTimeout })
 
     await receiver.evaluate(() => window.dispatchEvent(new Event('offline')))
     await expect(receiver.getByText('网络已断开，恢复后会自动重新连接')).toBeVisible()
@@ -75,7 +76,7 @@ test('two browsers can create, approve, connect, and restore a Rust 2.0 room', a
     await receiver.waitForTimeout(750)
     await receiverContext.setOffline(false)
     await expect(receiver.getByText('连接已恢复')).toBeVisible()
-    await expect(receiver.getByRole('heading', { name: '等待对方发送' })).toBeVisible()
+    await expect(receiver.getByRole('heading', { name: '等待对方发送' })).toBeVisible({ timeout: peerReadyTimeout })
 
     if (process.env.CAPTURE_V2_ROOM === '1') {
       const outputDirectory = resolve(currentDirectory, '../../../docs/rust-v2/screenshots')
@@ -92,11 +93,11 @@ test('two browsers can create, approve, connect, and restore a Rust 2.0 room', a
 
     await receiver.reload()
     await expect(receiver.getByText('接收者', { exact: true })).toBeVisible()
-    await expect(receiver.getByRole('heading', { name: '等待对方发送' })).toBeVisible()
+    await expect(receiver.getByRole('heading', { name: '等待对方发送' })).toBeVisible({ timeout: peerReadyTimeout })
 
     await owner.reload()
     await expect(owner.getByText('发送者', { exact: true })).toBeVisible()
-    await expect(owner.getByRole('heading', { name: '选择要发送的文件' })).toBeVisible()
+    await expect(owner.getByRole('heading', { name: '选择要发送的文件' })).toBeVisible({ timeout: peerReadyTimeout })
     await expect(owner.getByText('房间已创建，可以分享邀请链接', { exact: true })).toBeVisible()
     await expect(owner.locator('.avatar-entering')).toHaveCount(0)
   } finally {

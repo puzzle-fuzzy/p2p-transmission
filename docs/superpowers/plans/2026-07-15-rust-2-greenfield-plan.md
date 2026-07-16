@@ -1,7 +1,9 @@
 # P2P Transmission 2.0：全 Rust Greenfield 实施计划
 
-> 状态：执行中（M0、M2、M3、M4、M5、M6 完成；M7 已完成多接收者、5 GiB 流式写盘、同页面与双方刷新恢复、有界重连和最多 10 文件批次，其他体验项继续；M1 在 Chromium/Firefox 条件通过，真实 Safari 与 TURN relay 待补）<br>
-> 工作分支：`rust-dev`<br>
+> 当前状态（2026-07-16）：Rust 2.0.1 已发布并完成生产验收；当前工作重点是发布后稳定性、E2E 门禁和后续性能/平台优化。M7 主线能力、多接收者、5 GiB 流式写盘、同页面与双方刷新恢复、有界重连和最多 10 文件批次已完成，文本/错误矩阵等体验收尾仍可继续。<br>
+> 发布质量与生产记录：[Rust 2.0 发布手册](../../rust-v2/RELEASE.md)、[发布质量审计](../../rust-v2/QUALITY-AUDIT.md)<br>
+> 工作分支：`main`<br>
+> 说明：下方里程碑表保留 2026-07-15 规划时的 gate 快照；当前发布完成情况以发布手册和质量审计为准。<br>
 > 设计依据：[全 Rust Greenfield 重构设计](../specs/2026-07-15-rust-2-greenfield-design.md)
 > 验证记录：[Dioxus + Axum + WebRTC Spike 结果](../specs/2026-07-15-dioxus-webrtc-spike-results.md)
 > M2 记录：[Rust 2.0 工程基线结果](../specs/2026-07-15-rust-v2-m2-engineering-baseline.md)
