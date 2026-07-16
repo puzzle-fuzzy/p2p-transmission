@@ -69,6 +69,7 @@ jobs:
       - run: cargo install dioxus-cli --version 0.7.6 --locked
       - run: cargo clippy --locked -p p2p-browser-platform -p p2p-web --target wasm32-unknown-unknown -- -D warnings
       - run: python -X utf8 scripts/dev.py --profile release --build-only
+      - run: python -X utf8 scripts/check_web_bundle.py
 
   e2e:
     runs-on: ubuntu-latest

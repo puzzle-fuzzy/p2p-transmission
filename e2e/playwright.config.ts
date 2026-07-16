@@ -8,6 +8,7 @@ const repositoryRoot = resolve(currentDirectory, '..')
 export default defineConfig({
   testDir: '.',
   testMatch: [
+    'accessibility.spec.ts',
     'shell.spec.ts',
     'room.spec.ts',
     'transfer.spec.ts',

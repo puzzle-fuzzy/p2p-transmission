@@ -6,6 +6,8 @@
   --focus-ring: #bd9cff;
   --surface: #2d2d2d;
   --ink: rgba(255, 255, 255, 0.8);
+  --ink-strong: rgba(255, 248, 231, 0.9);
+  --ink-on-accent: rgba(255, 255, 255, 0.9);
   --ink-muted: rgba(255, 255, 255, 0.5);
   --ink-dim: rgba(255, 255, 255, 0.2);
   --border: rgba(255, 251, 235, 0.15);
@@ -67,7 +69,7 @@ summary {
 
 h1 {
   margin: 0;
-  color: rgba(255, 248, 231, 0.92);
+  color: var(--ink-strong);
   font-size: 1.12rem;
   font-weight: 400;
 }
@@ -97,7 +99,7 @@ h1 {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: transparent;
-  color: rgba(255, 248, 231, 0.9);
+  color: var(--ink-strong);
   font-family: ui-monospace, "Cascadia Mono", monospace;
   font-size: 1.15rem;
   letter-spacing: 0.42em;
@@ -107,7 +109,7 @@ h1 {
 }
 
 .room-code-input:hover {
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--surface-hover);
 }
 
 .room-code-input:focus {
@@ -139,7 +141,7 @@ h1 {
 .primary-button {
   border: 0;
   background: var(--accent);
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--ink-on-accent);
 }
 
 .primary-button:hover {
@@ -182,7 +184,7 @@ h1 {
 
 .privacy-copy {
   margin: 24px 0 0;
-  color: rgba(255, 248, 231, 0.62);
+  color: var(--ink-muted);
   font-size: 0.75rem;
   line-height: 1.7;
   text-align: center;
@@ -203,14 +205,14 @@ h1 {
 .about-details summary {
   color: var(--ink-muted);
   text-decoration: underline;
-  text-decoration-color: rgba(255, 248, 231, 0.3);
+  text-decoration-color: var(--ink-dim);
   text-underline-offset: 4px;
 }
 
 .footer-links a:hover,
 .about-details summary:hover {
   color: var(--ink);
-  text-decoration-color: rgba(255, 248, 231, 0.65);
+  text-decoration-color: var(--ink-muted);
 }
 
 .about-details {

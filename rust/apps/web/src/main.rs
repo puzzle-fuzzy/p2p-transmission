@@ -1264,7 +1264,7 @@ fn TransferPanel(
     } else {
         transfer_progress(&transfer)
     };
-    let progress_style = format!("width:{progress:.2}%");
+    let progress_style = format!("--progress-scale:{:.4}", progress.clamp(0.0, 100.0) / 100.0);
     let incoming_request = transfers_by_peer.iter().find_map(|(peer_id, state)| {
         if let TransferState::Incoming {
             transfer_id,

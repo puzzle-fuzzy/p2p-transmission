@@ -7,12 +7,18 @@
   --focus-ring: #bd9cff;
   --surface: #2d2d2d;
   --surface-elevated: #373737;
+  --surface-active: rgba(255, 255, 255, 0.1);
   --ink: rgba(255, 255, 255, 0.8);
+  --ink-strong: rgba(255, 248, 231, 0.9);
+  --ink-on-accent: rgba(255, 255, 255, 0.9);
   --ink-muted: rgba(255, 255, 255, 0.5);
   --ink-dim: rgba(255, 255, 255, 0.2);
   --border: rgba(255, 251, 235, 0.15);
   --border-subtle: rgba(255, 251, 235, 0.08);
   --surface-hover: rgba(255, 255, 255, 0.05);
+  --accent-surface: rgba(94, 17, 209, 0.15);
+  --scrim: rgba(0, 0, 0, 0.6);
+  --qr-surface: rgba(255, 248, 231, 0.94);
 }
 
 * {
@@ -87,7 +93,7 @@ p {
 
 h1 {
   margin: 0;
-  color: rgba(255, 248, 231, 0.92);
+  color: var(--ink-strong);
   font-size: 1.12rem;
   font-weight: 400;
 }
@@ -107,7 +113,7 @@ h1 {
   padding: 10px 14px;
   border-radius: 8px;
   background: var(--surface-hover);
-  color: rgba(255, 248, 231, 0.7);
+  color: var(--ink);
   gap: 10px;
   font-size: 0.75rem;
   line-height: 1.5;
@@ -150,14 +156,14 @@ h1 {
   border: 1px solid var(--border);
   border-radius: 9px;
   background: transparent;
-  color: rgba(255, 248, 231, 0.86);
+  color: var(--ink-strong);
   font-family: ui-monospace, "Cascadia Mono", monospace;
   font-size: 1.15rem;
   transition: border-color 160ms ease, background-color 160ms ease;
 }
 
 .room-code span.filled {
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--surface-hover);
 }
 
 .room-code-control:focus-within .room-code span {
@@ -172,7 +178,7 @@ h1 {
 .form-message p,
 .inline-error {
   margin: 0;
-  color: rgba(255, 248, 231, 0.7);
+  color: var(--ink);
   font-size: 0.75rem;
   line-height: 1.6;
 }
@@ -193,7 +199,7 @@ h1 {
   width: 100%;
   border: 0;
   background: var(--accent);
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--ink-on-accent);
 }
 
 .primary-button:hover:not(:disabled) {
@@ -248,7 +254,7 @@ h1 {
 
 .privacy-copy {
   margin: 24px 0 0;
-  color: rgba(255, 248, 231, 0.62);
+  color: var(--ink-muted);
   font-size: 0.75rem;
   line-height: 1.7;
   text-align: center;
@@ -272,13 +278,13 @@ h1 {
   color: var(--ink-muted);
   font-size: 0.75rem;
   text-decoration: underline;
-  text-decoration-color: rgba(255, 248, 231, 0.3);
+  text-decoration-color: var(--ink-dim);
   text-underline-offset: 4px;
 }
 
 .text-link:hover {
-  color: rgba(255, 248, 231, 0.8);
-  text-decoration-color: rgba(255, 248, 231, 0.65);
+  color: var(--ink);
+  text-decoration-color: var(--ink-muted);
 }
 
 .booting-view {
@@ -473,7 +479,7 @@ h1 {
 
 .room-role strong {
   margin-top: 2px;
-  color: rgba(255, 248, 231, 0.62);
+  color: var(--ink-muted);
   font-weight: 400;
 }
 
@@ -525,7 +531,7 @@ h1 {
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: rgba(255, 248, 231, 0.78);
+  background: var(--ink);
   animation: peer-dot 1.2s ease-in-out infinite;
 }
 
@@ -584,7 +590,7 @@ h1 {
 
 .transfer-placeholder h1,
 .transfer-panel h1 {
-  color: rgba(255, 248, 231, 0.7);
+  color: var(--ink);
   font-size: 0.88rem;
 }
 
@@ -674,7 +680,7 @@ h1 {
 
 .transfer-file-meta strong {
   overflow: hidden;
-  color: rgba(255, 248, 231, 0.78);
+  color: var(--ink);
   font-size: 0.8rem;
   font-weight: 400;
   text-overflow: ellipsis;
@@ -700,14 +706,17 @@ h1 {
   height: 3px;
   margin-top: 20px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface-active);
 }
 
 .transfer-progress span {
   display: block;
+  width: 100%;
   height: 100%;
   background: var(--accent-visible);
-  transition: width 160ms linear;
+  transform: scaleX(var(--progress-scale, 0));
+  transform-origin: left center;
+  transition: transform 160ms linear;
 }
 
 .transfer-progress-copy {
@@ -743,7 +752,7 @@ h1 {
 
 .receiver-transfer-row strong {
   flex: 0 0 auto;
-  color: rgba(255, 248, 231, 0.72);
+  color: var(--ink);
   font-weight: 400;
 }
 
@@ -779,7 +788,7 @@ h1 {
 .join-request-dialog::backdrop,
 .transfer-request-dialog::backdrop,
 .recipient-picker-dialog::backdrop {
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--scrim);
   animation: scrim-enter 160ms ease-out both;
 }
 
@@ -812,7 +821,7 @@ h1 {
 .transfer-request-dialog h2,
 .recipient-picker-dialog h2 {
   margin: 0;
-  color: rgba(255, 248, 231, 0.9);
+  color: var(--ink-strong);
   font-size: 0.9rem;
   font-weight: 400;
 }
@@ -871,9 +880,9 @@ h1 {
   min-height: 56px;
   align-items: center;
   padding: 4px 10px;
-  border: 1px solid rgba(255, 251, 235, 0.1);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  color: rgba(255, 248, 231, 0.72);
+  color: var(--ink);
   gap: 10px;
   font-size: 0.78rem;
   transition: background-color 160ms ease, border-color 160ms ease;
@@ -885,7 +894,7 @@ h1 {
 
 .recipient-option.selected {
   border-color: var(--accent-visible);
-  background: rgba(94, 17, 209, 0.12);
+  background: var(--accent-surface);
 }
 
 .recipient-option input {
@@ -910,7 +919,7 @@ h1 {
 
 .recipient-picker-error {
   margin: 12px 0 0;
-  color: rgba(255, 248, 231, 0.72);
+  color: var(--ink);
   font-size: 0.75rem;
 }
 
@@ -918,7 +927,7 @@ h1 {
 .about-dialog dl,
 .share-dialog > p,
 .transfer-request-dialog > p {
-  color: rgba(255, 248, 231, 0.68);
+  color: var(--ink-muted);
   font-size: 0.8rem;
   line-height: 1.7;
 }
@@ -984,7 +993,7 @@ h1 {
 .request-summary p,
 .request-summary span {
   margin: 0;
-  color: rgba(255, 248, 231, 0.68);
+  color: var(--ink-muted);
   font-size: 0.78rem;
   line-height: 1.6;
 }
@@ -1028,7 +1037,7 @@ h1 {
 
 .request-file-summary strong {
   overflow: hidden;
-  color: rgba(255, 248, 231, 0.82);
+  color: var(--ink);
   font-size: 0.8rem;
   font-weight: 400;
   text-overflow: ellipsis;
@@ -1043,7 +1052,7 @@ h1 {
 
 .stream-storage-error {
   margin: 12px 0 0;
-  color: rgba(255, 248, 231, 0.72);
+  color: var(--ink);
   font-size: 0.75rem;
   line-height: 1.6;
 }
@@ -1082,14 +1091,14 @@ h1 {
   place-items: center;
   margin: 18px auto 0;
   border-radius: 12px;
-  background: rgba(255, 248, 231, 0.94);
+  background: var(--qr-surface);
 }
 
 .share-qr-code {
   display: block;
   width: 180px;
   height: 180px;
-  color: #2d2d2d;
+  color: var(--surface);
   shape-rendering: crispEdges;
 }
 

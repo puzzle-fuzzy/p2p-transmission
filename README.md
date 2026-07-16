@@ -82,9 +82,9 @@ python -X utf8 -m unittest discover -s deploy/scripts -p "test_*.py"
 git diff --check
 ```
 
-验证覆盖 native/WASM 格式与 Clippy、Rust 单元/集成测试、release 构建、Chromium/Firefox/
-WebKit 浏览器矩阵、真实 DataChannel 传输以及部署脚本。`Cargo.lock` 还会在 CI 中通过 RustSec
-审计，已知漏洞或警告会阻止发布。
+验证覆盖 native/WASM 格式与 Clippy、Rust 单元/集成测试、release 构建、浏览器入口 gzip
+体积预算、Chromium/Firefox/WebKit 浏览器矩阵、无障碍门禁、真实 DataChannel 传输以及部署
+脚本。`Cargo.lock` 还会在 CI 中通过 RustSec 审计，已知漏洞、警告或前端体积回退会阻止发布。
 
 ## 生产部署
 

@@ -64,6 +64,7 @@ def main() -> None:
     ])
     run(["cargo", "build", "--locked", "-p", "p2p-server", "--release"])
     run(["python", "-X", "utf8", "scripts/dev.py", "--profile", "release", "--build-only"])
+    run(["python", "-X", "utf8", "scripts/check_web_bundle.py"])
     run(["python", "-X", "utf8", "scripts/check-doc-links.py"])
     run(["git", "diff", "--check"])
 
