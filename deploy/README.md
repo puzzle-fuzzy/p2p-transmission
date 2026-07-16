@@ -44,20 +44,19 @@ curl -fsS http://127.0.0.1:3410/health/ready
 - 文本、小文件和断线恢复流程可以完成。
 - 真实公网网络下验证 TURN relay；本机 health 不能证明 TURN 可用。
 
-## 3. 自动发布和首次迁移
+## 3. 自动发布
 
 推送 `main` 后，Production workflow 会依次执行 Rust、WASM、部署脚本单测、浏览器 E2E、容器构建和公网验收。只有全部通过后才会进入 production environment，通过受限 SSH 用户运行服务器上的部署脚本。
 
-首次从旧 Rust 运行时切换时，部署脚本会：
+部署脚本会：
 
-1. 识别服务器上旧 Compose 运行时。
-2. 复用旧环境中的 TURN、能力密钥、限流参数和 ICE 配置。
-3. 使用 SQLite 在线 backup 迁移数据库，并通过 `PRAGMA quick_check` 校验。
-4. 迁移最近的数据库备份。
-5. 校验新镜像和 Compose 配置后停止旧容器，释放 3410 端口。
-6. 启动新容器，检查本机 ready，再切换 Nginx。
+1. 校验源码归档与 GitHub Runner 构建的不可变镜像。
+2. 复用当前生产环境中的 TURN、能力密钥、限流参数和 ICE 配置。
+3. 使用 SQLite 在线 backup 创建并校验发布前备份。
+4. 保留上一 Rust 镜像并校验 Compose 配置。
+5. 启动新容器，检查本机 ready，再原子更新 Nginx。
 
-如果启动、ready 或 Nginx 检查失败，脚本会恢复发布前的环境文件、数据库备份、Nginx 配置和旧运行时。旧数据目录会暂时保留，确认新版本稳定后再按保留策略清理。
+如果启动、ready 或 Nginx 检查失败，脚本会恢复发布前的环境文件、数据库备份、Nginx 配置和上一 Rust 镜像。
 
 ## 4. 备份、更新和回滚
 

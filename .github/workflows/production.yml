@@ -168,21 +168,6 @@ jobs:
           GITHUB_SHA: ${{ github.sha }}
         run: git archive --format=tar.gz --output="p2p-transmission-$GITHUB_SHA.tar.gz" "$GITHUB_SHA"
 
-      - name: Bootstrap the server deployment script
-        env:
-          DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
-          DEPLOY_USER: ${{ secrets.TENCENT_DEPLOY_USER }}
-          GITHUB_SHA: ${{ github.sha }}
-          RELEASE_VERSION: ${{ needs.container.outputs.release-version }}
-        run: |
-          SOURCE_ARCHIVE="p2p-transmission-$GITHUB_SHA.tar.gz"
-          IMAGE_ARCHIVE="p2p-transmission-image-$GITHUB_SHA.tar.gz"
-          scp "$SOURCE_ARCHIVE" "$IMAGE_ARCHIVE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/"
-          # Release values are locally validated identifiers.
-          # shellcheck disable=SC2029
-          ssh "$DEPLOY_USER@$DEPLOY_HOST" \
-            "sudo /usr/local/sbin/p2p-transmission-deploy --archive /tmp/$SOURCE_ARCHIVE --version $RELEASE_VERSION"
-
       - name: Deploy the Rust image and switch production
         env:
           DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
@@ -192,7 +177,7 @@ jobs:
         run: |
           SOURCE_ARCHIVE="p2p-transmission-$GITHUB_SHA.tar.gz"
           IMAGE_ARCHIVE="p2p-transmission-image-$GITHUB_SHA.tar.gz"
-          scp "$SOURCE_ARCHIVE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/$SOURCE_ARCHIVE"
+          scp "$SOURCE_ARCHIVE" "$IMAGE_ARCHIVE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/"
           # Release values are locally validated identifiers.
           # shellcheck disable=SC2029
           ssh "$DEPLOY_USER@$DEPLOY_HOST" \

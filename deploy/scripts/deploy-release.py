@@ -65,58 +65,6 @@ def compose_production(*arguments: str) -> list[str]:
     ]
 
 
-def relative_app_path(path: Path) -> str:
-    return str(path.resolve().relative_to(APP_DIR.resolve()))
-
-
-def find_legacy_production_root() -> Optional[Path]:
-    """Find the previous Rust deployment left on the host during migration.
-
-    The old directory is discovered from its Compose shape instead of being
-    part of the current project naming. This keeps the compatibility path
-    isolated while still allowing a one-time in-place migration.
-    """
-
-    deploy_root = APP_DIR / 'deploy'
-    if not deploy_root.is_dir():
-        return None
-
-    for candidate in sorted(deploy_root.iterdir()):
-        if not candidate.is_dir() or candidate.name == 'production':
-            continue
-        compose_file = candidate / 'compose.yml'
-        if not compose_file.is_file():
-            continue
-        try:
-            compose_text = compose_file.read_text(encoding='utf-8')
-        except OSError:
-            continue
-        if 'P2P_DATABASE_PATH' in compose_text and ':3410' in compose_text:
-            return candidate
-    return None
-
-
-def legacy_production_project(root: Path) -> str:
-    compose_file = root / 'compose.yml'
-    compose_text = compose_file.read_text(encoding='utf-8')
-    match = re.search(r'^name:\s*([A-Za-z0-9][A-Za-z0-9_.-]*)\s*$', compose_text, re.MULTILINE)
-    return match.group(1) if match else root.name
-
-
-def compose_legacy_production(root: Path, *arguments: str) -> list[str]:
-    command = [
-        'docker',
-        'compose',
-        '--project-name',
-        legacy_production_project(root),
-    ]
-    env_file = root / '.env'
-    if env_file.is_file():
-        command.extend(['--env-file', relative_app_path(env_file)])
-    command.extend(['-f', relative_app_path(root / 'compose.yml'), *arguments])
-    return command
-
-
 def image_exists(image: str) -> bool:
     return subprocess.run(
         ['docker', 'image', 'inspect', image],
@@ -226,57 +174,6 @@ def copy_sqlite_database(source: Path, destination: Path, *, overwrite: bool = F
         raise SystemExit(f'SQLite migration failed from {source} to {destination}: {error}') from error
 
 
-def migrate_legacy_database(root: Path) -> bool:
-    source = root / 'data/control.sqlite3'
-    if PRODUCTION_DATABASE.exists():
-        return False
-    if not source.exists():
-        return False
-    copy_sqlite_database(source, PRODUCTION_DATABASE)
-    print(f'production database migrated from {source}', flush=True)
-    return True
-
-
-def migrate_legacy_backups(root: Path) -> int:
-    source_root = root / 'backups'
-    if not source_root.is_dir():
-        return 0
-    if PRODUCTION_BACKUPS.exists() and any(PRODUCTION_BACKUPS.iterdir()):
-        return 0
-
-    sources = sorted(source_root.glob('control-*.sqlite3'), reverse=True)
-    if not sources:
-        return 0
-
-    PRODUCTION_BACKUPS.mkdir(parents=True, exist_ok=True)
-    os.chmod(PRODUCTION_BACKUPS, 0o700)
-    migrated = 0
-    for source in sources[:DATABASE_BACKUP_LIMIT]:
-        if source.is_symlink() or not source.is_file() or source.resolve().parent != source_root.resolve():
-            raise SystemExit(f'unsafe legacy database backup: {source}')
-        destination = PRODUCTION_BACKUPS / source.name
-        temporary = destination.with_name(f'.{destination.name}.migration.tmp')
-        shutil.copy2(source, temporary)
-        try:
-            verify_sqlite_database(temporary)
-            os.chmod(temporary, 0o600)
-            os.replace(temporary, destination)
-        except BaseException:
-            temporary.unlink(missing_ok=True)
-            raise
-        migrated += 1
-
-    print(f'migrated {migrated} verified production database backups', flush=True)
-    return migrated
-
-
-def migrate_legacy_production_state(root: Optional[Path]) -> None:
-    if root is None:
-        return
-    migrate_legacy_database(root)
-    migrate_legacy_backups(root)
-
-
 def build_production_env(
     existing: dict[str, str],
     version: str,
@@ -331,14 +228,6 @@ def prepare_production_environment(version: str) -> Optional[bytes]:
     previous = PRODUCTION_ENV.read_bytes() if PRODUCTION_ENV.is_file() else None
     existing = parse_env_text(previous.decode('utf-8')) if previous is not None else {}
 
-    legacy_root = find_legacy_production_root()
-    if legacy_root is not None:
-        legacy_rust_env = legacy_root / '.env'
-        if legacy_rust_env.is_file():
-            for key, value in parse_env_text(legacy_rust_env.read_text(encoding='utf-8')).items():
-                if key.startswith('P2P_'):
-                    existing.setdefault(key, value)
-
     if not existing:
         raise SystemExit('production environment is missing on the host')
 
@@ -367,41 +256,6 @@ def restore_production_environment(previous: Optional[bytes]) -> None:
     temporary.write_bytes(previous)
     os.chmod(temporary, 0o600)
     os.replace(temporary, PRODUCTION_ENV)
-
-
-def docker_container_ids(project: str, *, running_only: bool) -> list[str]:
-    command = ['docker', 'ps']
-    if not running_only:
-        command.append('-a')
-    command.extend([
-        '-q',
-        '--filter',
-        f'label=com.docker.compose.project={project}',
-        '--filter',
-        'label=com.docker.compose.service=app',
-    ])
-    result = subprocess.run(command, capture_output=True, text=True)
-    if result.returncode != 0:
-        return []
-    return [container_id for container_id in result.stdout.splitlines() if container_id]
-
-
-def stop_legacy_production_runtime(root: Path) -> None:
-    project = legacy_production_project(root)
-    containers = docker_container_ids(project, running_only=True)
-    if containers:
-        run(['docker', 'stop', *containers])
-        print(f'stopped legacy production runtime {project}', flush=True)
-
-
-def restore_legacy_production_runtime(root: Optional[Path]) -> bool:
-    if root is None:
-        return False
-    project = legacy_production_project(root)
-    containers = docker_container_ids(project, running_only=False)
-    if containers:
-        return best_effort(['docker', 'start', *containers])
-    return best_effort(compose_legacy_production(root, 'up', '-d', '--no-build', '--no-deps', 'app'))
 
 
 def restore_production_database(backup: Optional[Path]) -> bool:
@@ -519,7 +373,6 @@ def rollback_runtime(
     previous_env: Optional[bytes],
     previous_tag: Optional[str],
     database_backup: Optional[Path],
-    legacy_root: Optional[Path],
 ) -> None:
     best_effort(compose_production('stop', 'app'))
     best_effort(compose_production('rm', '--force', 'app'))
@@ -528,8 +381,6 @@ def rollback_runtime(
     restore_production_environment(previous_env)
     if previous_tag and image_exists(f'p2p-transmission:{previous_tag}'):
         best_effort(compose_production('up', '-d', '--no-build', '--no-deps', 'app'))
-    elif restore_legacy_production_runtime(legacy_root):
-        return
     else:
         print('no previous production runtime is available for rollback', flush=True)
 
@@ -539,12 +390,10 @@ def deploy_production(image_archive: Path, version: str) -> None:
         parse_env_text(PRODUCTION_ENV.read_text(encoding='utf-8')) if PRODUCTION_ENV.is_file() else {}
     )
     previous_tag = previous_env_values.get('P2P_IMAGE_TAG')
-    legacy_root = find_legacy_production_root()
     previous_env: Optional[bytes] = None
     database_backup: Optional[Path] = None
     expected_image = f'p2p-transmission:{version}'
     try:
-        migrate_legacy_production_state(legacy_root)
         previous_env = prepare_production_environment(version)
         preserve_rollback_assets(previous_tag)
         snapshot_nginx()
@@ -553,8 +402,6 @@ def deploy_production(image_archive: Path, version: str) -> None:
         if not image_exists(expected_image):
             raise SystemExit(f'image archive did not contain {expected_image}')
         run(compose_production('config', '--quiet'))
-        if legacy_root is not None:
-            stop_legacy_production_runtime(legacy_root)
         run(compose_production('up', '-d', '--no-build', '--no-deps', 'app'))
         wait_for_production_ready()
         install_production_nginx()
@@ -562,32 +409,28 @@ def deploy_production(image_archive: Path, version: str) -> None:
         print(f'production now runs {expected_image}', flush=True)
     except BaseException:
         print('production release failed; restoring the previous production runtime', flush=True)
-        rollback_runtime(previous_env, previous_tag, database_backup, legacy_root)
+        rollback_runtime(previous_env, previous_tag, database_backup)
         raise
 
 
-def deploy(archive: Path, version: str, image_archive: Optional[Path]) -> None:
+def deploy(archive: Path, version: str, image_archive: Path) -> None:
     if not VERSION_RE.fullmatch(version):
         raise SystemExit('release version contains unsupported characters')
     archive = validate_source_archive(archive)
-    image = validate_image_archive(image_archive) if image_archive is not None else None
+    image = validate_image_archive(image_archive)
     try:
         extract_archive(archive)
-        if image is None:
-            print('deployment source updated; runtime was not changed', flush=True)
-            return
         deploy_production(image, version)
     finally:
         archive.unlink(missing_ok=True)
-        if image is not None:
-            image.unlink(missing_ok=True)
+        image.unlink(missing_ok=True)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument('--archive', required=True, type=Path)
     parser.add_argument('--version', required=True)
-    parser.add_argument('--image-archive', type=Path)
+    parser.add_argument('--image-archive', required=True, type=Path)
     args = parser.parse_args()
     deploy(args.archive, args.version, args.image_archive)
     return 0
