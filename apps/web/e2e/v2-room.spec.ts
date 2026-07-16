@@ -22,12 +22,21 @@ test('two browsers can create, approve, connect, and restore a Rust 2.0 room', a
     await expect(roomCodeButton).toBeVisible()
     const roomCode = (await roomCodeButton.textContent())?.trim() ?? ''
     expect(roomCode).toMatch(/^[A-Z2-9]{6}$/)
+    await expect(owner.getByText('房间已创建，可以分享邀请链接', { exact: true })).toBeVisible()
+
+    const ownerPeerFlow = owner.locator('.peer-flow')
+    await expect(ownerPeerFlow.locator('.avatar')).toHaveCount(1)
+    await expect(ownerPeerFlow.locator('.peer-track')).toHaveCount(0)
+    await expect(ownerPeerFlow.locator('.receiver-side')).toHaveCount(0)
+    await expect(owner.locator('.receiver-placeholder')).toHaveCount(0)
+    await expect(owner.locator('.leave-button .leave-icon')).toBeVisible()
 
     const shareButton = owner.getByRole('button', { name: '分享房间' })
     await shareButton.click()
     const shareDialog = owner.getByRole('dialog', { name: '分享房间' })
     await expect(shareDialog).toBeVisible()
     await expect(shareDialog).toContainText(roomCode)
+    await expect(shareDialog.getByRole('img', { name: `房间 ${roomCode} 的二维码` })).toBeVisible()
     await owner.keyboard.press('Escape')
     await expect(shareDialog).toBeHidden()
     await expect(shareButton).toBeFocused()
@@ -49,6 +58,8 @@ test('two browsers can create, approve, connect, and restore a Rust 2.0 room', a
     await requestDialog.getByRole('button', { name: '允许加入' }).click()
 
     await expect(receiver.getByText('接收者', { exact: true })).toBeVisible()
+    await expect(ownerPeerFlow.locator('.peer-track')).toBeVisible()
+    await expect(ownerPeerFlow.locator('.receiver-side .avatar')).toHaveCount(1)
     const enteringAvatar = owner.locator('.avatar-entering')
     await expect(enteringAvatar).toHaveCount(1)
     await expect.poll(async () => enteringAvatar.evaluate(element => (
@@ -86,6 +97,7 @@ test('two browsers can create, approve, connect, and restore a Rust 2.0 room', a
     await owner.reload()
     await expect(owner.getByText('发送者', { exact: true })).toBeVisible()
     await expect(owner.getByRole('heading', { name: '选择要发送的文件' })).toBeVisible()
+    await expect(owner.getByText('房间已创建，可以分享邀请链接', { exact: true })).toBeVisible()
     await expect(owner.locator('.avatar-entering')).toHaveCount(0)
   } finally {
     await receiverContext.close()

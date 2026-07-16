@@ -8,7 +8,7 @@ services:
       args:
         RUST_IMAGE: ${P2P_RUST_IMAGE:-rust:1.97.0-alpine}
         RUNTIME_IMAGE: ${P2P_RUNTIME_IMAGE:-alpine:3.23}
-    image: p2p-transmission-v2:${P2P_IMAGE_TAG:-2.0.0}
+    image: p2p-transmission-v2:${P2P_IMAGE_TAG:-2.0.1}
     restart: unless-stopped
     environment:
       P2P_ADDR: 0.0.0.0:3410

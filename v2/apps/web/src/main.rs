@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Write as _,
+};
 
 use dioxus::prelude::*;
 use p2p_browser_platform::{
@@ -28,6 +31,33 @@ const RTC_NEGOTIATION_TIMEOUT_MS: u32 = 3_000;
 const RTC_PASSIVE_RECOVERY_TIMEOUT_MS: u32 = 30_000;
 const RTC_RETRY_DELAYS_MS: [u32; 4] = [500, 1_000, 2_000, 4_000];
 const BACKGROUND_CONTROL_RECOVERY_MS: u64 = 15_000;
+const QR_QUIET_ZONE_MODULES: usize = 4;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct InviteQrCode {
+    view_box: String,
+    path: String,
+}
+
+fn invite_qr_code(url: &str) -> Option<InviteQrCode> {
+    let code = qrcode::QrCode::new(url.as_bytes()).ok()?;
+    let width = code.width();
+    let mut path = String::new();
+
+    for (index, color) in code.into_colors().into_iter().enumerate() {
+        if color == qrcode::Color::Dark {
+            let x = index % width + QR_QUIET_ZONE_MODULES;
+            let y = index / width + QR_QUIET_ZONE_MODULES;
+            write!(&mut path, "M{x} {y}h1v1h-1z").ok()?;
+        }
+    }
+
+    let size = width + QR_QUIET_ZONE_MODULES * 2;
+    Some(InviteQrCode {
+        view_box: format!("0 0 {size} {size}"),
+        path,
+    })
+}
 
 fn main() {
     console_error_panic_hook::set_once();
@@ -626,12 +656,18 @@ async fn restore_room(
         };
         let revision = snapshot.revision;
         let room_code = snapshot.room_code.clone();
-        model.write().screen = Screen::Room {
-            role,
-            snapshot,
-            invite,
-            invite_request_id: stored.invite_request_id.clone(),
-        };
+        {
+            let mut state = model.write();
+            state.screen = Screen::Room {
+                role,
+                snapshot,
+                invite,
+                invite_request_id: stored.invite_request_id.clone(),
+            };
+            if role == RoomRole::Owner {
+                state.notice = Some("房间已创建，可以分享邀请链接".to_owned());
+            }
+        }
         let peer_id = stored.peer_id.unwrap_or_else(|| new_client_id("peer"));
         persist_room_session(&StoredRoomSession {
             room_code: room_code.clone(),
@@ -1048,7 +1084,27 @@ fn RoomView(
                         title: "退出房间",
                         disabled: state.busy,
                         onclick: move |_| submit_leave(model, realtime_target),
-                        "退出"
+                        svg {
+                            class: "leave-icon",
+                            view_box: "0 0 24 24",
+                            role: "presentation",
+                            path {
+                                d: "M13 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4",
+                                fill: "none",
+                                stroke: "currentColor",
+                                stroke_width: "1.75",
+                                stroke_linecap: "round",
+                                stroke_linejoin: "round",
+                            }
+                            path {
+                                d: "M11 8l-4 4 4 4M7 12h9",
+                                fill: "none",
+                                stroke: "currentColor",
+                                stroke_width: "1.75",
+                                stroke_linecap: "round",
+                                stroke_linejoin: "round",
+                            }
+                        }
                     }
                 }
             }
@@ -1056,7 +1112,7 @@ fn RoomView(
                 sender,
                 receivers: receivers.clone(),
                 entering_receivers: state.entering_receivers.clone(),
-                connected,
+                peer_connected: state.rtc == RtcPhase::Ready,
             }
             TransferPanel {
                 model,
@@ -2473,7 +2529,7 @@ fn PeerFlow(
     sender: Option<ParticipantSnapshot>,
     receivers: Vec<ParticipantSnapshot>,
     entering_receivers: Vec<String>,
-    connected: bool,
+    peer_connected: bool,
 ) -> Element {
     let accessible = if receivers.is_empty() {
         "暂无接收者，正在等待连接".to_owned()
@@ -2481,25 +2537,27 @@ fn PeerFlow(
         format!("{} 位接收者已连接", receivers.len())
     };
     rsx! {
-        div { class: "peer-flow", role: "status", aria_live: "polite", aria_label: "{accessible}",
+        div {
+            class: if receivers.is_empty() { "peer-flow peer-flow-solo" } else { "peer-flow" },
+            role: "status",
+            aria_live: "polite",
+            aria_label: "{accessible}",
             span { class: "peer-side sender-side", aria_hidden: "true",
                 if let Some(sender) = sender {
                     Avatar { seed: sender.session_id, label: sender.display_name, entering: false, highlighted: false }
                 }
             }
-            span { class: if connected && !receivers.is_empty() { "peer-track connected" } else { "peer-track waiting" }, aria_hidden: "true",
-                if connected && !receivers.is_empty() {
-                    span { class: "peer-line" }
-                } else {
-                    span { class: "peer-dot" }
-                    span { class: "peer-dot" }
-                    span { class: "peer-dot" }
+            if !receivers.is_empty() {
+                span { class: if peer_connected { "peer-track connected" } else { "peer-track waiting" }, aria_hidden: "true",
+                    if peer_connected {
+                        span { class: "peer-line" }
+                    } else {
+                        span { class: "peer-dot" }
+                        span { class: "peer-dot" }
+                        span { class: "peer-dot" }
+                    }
                 }
-            }
-            span { class: "peer-side receiver-side", aria_hidden: "true",
-                if receivers.is_empty() {
-                    span { class: "receiver-placeholder", "+" }
-                } else {
+                span { class: "peer-side receiver-side", aria_hidden: "true",
                     for (index, receiver) in receivers.iter().take(5).enumerate() {
                         Avatar {
                             seed: receiver.session_id.clone(),
@@ -2653,6 +2711,8 @@ fn ShareDialog(
     room_code: String,
     capability: String,
 ) -> Element {
+    let invite_url = build_invite_url(&room_code, &capability).ok();
+    let qr_code = invite_url.as_deref().and_then(invite_qr_code);
     use_effect(|| {
         let _ = show_modal_dialog("share-dialog");
     });
@@ -2667,7 +2727,22 @@ fn ShareDialog(
                 share_open.set(false);
             },
                 h2 { id: "share-title", "分享房间" }
-                p { "将邀请链接发给接收者，链接中的授权信息不会显示在页面正文中。" }
+                p { "使用手机扫描二维码，或复制邀请链接加入；房间码可用于核对。" }
+                if let Some(qr_code) = qr_code {
+                    div {
+                        class: "share-qr",
+                        role: "img",
+                        aria_label: "房间 {room_code} 的二维码",
+                        svg {
+                            class: "share-qr-code",
+                            view_box: "{qr_code.view_box}",
+                            role: "presentation",
+                            path { d: "{qr_code.path}", fill: "currentColor" }
+                        }
+                    }
+                } else {
+                    p { class: "share-qr-error", role: "status", "暂时无法生成二维码，请复制邀请链接。" }
+                }
                 div { class: "share-code",
                     span { "房间码" }
                     strong { "{room_code}" }
@@ -4018,6 +4093,18 @@ mod tests {
             mime: Some("application/octet-stream".to_owned()),
             size_bytes: 100,
         }
+    }
+
+    #[test]
+    fn invite_qr_code_is_deterministic_and_keeps_a_quiet_zone() {
+        let url = "https://p2p.yxswy.com/?room=ABC234&invite=test-capability";
+        let first = invite_qr_code(url).expect("invite URL should fit in a QR code");
+        let second = invite_qr_code(url).expect("same invite URL should remain encodable");
+
+        assert_eq!(first, second);
+        assert!(first.view_box.starts_with("0 0 "));
+        assert!(first.path.starts_with("M4 4"));
+        assert!(!first.path.contains('<'));
     }
 
     #[test]

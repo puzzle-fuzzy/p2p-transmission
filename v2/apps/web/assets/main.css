@@ -427,10 +427,25 @@ h1 {
   letter-spacing: 0.15em;
 }
 
-.icon-button,
-.leave-button {
+.icon-button {
   padding: 0 10px;
   font-size: 0.75rem;
+}
+
+.leave-button {
+  display: inline-flex;
+  width: 44px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.leave-icon {
+  display: block;
+  width: 18px;
+  height: 18px;
 }
 
 .room-code-copy:hover,
@@ -481,6 +496,11 @@ h1 {
   justify-content: flex-end;
 }
 
+.peer-flow-solo .sender-side {
+  width: auto;
+  justify-content: center;
+}
+
 .receiver-side {
   justify-content: flex-start;
 }
@@ -515,17 +535,6 @@ h1 {
 
 .peer-dot:nth-child(3) {
   animation-delay: 240ms;
-}
-
-.receiver-placeholder {
-  display: grid;
-  width: 48px;
-  height: 48px;
-  place-items: center;
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  color: var(--ink-muted);
-  font-size: 1rem;
 }
 
 .avatar {
@@ -1066,6 +1075,29 @@ h1 {
   letter-spacing: 0.15em;
 }
 
+.share-qr {
+  display: grid;
+  width: 196px;
+  height: 196px;
+  place-items: center;
+  margin: 18px auto 0;
+  border-radius: 12px;
+  background: rgba(255, 248, 231, 0.94);
+}
+
+.share-qr-code {
+  display: block;
+  width: 180px;
+  height: 180px;
+  color: #2d2d2d;
+  shape-rendering: crispEdges;
+}
+
+.share-qr-error {
+  margin: 18px 0 0;
+  text-align: center;
+}
+
 @keyframes status-pulse {
   50% { opacity: 0.42; transform: scale(0.72); }
 }
@@ -1120,8 +1152,7 @@ h1 {
     padding-inline: 10px;
   }
 
-  .avatar,
-  .receiver-placeholder {
+  .avatar {
     width: 40px;
     height: 40px;
   }

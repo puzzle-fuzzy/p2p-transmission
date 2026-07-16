@@ -10,5 +10,6 @@ console_error_panic_hook.workspace = true
 dioxus.workspace = true
 p2p-browser-platform = { path = "../../crates/browser-platform" }
 p2p-protocol = { path = "../../crates/protocol" }
+qrcode.workspace = true
 serde.workspace = true
 serde_json.workspace = true
