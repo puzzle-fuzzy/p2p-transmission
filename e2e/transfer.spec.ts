@@ -16,18 +16,22 @@ const sha256File = async (path: string) => {
   return hash.digest('hex')
 }
 
+const useFileInputFallback = async (page: Page) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'showOpenFilePicker', {
+      configurable: true,
+      value: undefined,
+    })
+  })
+}
+
 const connectSingleReceiverRoom = async (
   owner: Page,
   receiver: Page,
   options: { persistentSource?: boolean } = {},
 ) => {
   if (!options.persistentSource) {
-    await owner.addInitScript(() => {
-      Object.defineProperty(window, 'showOpenFilePicker', {
-        configurable: true,
-        value: undefined,
-      })
-    })
+    await useFileInputFallback(owner)
   }
   await owner.goto('/app')
   await owner.getByRole('button', { name: '创建房间' }).click()
@@ -1388,6 +1392,7 @@ test('the sender can target one receiver and then send independently to both', a
   const owner = await ownerContext.newPage()
   const firstReceiver = await firstReceiverContext.newPage()
   const secondReceiver = await secondReceiverContext.newPage()
+  await useFileInputFallback(owner)
 
   try {
     await owner.goto('/app')
