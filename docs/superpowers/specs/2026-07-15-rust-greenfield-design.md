@@ -3,7 +3,7 @@
 > 状态：提案<br>
 > 工作分支：`rust-dev`<br>
 > 目标：保持页面视觉、交互体验和用户能力一致；不兼容 1.x 的代码、HTTP API、WebSocket 协议或数据库结构。<br>
-> 实施计划：[P2P Transmission 实施计划](../plans/2026-07-15-rust-2-greenfield-plan.md)
+> 实施计划：[P2P Transmission 实施计划](../plans/2026-07-15-rust-greenfield-plan.md)
 
 ## 1. 重新定义“迁移”
 

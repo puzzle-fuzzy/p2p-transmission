@@ -11,9 +11,9 @@ on:
       - "scripts/*.py"
       - "apps/web/e2e/*.spec.ts"
       - "apps/web/playwright.rust.config.ts"
+      - "apps/web/playwright.rust.stress.config.ts"
       - "deploy/production/**"
-      - "deploy/scripts/deploy-release.py"
-      - "deploy/scripts/test_deploy_release.py"
+      - "deploy/scripts/**"
       - ".github/workflows/production.yml"
   pull_request:
     paths:
@@ -24,7 +24,9 @@ on:
       - "scripts/*.py"
       - "apps/web/e2e/*.spec.ts"
       - "apps/web/playwright.rust.config.ts"
+      - "apps/web/playwright.rust.stress.config.ts"
       - "deploy/production/**"
+      - "deploy/scripts/**"
       - "docs/release/**"
       - ".github/workflows/production.yml"
 

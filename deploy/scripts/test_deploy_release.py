@@ -16,6 +16,33 @@ SPEC.loader.exec_module(deploy_release)
 
 
 class DeployReleaseTests(unittest.TestCase):
+    def test_discovers_previous_rust_compose_without_current_project_name(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            legacy_root = root / 'deploy' / 'legacy-runtime'
+            legacy_root.mkdir(parents=True)
+            (legacy_root / 'compose.yml').write_text(
+                'name: p2p-transmission-legacy\n'
+                'services:\n'
+                '  app:\n'
+                '    image: p2p-transmission-legacy:2.0.1\n'
+                '    environment:\n'
+                '      P2P_DATABASE_PATH: /app/data/control.sqlite3\n'
+                '    ports:\n'
+                '      - "127.0.0.1:3410:3410"\n',
+                encoding='utf-8',
+            )
+            original_app_dir = deploy_release.APP_DIR
+            deploy_release.APP_DIR = root
+            try:
+                self.assertEqual(deploy_release.find_legacy_production_root(), legacy_root)
+                self.assertEqual(
+                    deploy_release.legacy_production_project(legacy_root),
+                    'p2p-transmission-legacy',
+                )
+            finally:
+                deploy_release.APP_DIR = original_app_dir
+
     def test_parses_legacy_env_without_exposing_comments(self) -> None:
         values = deploy_release.parse_env_text(
             '# comment\nTURN_URLS=turn:example.test\nTURN_SHARED_SECRET="secret-value"\n'
@@ -93,6 +120,50 @@ class DeployReleaseTests(unittest.TestCase):
                 self.assertEqual(
                     len(list(deploy_release.PRODUCTION_BACKUPS.glob('control-*.sqlite3'))),
                     deploy_release.DATABASE_BACKUP_LIMIT,
+                )
+            finally:
+                (
+                    deploy_release.APP_DIR,
+                    deploy_release.PRODUCTION_DATABASE,
+                    deploy_release.PRODUCTION_BACKUPS,
+                ) = original_values
+
+    def test_migrates_database_and_verified_backups_from_previous_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            legacy_root = root / 'deploy' / 'legacy-runtime'
+            legacy_data = legacy_root / 'data'
+            legacy_backups = legacy_root / 'backups'
+            legacy_data.mkdir(parents=True)
+            legacy_backups.mkdir(parents=True)
+
+            with closing(sqlite3.connect(legacy_data / 'control.sqlite3')) as database:
+                database.execute('CREATE TABLE rooms (code TEXT PRIMARY KEY)')
+                database.execute('INSERT INTO rooms VALUES (?)', ('MIGRATED',))
+                database.commit()
+            with closing(sqlite3.connect(legacy_backups / 'control-20260716.sqlite3')) as database:
+                database.execute('CREATE TABLE backups (value TEXT)')
+                database.execute('INSERT INTO backups VALUES (?)', ('verified',))
+                database.commit()
+
+            original_values = (
+                deploy_release.APP_DIR,
+                deploy_release.PRODUCTION_DATABASE,
+                deploy_release.PRODUCTION_BACKUPS,
+            )
+            deploy_release.APP_DIR = root
+            deploy_release.PRODUCTION_DATABASE = root / 'deploy/production/data/control.sqlite3'
+            deploy_release.PRODUCTION_BACKUPS = root / 'deploy/production/backups'
+            try:
+                self.assertTrue(deploy_release.migrate_legacy_database(legacy_root))
+                with closing(sqlite3.connect(deploy_release.PRODUCTION_DATABASE)) as database:
+                    self.assertEqual(
+                        database.execute('SELECT code FROM rooms').fetchone(),
+                        ('MIGRATED',),
+                    )
+                self.assertEqual(deploy_release.migrate_legacy_backups(legacy_root), 1)
+                deploy_release.verify_sqlite_database(
+                    deploy_release.PRODUCTION_BACKUPS / 'control-20260716.sqlite3'
                 )
             finally:
                 (

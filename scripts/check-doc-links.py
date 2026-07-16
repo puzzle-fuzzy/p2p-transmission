@@ -9,13 +9,7 @@ from urllib.parse import unquote, urlsplit
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCUMENTS = (
-    Path("README.md"),
-    Path("docs/user-guide.md"),
-    Path("apps/web/README.md"),
-    Path("services/api/README.md"),
-    Path("deploy/README.md"),
-)
+IGNORED_DIRECTORIES = {".git", "node_modules", "target", "dist", "build"}
 FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
 INLINE_CODE_RE = re.compile(r"(`+)[^`\n]*\1")
 LINK_RE = re.compile(
@@ -48,6 +42,14 @@ def document_lines(text: str):
 def is_external(target: str) -> bool:
     parsed = urlsplit(target)
     return target.startswith(("#", "//")) or bool(parsed.scheme or parsed.netloc)
+
+
+def markdown_documents() -> list[Path]:
+    return sorted(
+        path.relative_to(ROOT)
+        for path in ROOT.rglob("*.md")
+        if not any(part in IGNORED_DIRECTORIES for part in path.parts)
+    )
 
 
 def check_document(path: Path) -> tuple[int, list[str]]:
@@ -91,7 +93,7 @@ def check_document(path: Path) -> tuple[int, list[str]]:
 def main() -> int:
     total_checked = 0
     issues: list[str] = []
-    for document in DOCUMENTS:
+    for document in markdown_documents():
         checked, document_issues = check_document(document)
         total_checked += checked
         issues.extend(document_issues)
