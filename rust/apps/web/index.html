@@ -9,33 +9,26 @@
       name="description"
       content="无需注册的临时点对点文本与文件传输工具"
     >
+    <link rel="manifest" href="/manifest.webmanifest">
     <title>{app_title}</title>
-    <style>
-      html,
-      body {
-        min-width: 320px;
-        min-height: 100%;
-        margin: 0;
-        background: #2d2d2d;
-        color: rgba(255, 255, 255, 0.5);
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-
-      .boot-fallback {
-        display: flex;
-        min-height: 100svh;
-        align-items: center;
-        justify-content: center;
-        box-sizing: border-box;
-        padding: 24px;
-        font-size: 0.78rem;
-      }
-    </style>
+    <link rel="stylesheet" href="/shell/landing.css">
+    <script src="/shell/app-shell.js" defer></script>
   </head>
   <body>
     <div id="main">
-      <main id="boot-fallback" class="boot-fallback" role="status" aria-live="polite">
-        正在启动安全传输…
+      <main id="boot-fallback" class="landing-shell" aria-busy="true">
+        <section class="landing-panel" aria-labelledby="boot-title">
+          <header>
+            <p class="eyebrow">P2P Transmission</p>
+            <h1 id="boot-title">正在准备安全传输</h1>
+            <p class="join-copy">正在初始化本地加密与点对点连接能力，请稍候。</p>
+          </header>
+          <p class="boot-progress" role="status" aria-live="polite">加载传输工作区…</p>
+          <noscript>
+            <p class="privacy-copy">传输工作区需要浏览器启用 JavaScript 和 WebAssembly。</p>
+            <p class="boot-actions"><a class="secondary-button" href="/">返回首页</a></p>
+          </noscript>
+        </section>
       </main>
     </div>
   </body>

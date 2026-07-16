@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the AppShell through the existing Playwright test toolchain."""
+"""Run the server-rendered landing page and Rust Web app through Playwright."""
 
 from __future__ import annotations
 
@@ -25,11 +25,7 @@ def main() -> None:
     command = [
         "bun",
         "run",
-        "--cwd",
-        "apps/web",
         "e2e",
-        "--config",
-        str(ROOT / "apps" / "web" / "playwright.rust.config.ts"),
     ]
     print(f"$ {' '.join(command)}", flush=True)
     subprocess.run(command, cwd=ROOT, env=environment, check=True)

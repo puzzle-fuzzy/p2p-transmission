@@ -41,6 +41,15 @@ def main() -> None:
     run(["cargo", "test", "--locked"])
     run([
         "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "p2p-browser-platform",
+        "-p",
+        "p2p-web",
+    ])
+    run([
+        "cargo",
         "clippy",
         "--locked",
         "-p",

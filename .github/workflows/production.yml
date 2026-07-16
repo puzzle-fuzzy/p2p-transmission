@@ -9,9 +9,11 @@ on:
       - "rust-toolchain.toml"
       - "rust/**"
       - "scripts/*.py"
-      - "apps/web/e2e/*.spec.ts"
-      - "apps/web/playwright.rust.config.ts"
-      - "apps/web/playwright.rust.stress.config.ts"
+      - "e2e/*.spec.ts"
+      - "e2e/playwright.config.ts"
+      - "e2e/playwright.stress.config.ts"
+      - "package.json"
+      - "bun.lock"
       - "deploy/production/**"
       - "deploy/scripts/**"
       - ".github/workflows/production.yml"
@@ -22,9 +24,11 @@ on:
       - "rust-toolchain.toml"
       - "rust/**"
       - "scripts/*.py"
-      - "apps/web/e2e/*.spec.ts"
-      - "apps/web/playwright.rust.config.ts"
-      - "apps/web/playwright.rust.stress.config.ts"
+      - "e2e/*.spec.ts"
+      - "e2e/playwright.config.ts"
+      - "e2e/playwright.stress.config.ts"
+      - "package.json"
+      - "bun.lock"
       - "deploy/production/**"
       - "deploy/scripts/**"
       - "docs/release/**"
@@ -49,6 +53,7 @@ jobs:
       - run: python -X utf8 -m unittest discover -s deploy/scripts -p "test_*.py"
       - run: cargo clippy --locked -p p2p-domain -p p2p-protocol -p p2p-transfer -p p2p-test-support -p p2p-server --all-targets -- -D warnings
       - run: cargo test --locked
+      - run: cargo test --locked -p p2p-browser-platform -p p2p-web
       - run: cargo build --locked -p p2p-server --release
 
   wasm:

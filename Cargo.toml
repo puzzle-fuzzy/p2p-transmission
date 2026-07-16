@@ -15,7 +15,6 @@ default-members = [
   "rust/crates/test-support",
   "rust/crates/transfer",
 ]
-exclude = ["spikes/dioxus-webrtc"]
 resolver = "2"
 
 [workspace.package]

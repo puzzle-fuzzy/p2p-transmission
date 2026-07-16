@@ -3,9 +3,13 @@
 P2P Transmission 是一个无需注册的临时点对点文本与文件传输工具。正式地址：
 [https://p2p.yxswy.com](https://p2p.yxswy.com)。
 
-当前生产版本以 Rust 全量重构：前端使用 Dioxus WebAssembly，服务端使用 Axum，
-浏览器之间通过 WebRTC DataChannel 传输正文。Axum 只处理临时会话、房间、加入审批、
-WebSocket 信令和短期 TURN 凭据，不接收或保存文本与文件正文。
+当前生产版本使用 Rust：Axum 直接渲染无需 WebAssembly 的原生 HTML 首页，用户创建、
+加入或恢复房间后才按需加载 Dioxus WebAssembly 应用。浏览器之间通过 WebRTC DataChannel
+传输正文；Axum 只处理临时会话、房间、加入审批、WebSocket 信令和短期 TURN 凭据，
+不接收或保存文本与文件正文。
+
+页面支持安装为 PWA，并缓存原生首页与传输工作区壳层；房间、信令和实际传输仍要求联网。
+浏览器支持时可使用系统分享邀请链接，并在收到文件请求或完成校验时显示可选系统通知。
 
 ## 快速使用
 
@@ -50,12 +54,12 @@ rust/crates/browser-platform  浏览器、WebRTC 与流式文件系统适配
 rust/crates/domain            房间与传输领域模型
 rust/crates/protocol          HTTP、信令和 DataChannel 协议
 rust/crates/transfer          分段、校验、背压与恢复状态机
-deploy/production                   生产容器与 Nginx 配置
-deploy/scripts              原子发布、SQLite 备份与回滚脚本
+e2e                           当前 Rust Web 的 Playwright 浏览器验收
+deploy/production             生产容器与 Nginx 配置
+deploy/scripts                原子发布、SQLite 备份与回滚脚本
 ```
 
-根目录下的 `apps/`、`services/`、`packages/` 和旧 `deploy/` 配置是 1.x Bun/React 实现，
-仅作为历史体验基线和回归参考；它们不是当前生产运行时。
+浏览器验收使用 Bun 安装 Playwright；Bun 不进入生产运行时或浏览器 bundle。
 
 ## 本地开发
 
@@ -109,4 +113,4 @@ WebKit 浏览器矩阵、真实 DataChannel 传输以及部署脚本。`Cargo.lo
 | 传输暂停或提示磁盘空间不足 | 释放足够空间、恢复文件权限后使用页面的继续操作；不要删除未完成目标文件。 |
 | 两端一直连接中 | 切换稳定网络重试；维护者检查 TURN 域名、证书、端口与 UDP relay 范围。 |
 
-设计与实现记录位于 [Rust 文档索引](docs/release/README.md)。
+当前视觉记录与发布资料位于 [发布文档索引](docs/release/README.md)。

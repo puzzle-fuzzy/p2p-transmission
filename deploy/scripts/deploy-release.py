@@ -33,17 +33,10 @@ PRODUCTION_DATABASE = PRODUCTION_DATA / 'control.sqlite3'
 PRODUCTION_BACKUPS = APP_DIR / 'deploy/production/backups'
 PRODUCTION_PROJECT = 'p2p-transmission-production'
 DATABASE_BACKUP_LIMIT = 10
-LEGACY_ENV = APP_DIR / 'deploy/.env'
 NGINX_SOURCE = APP_DIR / 'deploy/production/nginx/p2p.yxswy.com.conf'
 NGINX_TARGET = Path('/etc/nginx/conf.d/p2p.yxswy.com.conf')
 NGINX_PREVIOUS_BACKUP = Path('/etc/nginx/conf.d/p2p.yxswy.com.conf.previous')
 NGINX_ROLLBACK = Path('/tmp/p2p-transmission-nginx-rollback')
-
-LEGACY_IMAGES = {
-    'p2p-transmission-api:latest': 'p2p-transmission-api:pre-release',
-    'p2p-transmission-web:latest': 'p2p-transmission-web:pre-release',
-}
-
 
 def run(command: list[str], *, cwd: Path = APP_DIR) -> subprocess.CompletedProcess[str]:
     print('$', ' '.join(command), flush=True)
@@ -70,10 +63,6 @@ def compose_production(*arguments: str) -> list[str]:
         'deploy/production/compose.yml',
         *arguments,
     ]
-
-
-def compose_legacy(*arguments: str) -> list[str]:
-    return ['docker', 'compose', '-f', 'deploy/compose.yml', *arguments]
 
 
 def relative_app_path(path: Path) -> str:
@@ -290,7 +279,6 @@ def migrate_legacy_production_state(root: Optional[Path]) -> None:
 
 def build_production_env(
     existing: dict[str, str],
-    legacy: dict[str, str],
     version: str,
     *,
     capability_secret: Optional[str] = None,
@@ -298,20 +286,16 @@ def build_production_env(
     if not VERSION_RE.fullmatch(version):
         raise ValueError('release version is not a valid Docker tag')
 
-    turn_urls = existing.get('P2P_TURN_URLS') or legacy.get('TURN_URLS', '')
-    turn_secret = existing.get('P2P_TURN_SECRET') or legacy.get('TURN_SHARED_SECRET', '')
+    turn_urls = existing.get('P2P_TURN_URLS', '')
+    turn_secret = existing.get('P2P_TURN_SECRET', '')
     generated_capability = capability_secret or secrets.token_urlsafe(48)
     capability = existing.get('P2P_CAPABILITY_SECRET') or generated_capability
-    ice_urls = (
-        existing.get('P2P_ICE_URLS')
-        or legacy.get('VITE_STUN_URLS')
-        or 'stun:stun.l.google.com:19302'
-    )
+    ice_urls = existing.get('P2P_ICE_URLS') or 'stun:stun.l.google.com:19302'
 
     if not turn_urls:
-        raise ValueError('legacy TURN_URLS is missing')
+        raise ValueError('P2P_TURN_URLS is missing')
     if len(turn_secret) < 16:
-        raise ValueError('legacy TURN_SHARED_SECRET is missing or too short')
+        raise ValueError('P2P_TURN_SECRET is missing or too short')
     if len(capability) < 32:
         raise ValueError('P2P_CAPABILITY_SECRET is too short')
 
@@ -346,7 +330,6 @@ def format_env(values: dict[str, str]) -> str:
 def prepare_production_environment(version: str) -> Optional[bytes]:
     previous = PRODUCTION_ENV.read_bytes() if PRODUCTION_ENV.is_file() else None
     existing = parse_env_text(previous.decode('utf-8')) if previous is not None else {}
-    legacy = parse_env_text(LEGACY_ENV.read_text(encoding='utf-8')) if LEGACY_ENV.is_file() else {}
 
     legacy_root = find_legacy_production_root()
     if legacy_root is not None:
@@ -356,11 +339,11 @@ def prepare_production_environment(version: str) -> Optional[bytes]:
                 if key.startswith('P2P_'):
                     existing.setdefault(key, value)
 
-    if not existing and not legacy:
+    if not existing:
         raise SystemExit('production environment is missing on the host')
 
     try:
-        rendered = format_env(build_production_env(existing, legacy, version))
+        rendered = format_env(build_production_env(existing, version))
     except ValueError as error:
         raise SystemExit(str(error)) from error
 
@@ -434,9 +417,6 @@ def restore_production_database(backup: Optional[Path]) -> bool:
 
 
 def preserve_rollback_assets(previous_tag: Optional[str]) -> None:
-    for current, rollback in LEGACY_IMAGES.items():
-        if image_exists(current) and not image_exists(rollback):
-            run(['docker', 'image', 'tag', current, rollback])
     if previous_tag and image_exists(f'p2p-transmission:{previous_tag}'):
         run([
             'docker',
@@ -551,7 +531,7 @@ def rollback_runtime(
     elif restore_legacy_production_runtime(legacy_root):
         return
     else:
-        best_effort(compose_legacy('up', '-d', '--no-build', '--no-deps', 'api', 'web'))
+        print('no previous production runtime is available for rollback', flush=True)
 
 
 def deploy_production(image_archive: Path, version: str) -> None:
@@ -578,7 +558,6 @@ def deploy_production(image_archive: Path, version: str) -> None:
         run(compose_production('up', '-d', '--no-build', '--no-deps', 'app'))
         wait_for_production_ready()
         install_production_nginx()
-        run(compose_legacy('stop', 'api', 'web'))
         NGINX_ROLLBACK.unlink(missing_ok=True)
         print(f'production now runs {expected_image}', flush=True)
     except BaseException:

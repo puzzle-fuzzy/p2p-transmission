@@ -1,8 +1,5 @@
 node_modules
-dist
 target/
-.turbo
-*.tsbuildinfo
 __pycache__/
 *.py[cod]
 
@@ -21,8 +18,8 @@ deploy/production/backups/
 deploy/production/.nginx-rollback.conf
 deploy/**/*.sqlite
 deploy/**/*.sqlite-*
-apps/web/playwright-report/
-apps/web/test-results/
+playwright-report/
+test-results/
 
 # Local control-plane database
 /data/*.sqlite3

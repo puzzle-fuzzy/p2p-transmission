@@ -1,7 +1,7 @@
 # Reference only: Compose never mounts this file. Authentication is intentionally
 # incomplete so the checked-in example cannot be used as a live relay config.
 use-auth-secret
-# static-auth-secret=
+# static-auth-secret=<same value as P2P_TURN_SECRET>
 realm=turn.example.com
 external-ip=203.0.113.10
 listening-port=3478

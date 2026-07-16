@@ -202,11 +202,7 @@ def main() -> None:
     command = [
         "bun",
         "run",
-        "--cwd",
-        "apps/web",
-        "e2e",
-        "--config",
-        str(ROOT / "apps" / "web" / "playwright.rust.stress.config.ts"),
+        "e2e:stress",
     ]
     print(
         f"large-file stress: {args.size_gib} GiB, profile={args.profile}, "

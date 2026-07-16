@@ -43,19 +43,18 @@ class DeployReleaseTests(unittest.TestCase):
             finally:
                 deploy_release.APP_DIR = original_app_dir
 
-    def test_parses_legacy_env_without_exposing_comments(self) -> None:
+    def test_parses_env_without_exposing_comments(self) -> None:
         values = deploy_release.parse_env_text(
-            '# comment\nTURN_URLS=turn:example.test\nTURN_SHARED_SECRET="secret-value"\n'
+            '# comment\nP2P_TURN_URLS=turn:example.test\nP2P_TURN_SECRET="secret-value"\n'
         )
-        self.assertEqual(values['TURN_URLS'], 'turn:example.test')
-        self.assertEqual(values['TURN_SHARED_SECRET'], 'secret-value')
+        self.assertEqual(values['P2P_TURN_URLS'], 'turn:example.test')
+        self.assertEqual(values['P2P_TURN_SECRET'], 'secret-value')
 
-    def test_builds_production_env_from_legacy_turn_settings(self) -> None:
+    def test_builds_production_env_from_existing_turn_settings(self) -> None:
         values = deploy_release.build_production_env(
-            {},
             {
-                'TURN_URLS': 'turn:turn.p2p.yxswy.com:3478?transport=udp',
-                'TURN_SHARED_SECRET': 'turn-secret-0123456789abcdef',
+                'P2P_TURN_URLS': 'turn:turn.p2p.yxswy.com:3478?transport=udp',
+                'P2P_TURN_SECRET': 'turn-secret-0123456789abcdef',
             },
             '2.0.0-abcdef0',
             capability_secret='capability-secret-0123456789abcdef0123456789',
@@ -72,7 +71,6 @@ class DeployReleaseTests(unittest.TestCase):
                 'P2P_TURN_SECRET': 'existing-turn-secret',
                 'P2P_TURN_URLS': 'turns:existing.example:5349',
             },
-            {},
             '2.0.0-abcdef1',
             capability_secret='unused-capability-secret-0123456789012345',
         )

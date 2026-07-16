@@ -242,7 +242,7 @@ h1 {
 
 .divider strong {
   color: var(--ink-muted);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   font-weight: 400;
 }
 
@@ -354,7 +354,7 @@ h1 {
 
 .waiting-expiry {
   margin-top: 4px;
-  color: var(--ink-dim);
+  color: var(--ink-muted);
 }
 
 .waiting-view .inline-error {
@@ -400,7 +400,7 @@ h1 {
 }
 
 .room-expiry {
-  color: var(--ink-dim);
+  color: var(--ink-muted);
 }
 
 .room-code-row {
@@ -511,7 +511,7 @@ h1 {
   align-items: center;
   justify-content: center;
   padding: 0 16px;
-  color: var(--ink-dim);
+  color: var(--ink-muted);
   gap: 6px;
 }
 
@@ -685,14 +685,14 @@ h1 {
 .transfer-progress-copy {
   margin-top: 4px;
   color: var(--ink-muted);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .transfer-file-row code {
   flex: 0 0 auto;
   color: var(--ink-muted);
   font-family: inherit;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .transfer-progress {
@@ -730,7 +730,7 @@ h1 {
   border-top: 1px solid var(--border-subtle);
   gap: 16px;
   color: var(--ink-muted);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   text-align: left;
 }
 
@@ -827,14 +827,14 @@ h1 {
 .recipient-picker-heading p {
   margin: 5px 0 0;
   color: var(--ink-muted);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   line-height: 1.6;
 }
 
 .recipient-picker-heading > span {
   flex: 0 0 auto;
   color: var(--ink-muted);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .recipient-picker-tools {
@@ -850,7 +850,7 @@ h1 {
   border-radius: 8px;
   background: transparent;
   color: var(--ink-muted);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .recipient-picker-tools button:hover {
@@ -911,7 +911,7 @@ h1 {
 .recipient-picker-error {
   margin: 12px 0 0;
   color: rgba(255, 248, 231, 0.72);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .about-dialog p,
@@ -993,7 +993,7 @@ h1 {
   display: block;
   margin-top: 4px;
   color: var(--ink-muted);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .request-file-summary {
@@ -1038,13 +1038,13 @@ h1 {
 .request-file-summary span {
   margin-top: 5px;
   color: var(--ink-muted);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .stream-storage-error {
   margin: 12px 0 0;
   color: rgba(255, 248, 231, 0.72);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   line-height: 1.6;
 }
 

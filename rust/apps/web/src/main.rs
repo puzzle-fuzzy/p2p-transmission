@@ -5,16 +5,17 @@ use std::{
 
 use dioxus::prelude::*;
 use p2p_browser_platform::{
-    BrowserLifecycleEvent, BrowserPlatformError, BrowserStorageErrorKind, RealtimeConnection,
-    RealtimeEvent, RtcConnectionPhase, RtcEvent, RtcPeer, SLEEP_RESUME_GAP_MS,
-    StreamingStorageSupport, TransferDirection, TransferFile, bootstrap_room,
+    BrowserLifecycleEvent, BrowserPlatformError, BrowserStorageErrorKind, LaunchIntent,
+    NativeShareOutcome, RealtimeConnection, RealtimeEvent, RtcConnectionPhase, RtcEvent, RtcPeer,
+    SLEEP_RESUME_GAP_MS, StreamingStorageSupport, TransferDirection, TransferFile, bootstrap_room,
     browser_files_from_input, build_invite_url, choose_persistent_source_files,
     choose_stream_files, clear_room_session, close_modal_dialog, connect_browser_lifecycle,
     connect_realtime, copy_text, create_invite, create_room, create_session, decide_join,
-    fetch_rtc_config, join_request_status, leave_room, load_room_session, new_client_id,
-    persistent_source_file_support, remove_boot_fallback, request_join, save_room_session,
+    fetch_rtc_config, join_request_status, leave_room, load_room_session, native_share_supported,
+    new_client_id, persistent_source_file_support, prime_notification_permission,
+    remove_boot_fallback, request_join, save_room_session, send_notification, share_url,
     show_modal_dialog, sleep_ms, streaming_batch_storage_supported, streaming_storage_support,
-    take_invite_intent,
+    take_launch_intent,
 };
 use p2p_protocol::{
     CURRENT_PROTOCOL, CancelReason, ClientRealtimeMessage, CreateInviteResponse,
@@ -581,7 +582,14 @@ fn mark_streamed_transfers_waiting(model: &mut AppModel) -> bool {
 
 fn initialize(mut model: Signal<AppModel>, target: Signal<Option<RealtimeTarget>>) {
     spawn(async move {
-        let invite_intent = take_invite_intent().ok().flatten();
+        let launch_intent = take_launch_intent().ok().flatten();
+        let (initial_room_code, invite_capability) = match &launch_intent {
+            Some(LaunchIntent::JoinRoom {
+                room_code,
+                capability,
+            }) => (room_code.clone(), capability.clone()),
+            _ => (String::new(), None),
+        };
         let identity = new_client_id("visitor");
         let suffix = identity
             .chars()
@@ -597,11 +605,8 @@ fn initialize(mut model: Signal<AppModel>, target: Signal<Option<RealtimeTarget>
             Err(error) => {
                 let mut state = model.write();
                 state.screen = Screen::Lobby {
-                    room_code: invite_intent
-                        .as_ref()
-                        .map(|intent| intent.room_code.clone())
-                        .unwrap_or_default(),
-                    invite_capability: invite_intent.map(|intent| intent.capability),
+                    room_code: initial_room_code,
+                    invite_capability,
                 };
                 state.error = Some(friendly_error(&error));
                 return;
@@ -615,14 +620,15 @@ fn initialize(mut model: Signal<AppModel>, target: Signal<Option<RealtimeTarget>
             return;
         }
 
-        let mut state = model.write();
-        state.screen = Screen::Lobby {
-            room_code: invite_intent
-                .as_ref()
-                .map(|intent| intent.room_code.clone())
-                .unwrap_or_default(),
-            invite_capability: invite_intent.map(|intent| intent.capability),
+        model.write().screen = Screen::Lobby {
+            room_code: initial_room_code,
+            invite_capability,
         };
+        match launch_intent {
+            Some(LaunchIntent::CreateRoom) => submit_create_room(model, target),
+            Some(LaunchIntent::JoinRoom { .. }) => submit_join(model, target),
+            None => {}
+        }
     });
 }
 
@@ -788,7 +794,10 @@ fn LobbyView(
                 class: "primary-button",
                 r#type: "button",
                 disabled: !can_join,
-                onclick: move |_| submit_join(model, realtime_target),
+                onclick: move |_| {
+                    let _ = prime_notification_permission();
+                    submit_join(model, realtime_target);
+                },
                 if snapshot.busy { "申请中…" } else if invite_capability.is_some() { "加入房间" } else { "请求加入" }
             }
             div { class: "divider", aria_hidden: "true",
@@ -800,7 +809,10 @@ fn LobbyView(
                 class: "secondary-button",
                 r#type: "button",
                 disabled: snapshot.busy || snapshot.session.is_none(),
-                onclick: move |_| submit_create_room(model, realtime_target),
+                onclick: move |_| {
+                    let _ = prime_notification_permission();
+                    submit_create_room(model, realtime_target);
+                },
                 if snapshot.busy { "创建中…" } else { "创建房间" }
             }
             p { class: "privacy-copy",
@@ -2713,6 +2725,7 @@ fn ShareDialog(
 ) -> Element {
     let invite_url = build_invite_url(&room_code, &capability).ok();
     let qr_code = invite_url.as_deref().and_then(invite_qr_code);
+    let has_native_share = native_share_supported();
     use_effect(|| {
         let _ = show_modal_dialog("share-dialog");
     });
@@ -2756,18 +2769,39 @@ fn ShareDialog(
                         spawn(async move {
                             let result = async {
                                 let url = build_invite_url(&room_code, &capability)?;
-                                copy_text(&url).await
+                                match share_url(
+                                    "P2P Transmission 房间邀请",
+                                    "打开邀请链接加入临时点对点传输房间",
+                                    &url,
+                                ).await {
+                                    Ok(NativeShareOutcome::Shared) => {
+                                        Ok::<_, BrowserPlatformError>(Some("邀请链接已分享"))
+                                    }
+                                    Ok(NativeShareOutcome::Cancelled) => {
+                                        Ok::<_, BrowserPlatformError>(None)
+                                    }
+                                    Ok(NativeShareOutcome::Unsupported) | Err(_) => {
+                                        copy_text(&url).await?;
+                                        Ok(Some("邀请链接已复制"))
+                                    }
+                                }
                             }.await;
-                            model.write().notice = Some(if result.is_ok() {
-                                "邀请链接已复制".to_owned()
-                            } else {
-                                "无法自动复制，请改用房间码加入".to_owned()
-                            });
-                            let _ = close_modal_dialog("share-dialog");
-                            share_open.set(false);
+                            match result {
+                                Ok(Some(notice)) => {
+                                    model.write().notice = Some(notice.to_owned());
+                                    let _ = close_modal_dialog("share-dialog");
+                                    share_open.set(false);
+                                }
+                                Ok(None) => {}
+                                Err(_) => {
+                                    model.write().notice = Some(
+                                        "无法自动分享，请改用房间码加入".to_owned(),
+                                    );
+                                }
+                            }
                         });
                     },
-                    "复制邀请链接"
+                    if has_native_share { "分享邀请链接" } else { "复制邀请链接" }
                 }
                 button {
                     class: "dialog-close",
@@ -3578,6 +3612,13 @@ fn handle_rtc_event(
             files,
             recovery_available,
         } => {
+            let file_count = files.len().max(1);
+            let body = if file_count == 1 {
+                format!("收到文件：{}", file.name)
+            } else {
+                format!("收到 {} 等 {file_count} 个文件", file.name)
+            };
+            let _ = send_notification("收到文件请求", &body, &format!("file-{transfer_id}"));
             set_peer_transfer(
                 &mut model.write(),
                 peer_id,
@@ -3759,6 +3800,16 @@ fn handle_rtc_event(
             download_url,
             ..
         } => {
+            if direction == TransferDirection::Receive {
+                let file_count = files.len().max(1);
+                let body = if file_count == 1 {
+                    format!("{} 已通过完整性校验", file.name)
+                } else {
+                    format!("{file_count} 个文件已通过完整性校验")
+                };
+                let _ =
+                    send_notification("文件接收完成", &body, &format!("file-received-{peer_id}"));
+            }
             let mut state = model.write();
             state.notice = Some(if direction == TransferDirection::Send {
                 "文件已发送并通过接收端校验".to_owned()

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#2d2d2d">
+    <meta name="description" content="无需注册的临时点对点文本与文件传输工具">
+    <meta name="referrer" content="no-referrer">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="stylesheet" href="/shell/landing.css">
+    <script src="/shell/app-shell.js" defer></script>
+    <script src="/shell/landing.js" defer></script>
+    <title>P2P Transmission</title>
+  </head>
+  <body>
+    <main class="landing-shell">
+      <section class="landing-panel" aria-labelledby="join-title">
+        <header>
+          <p class="eyebrow">P2P Transmission</p>
+          <h1 id="join-title">加入房间</h1>
+          <p class="join-copy">输入发送者提供的 6 位房间码，或直接打开邀请链接</p>
+        </header>
+
+        <form class="join-form" action="/app" method="get">
+          <label for="room-code">房间码</label>
+          <input
+            id="room-code"
+            name="room"
+            class="room-code-input"
+            type="text"
+            inputmode="text"
+            minlength="6"
+            maxlength="6"
+            pattern="[A-Za-z2-9]{6}"
+            autocomplete="one-time-code"
+            spellcheck="false"
+            required
+            aria-describedby="room-code-hint"
+          >
+          <p id="room-code-hint" class="field-hint">使用字母或数字，不区分大小写</p>
+          <button class="primary-button" type="submit">请求加入</button>
+        </form>
+
+        <div class="divider" aria-hidden="true">
+          <span></span>
+          <strong>OR</strong>
+          <span></span>
+        </div>
+
+        <a class="secondary-button" href="/app?intent=create">创建房间</a>
+
+        <p class="privacy-copy">
+          文件和文本正文通过加密的 WebRTC 通道传输，优先尝试设备直连，必要时经加密中继转发；应用服务器只协调连接，不保存传输内容。
+        </p>
+
+        <footer class="footer-links">
+          <details class="about-details">
+            <summary>关于</summary>
+            <p>这是一个无需注册的临时点对点传输工具。房间默认保留 30 分钟。</p>
+          </details>
+          <span aria-hidden="true">·</span>
+          <a href="https://github.com/puzzle-fuzzy/p2p-transmission" rel="noreferrer">GitHub</a>
+        </footer>
+      </section>
+    </main>
+  </body>
+</html>

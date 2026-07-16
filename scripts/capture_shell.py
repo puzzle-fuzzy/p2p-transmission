@@ -17,11 +17,7 @@ def main() -> None:
     command = [
         "bun",
         "run",
-        "--cwd",
-        "apps/web",
         "e2e",
-        "--config",
-        str(ROOT / "apps" / "web" / "playwright.rust.config.ts"),
     ]
     print(f"$ {' '.join(command)}", flush=True)
     subprocess.run(command, cwd=ROOT, env=environment, check=True)

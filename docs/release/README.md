@@ -1,6 +1,6 @@
-# Rust 视觉记录
+# 发布与视觉记录
 
-这里保存 Rust 各里程碑的固定视口截图，用于与 [`docs/product-baseline`](../product-baseline/README.md) 的 1.x 体验基线比较。
+这里保存当前实现的固定视口截图，用于检查桌面端和移动端的页面结构、状态表达与视觉回归。
 
 生产发布、5 GiB 边界、备份与回滚说明见 [`RELEASE.md`](RELEASE.md)。
 
@@ -30,4 +30,4 @@ python scripts/capture_shell.py
 python scripts/test_e2e.py --capture-room --capture-transfer
 ```
 
-截图只记录实现状态，不授权改变 1.x 的视觉方向。当前实现默认保持同样的页面气质和使用层级。
+截图只记录当前实现状态。视觉方向与交互原则以仓库根目录的 [`DESIGN.md`](../../DESIGN.md) 为准。
