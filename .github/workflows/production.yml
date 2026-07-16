@@ -262,6 +262,7 @@ jobs:
           EXPECTED_RELEASE_VERSION: ${{ needs.container.outputs.release-version }}
         run: |
           python3 - <<'PY'
+          import http.client
           import json
           import os
           import time
@@ -294,20 +295,24 @@ jobs:
           if (
               response.status != 200
               or 'P2P Transmission' not in index
-              or 'action="/app"' not in index
-              or 'p2p-web-' in index
-              or '.wasm' in index
+              or 'id="boot-fallback"' not in index
+              or '/shell/app.css' not in index
+              or 'assets/p2p-web-' not in index
+              or 'action="/app"' in index
           ):
-              raise SystemExit('public SSR landing check failed')
+              raise SystemExit('public root application shell check failed')
 
-          with urllib.request.urlopen('https://p2p.yxswy.com/app', timeout=5) as response:
-              app_shell = response.read().decode('utf-8')
+          connection = http.client.HTTPSConnection('p2p.yxswy.com', timeout=5)
+          connection.request('GET', '/app?intent=create')
+          legacy = connection.getresponse()
+          legacy.read()
           if (
-              response.status != 200
-              or 'id="boot-fallback"' not in app_shell
-              or 'assets/p2p-web-' not in app_shell
+              legacy.status != 307
+              or legacy.getheader('Location') != '/?intent=create'
+              or legacy.getheader('Cache-Control') != 'no-store'
           ):
-              raise SystemExit('public Dioxus application shell check failed')
+              raise SystemExit('public legacy application redirect check failed')
+          connection.close()
           print(json.dumps(payload, ensure_ascii=False))
           PY
 

@@ -3,12 +3,12 @@ import { Buffer } from 'node:buffer'
 import { open, readFile } from 'node:fs/promises'
 
 const connectSingleReceiverRoom = async (owner: Page, receiver: Page) => {
-  await owner.goto('/app')
+  await owner.goto('/')
   await owner.getByRole('button', { name: '创建房间' }).click()
   const roomCode = (await owner.getByRole('button', { name: /复制房间码/ }).textContent())?.trim()
   expect(roomCode).toMatch(/^[A-Z2-9]{6}$/)
 
-  await receiver.goto('/app')
+  await receiver.goto('/')
   await receiver.getByRole('textbox', { name: '输入 6 位房间码' }).fill(roomCode ?? '')
   await receiver.getByRole('button', { name: '请求加入' }).click()
   const requestDialog = owner.getByRole('dialog', { name: '加入申请' })

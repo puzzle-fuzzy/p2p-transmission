@@ -33,12 +33,12 @@ const connectSingleReceiverRoom = async (
   if (!options.persistentSource) {
     await useFileInputFallback(owner)
   }
-  await owner.goto('/app')
+  await owner.goto('/')
   await owner.getByRole('button', { name: '创建房间' }).click()
   const roomCode = (await owner.getByRole('button', { name: /复制房间码/ }).textContent())?.trim()
   expect(roomCode).toMatch(/^[A-Z2-9]{6}$/)
 
-  await receiver.goto('/app')
+  await receiver.goto('/')
   await receiver.getByRole('textbox', { name: '输入 6 位房间码' }).fill(roomCode ?? '')
   await receiver.getByRole('button', { name: '请求加入' }).click()
   const requestDialog = owner.getByRole('dialog', { name: '加入申请' })
@@ -1395,14 +1395,14 @@ test('the sender can target one receiver and then send independently to both', a
   await useFileInputFallback(owner)
 
   try {
-    await owner.goto('/app')
+    await owner.goto('/')
     await owner.getByRole('button', { name: '创建房间' }).click()
     const roomCode = (await owner.getByRole('button', { name: /复制房间码/ }).textContent())?.trim()
     expect(roomCode).toMatch(/^[A-Z2-9]{6}$/)
 
     const receiverNames: string[] = []
     for (const [index, receiver] of [firstReceiver, secondReceiver].entries()) {
-      await receiver.goto('/app')
+      await receiver.goto('/')
       await receiver.getByRole('textbox', { name: '输入 6 位房间码' }).fill(roomCode ?? '')
       await receiver.getByRole('button', { name: '请求加入' }).click()
       receiverNames.push((await receiver.locator('.participant-name').textContent())?.trim() ?? '')

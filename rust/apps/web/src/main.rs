@@ -26,7 +26,6 @@ use p2p_protocol::{
 };
 use serde::{Deserialize, Serialize};
 
-const STYLE: &str = include_str!("../assets/main.css");
 const AVATAR_ENTRY_HOLD_MS: u32 = 700;
 const RTC_NEGOTIATION_TIMEOUT_MS: u32 = 3_000;
 const RTC_PASSIVE_RECOVERY_TIMEOUT_MS: u32 = 30_000;
@@ -403,7 +402,6 @@ fn App() -> Element {
 
     let snapshot = model.read().clone();
     rsx! {
-        style { {STYLE} }
         div { class: "app-shell",
             main { class: if matches!(snapshot.screen, Screen::Room { .. }) { "workspace" } else { "lobby" },
                 match &snapshot.screen {

@@ -11,25 +11,22 @@
     >
     <link rel="manifest" href="/manifest.webmanifest">
     <title>{app_title}</title>
-    <link rel="stylesheet" href="/shell/landing.css">
+    <link rel="stylesheet" href="/shell/app.css">
     <script src="/shell/app-shell.js" defer></script>
   </head>
   <body>
     <div id="main">
-      <main id="boot-fallback" class="landing-shell" aria-busy="true">
-        <section class="landing-panel" aria-labelledby="boot-title">
-          <header>
-            <p class="eyebrow">P2P Transmission</p>
-            <h1 id="boot-title">正在准备安全传输</h1>
-            <p class="join-copy">正在初始化本地加密与点对点连接能力，请稍候。</p>
-          </header>
-          <p class="boot-progress" role="status" aria-live="polite">加载传输工作区…</p>
-          <noscript>
-            <p class="privacy-copy">传输工作区需要浏览器启用 JavaScript 和 WebAssembly。</p>
-            <p class="boot-actions"><a class="secondary-button" href="/">返回首页</a></p>
-          </noscript>
-        </section>
-      </main>
+      <div id="boot-fallback" class="app-shell" aria-busy="true">
+        <main class="lobby">
+          <section class="booting-view" role="status" aria-live="polite">
+            <span class="service-dot" aria-hidden="true"></span>
+            <p>正在准备安全会话…</p>
+            <noscript>
+              <span>传输工作区需要浏览器启用 JavaScript 和 WebAssembly。</span>
+            </noscript>
+          </section>
+        </main>
+      </div>
     </div>
   </body>
 </html>

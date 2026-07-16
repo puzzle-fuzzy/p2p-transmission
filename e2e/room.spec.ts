@@ -49,7 +49,7 @@ test('two browsers can create, approve, connect, and restore a room', async ({
 
   try {
     await owner.goto('/')
-    await owner.getByRole('link', { name: '创建房间' }).click()
+    await owner.getByRole('button', { name: '创建房间' }).click()
     await expect.poll(() => owner.evaluate(() => (
       window as unknown as {
         __browserCapabilityState: { notificationPermissionRequests: number }
@@ -89,8 +89,9 @@ test('two browsers can create, approve, connect, and restore a room', async ({
       }
     ).__browserCapabilityState.sharedInvite)
     expect(sharedInvite?.url).toContain(`#room=${roomCode}&capability=`)
+    expect(new URL(sharedInvite?.url ?? 'http://invalid/').pathname).toBe('/')
 
-    await receiver.goto(`/app?room=${roomCode}`)
+    await receiver.goto(`/?room=${roomCode}`)
     await expect(receiver.getByRole('heading', { name: '等待发送者确认' })).toBeVisible()
     await expect(receiver.getByRole('status')).toContainText('等待确认')
 
@@ -155,12 +156,12 @@ test('a receiver can cancel a pending join request', async ({ browser, baseURL }
   const receiver = await receiverContext.newPage()
 
   try {
-    await owner.goto('/app')
+    await owner.goto('/')
     await owner.getByRole('button', { name: '创建房间' }).click()
     const roomCode = (await owner.getByRole('button', { name: /复制房间码/ }).textContent())?.trim()
     expect(roomCode).toMatch(/^[A-Z2-9]{6}$/)
 
-    await receiver.goto('/app')
+    await receiver.goto('/')
     await receiver.getByRole('textbox', { name: '输入 6 位房间码' }).fill(roomCode ?? '')
     await receiver.getByRole('button', { name: '请求加入' }).click()
     await expect(owner.getByRole('dialog', { name: '加入申请' })).toBeVisible()

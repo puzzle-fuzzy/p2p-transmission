@@ -10,8 +10,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DIST = ROOT / "target" / "dx" / "p2p-web" / "release" / "web" / "public"
+APP_STYLESHEET = ROOT / "rust" / "apps" / "web" / "assets" / "main.css"
 WASM_GZIP_BUDGET = 512 * 1024
 JAVASCRIPT_GZIP_BUDGET = 20 * 1024
+CSS_GZIP_BUDGET = 8 * 1024
 ENTRYPOINT_GZIP_BUDGET = 528 * 1024
 
 
@@ -41,11 +43,13 @@ def main() -> None:
 
     wasm_gzip = sum(gzip_size(path) for path in wasm_files)
     javascript_gzip = sum(gzip_size(path) for path in javascript_files)
-    entrypoint_gzip = wasm_gzip + javascript_gzip
+    css_gzip = gzip_size(APP_STYLESHEET)
+    entrypoint_gzip = wasm_gzip + javascript_gzip + css_gzip
 
     rows = (
         ("WebAssembly", wasm_gzip, WASM_GZIP_BUDGET),
         ("JavaScript", javascript_gzip, JAVASCRIPT_GZIP_BUDGET),
+        ("CSS", css_gzip, CSS_GZIP_BUDGET),
         ("Browser entrypoint", entrypoint_gzip, ENTRYPOINT_GZIP_BUDGET),
     )
     failures: list[str] = []

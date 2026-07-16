@@ -193,10 +193,14 @@ h1 {
 .secondary-button,
 .close-button,
 .dialog-close {
+  display: flex;
   min-height: 44px;
+  align-items: center;
+  justify-content: center;
   border-radius: 12px;
   font-size: 0.82rem;
   letter-spacing: 0.05em;
+  text-decoration: none;
   transition: filter 160ms ease, color 160ms ease, background-color 160ms ease,
     border-color 160ms ease;
 }
@@ -268,6 +272,7 @@ h1 {
 
 .footer-links {
   display: flex;
+  min-height: 44px;
   align-items: center;
   justify-content: center;
   margin-top: 16px;

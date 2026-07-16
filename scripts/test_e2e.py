@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the server-rendered landing page and Rust Web app through Playwright."""
+"""Run the canonical Rust Web application through Playwright."""
 
 from __future__ import annotations
 

@@ -15,8 +15,9 @@ use std::{
 
 use axum::{
     Json, Router,
+    extract::OriginalUri,
     http::{HeaderName, HeaderValue, StatusCode, header},
-    response::{Html, IntoResponse, Response},
+    response::{IntoResponse, Redirect, Response},
     routing::get,
 };
 use http_api::AppState;
@@ -30,9 +31,7 @@ use tower_http::{
 };
 
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; connect-src 'self' ws: wss:; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
-const LANDING_HTML: &str = include_str!("../assets/landing.html");
-const LANDING_CSS: &str = include_str!("../assets/landing.css");
-const LANDING_JS: &str = include_str!("../assets/landing.js");
+const APP_CSS: &str = include_str!("../../web/assets/main.css");
 const APP_SHELL_JS: &str = include_str!("../assets/app-shell.js");
 const WEB_MANIFEST: &str = include_str!("../assets/manifest.webmanifest");
 const SERVICE_WORKER: &str = include_str!("../assets/sw.js");
@@ -47,11 +46,11 @@ pub fn app(web_root: impl Into<PathBuf>, state: AppState) -> Router {
     let static_files = ServeDir::new(web_root);
 
     Router::new()
-        .route("/", get(landing))
-        .route_service("/app", ServeFile::new(index.clone()))
-        .route_service("/app/", ServeFile::new(index))
-        .route("/shell/landing.css", get(landing_css))
-        .route("/shell/landing.js", get(landing_js))
+        .route_service("/", ServeFile::new(index))
+        .route("/app", get(legacy_app_redirect))
+        .route("/app/", get(legacy_app_redirect))
+        .route("/index.html", get(legacy_app_redirect))
+        .route("/shell/app.css", get(app_css))
         .route("/shell/app-shell.js", get(app_shell_js))
         .route("/manifest.webmanifest", get(web_manifest))
         .route("/sw.js", get(service_worker))
@@ -85,16 +84,24 @@ pub fn app(web_root: impl Into<PathBuf>, state: AppState) -> Router {
         .with_state(state)
 }
 
-async fn landing() -> Html<&'static str> {
-    Html(LANDING_HTML)
+async fn legacy_app_redirect(OriginalUri(uri): OriginalUri) -> Response {
+    let target = uri
+        .query()
+        .map_or_else(|| "/".to_owned(), |query| format!("/?{query}"));
+    let mut response = Redirect::temporary(&target).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
-async fn landing_css() -> Response {
-    embedded_asset("text/css; charset=utf-8", LANDING_CSS)
-}
-
-async fn landing_js() -> Response {
-    embedded_asset("text/javascript; charset=utf-8", LANDING_JS)
+async fn app_css() -> Response {
+    let mut response = embedded_asset("text/css; charset=utf-8", APP_CSS);
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("no-cache, must-revalidate"),
+    );
+    response
 }
 
 async fn app_shell_js() -> Response {
@@ -106,7 +113,8 @@ async fn web_manifest() -> Response {
 }
 
 async fn service_worker() -> Response {
-    let mut response = embedded_asset("text/javascript; charset=utf-8", SERVICE_WORKER);
+    let body = SERVICE_WORKER.replace("__P2P_RELEASE__", release_version());
+    let mut response = embedded_asset("text/javascript; charset=utf-8", body);
     response.headers_mut().insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static("no-cache, must-revalidate"),
@@ -118,7 +126,7 @@ async fn service_worker() -> Response {
     response
 }
 
-fn embedded_asset(content_type: &'static str, body: &'static str) -> Response {
+fn embedded_asset(content_type: &'static str, body: impl IntoResponse) -> Response {
     (
         [
             (header::CONTENT_TYPE, HeaderValue::from_static(content_type)),
@@ -242,45 +250,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn root_is_server_rendered_without_loading_the_wasm_app() {
+    async fn root_is_the_application_and_legacy_html_paths_redirect() {
         let web_root = fixture_dir();
         let state = test_state(&web_root).await;
         let response = app(&web_root, state.clone())
             .oneshot(Request::get("/").body(Body::empty()).expect("request"))
             .await
-            .expect("landing response");
+            .expect("application response");
 
         assert_eq!(response.status(), StatusCode::OK);
         let body = response
             .into_body()
             .collect()
             .await
-            .expect("collect landing body")
+            .expect("collect application body")
             .to_bytes();
-        let body = String::from_utf8(body.to_vec()).expect("landing utf-8");
-        assert!(body.contains("加入房间"));
-        assert!(body.contains("action=\"/app\""));
-        assert!(!body.contains(".wasm"));
-        assert!(!body.contains("shell fixture"));
+        let body = String::from_utf8(body.to_vec()).expect("application utf-8");
+        assert!(body.contains("shell fixture"));
 
-        for path in ["/app", "/app/"] {
-            let app_shell = app(&web_root, state.clone())
+        for (path, location) in [
+            ("/app", "/"),
+            ("/app/", "/"),
+            ("/index.html", "/"),
+            ("/app?intent=create", "/?intent=create"),
+            ("/app/?room=ABC234", "/?room=ABC234"),
+        ] {
+            let redirect = app(&web_root, state.clone())
                 .oneshot(Request::get(path).body(Body::empty()).expect("request"))
                 .await
-                .expect("application shell response")
-                .into_body()
-                .collect()
-                .await
-                .expect("collect application shell")
-                .to_bytes();
-            assert!(
-                app_shell
-                    .windows(b"shell fixture".len())
-                    .any(|window| window == b"shell fixture")
+                .expect("legacy application redirect");
+            assert_eq!(redirect.status(), StatusCode::TEMPORARY_REDIRECT);
+            assert_eq!(redirect.headers()[header::LOCATION], location);
+            assert_eq!(
+                redirect.headers()[header::CACHE_CONTROL],
+                HeaderValue::from_static("no-store")
             );
         }
 
-        for path in ["/unknown-route", "/assets/missing.js"] {
+        for path in ["/unknown-route", "/assets/missing.js", "/appx"] {
             let missing = app(&web_root, state.clone())
                 .oneshot(Request::get(path).body(Body::empty()).expect("request"))
                 .await
@@ -325,6 +332,35 @@ mod tests {
         assert_eq!(
             service_worker.headers()[HeaderName::from_static("service-worker-allowed")],
             HeaderValue::from_static("/")
+        );
+        let service_worker = service_worker
+            .into_body()
+            .collect()
+            .await
+            .expect("collect service worker")
+            .to_bytes();
+        let service_worker =
+            String::from_utf8(service_worker.to_vec()).expect("service worker utf-8");
+        assert!(service_worker.contains(release_version()));
+        assert!(!service_worker.contains("__P2P_RELEASE__"));
+        assert!(!service_worker.contains("\n  '/app',"));
+
+        let app_css = app(&web_root, state.clone())
+            .oneshot(
+                Request::get("/shell/app.css")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("application stylesheet response");
+        assert_eq!(app_css.status(), StatusCode::OK);
+        assert_eq!(
+            app_css.headers()[header::CONTENT_TYPE],
+            HeaderValue::from_static("text/css; charset=utf-8")
+        );
+        assert_eq!(
+            app_css.headers()[header::CACHE_CONTROL],
+            HeaderValue::from_static("no-cache, must-revalidate")
         );
 
         state.services.storage.close().await;

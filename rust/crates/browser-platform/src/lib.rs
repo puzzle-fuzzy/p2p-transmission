@@ -563,14 +563,14 @@ pub fn take_launch_intent() -> Result<Option<LaunchIntent>, BrowserPlatformError
         .search()
         .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?;
     let intent = launch_intent_from_location(&search, &hash);
-    if intent.is_some() {
-        let path = location
-            .pathname()
-            .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?;
+    let path = location
+        .pathname()
+        .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?;
+    if intent.is_some() || path != "/" {
         window
             .history()
             .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?
-            .replace_state_with_url(&JsValue::NULL, "", Some(&path))
+            .replace_state_with_url(&JsValue::NULL, "", Some("/"))
             .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?;
     }
     Ok(intent)
@@ -583,18 +583,17 @@ pub fn take_launch_intent() -> Result<Option<LaunchIntent>, BrowserPlatformError
 
 #[cfg(target_arch = "wasm32")]
 pub fn build_invite_url(room_code: &str, capability: &str) -> Result<String, BrowserPlatformError> {
-    let location = web_sys::window()
+    let origin = web_sys::window()
         .ok_or(BrowserPlatformError::MissingWindow)?
-        .location();
-    let origin = location
+        .location()
         .origin()
         .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?;
-    let pathname = location
-        .pathname()
-        .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?;
-    Ok(format!(
-        "{origin}{pathname}#room={room_code}&capability={capability}"
-    ))
+    Ok(invite_url_from_origin(&origin, room_code, capability))
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn invite_url_from_origin(origin: &str, room_code: &str, capability: &str) -> String {
+    format!("{origin}/#room={room_code}&capability={capability}")
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -897,10 +896,12 @@ pub async fn sleep_ms(_milliseconds: u32) {}
 
 #[cfg(test)]
 mod tests {
-    use super::{BrowserStorageErrorKind, LaunchIntent, launch_intent_from_location};
+    use super::{
+        BrowserStorageErrorKind, LaunchIntent, invite_url_from_origin, launch_intent_from_location,
+    };
 
     #[test]
-    fn parses_server_rendered_landing_intents() {
+    fn parses_root_application_launch_intents() {
         assert_eq!(
             launch_intent_from_location("?intent=create", ""),
             Some(LaunchIntent::CreateRoom)
@@ -923,6 +924,14 @@ mod tests {
             })
         );
         assert_eq!(launch_intent_from_location("", ""), None);
+    }
+
+    #[test]
+    fn invite_links_always_use_the_canonical_root_path() {
+        assert_eq!(
+            invite_url_from_origin("https://p2p.example", "AB23CD", "secret"),
+            "https://p2p.example/#room=AB23CD&capability=secret"
+        );
     }
 
     #[test]

@@ -1,22 +1,71 @@
 const CACHE_PREFIX = 'p2p-transmission-';
-const CACHE_NAME = `${CACHE_PREFIX}v2-shell`;
-const SHELL_ASSETS = [
+const CACHE_NAME = `${CACHE_PREFIX}__P2P_RELEASE__`;
+const CORE_ASSETS = [
   '/',
-  '/app',
-  '/app/',
   '/favicon.svg',
   '/manifest.webmanifest',
+  '/shell/app.css',
   '/shell/app-shell.js',
-  '/shell/landing.css',
-  '/shell/landing.js',
 ];
 
+const offlineResponse = () => new Response('离线时无法访问此地址', {
+  status: 503,
+  headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+});
+
+const sameOriginAppAsset = value => {
+  try {
+    const url = new URL(value, self.location.origin);
+    if (url.origin !== self.location.origin) return null;
+    if (url.pathname === '/'
+        || /^\/(?:assets|shell)\//u.test(url.pathname)
+        || url.pathname === '/favicon.svg'
+        || url.pathname === '/manifest.webmanifest') {
+      return url.href;
+    }
+  } catch {
+    // Ignore malformed or non-URL attributes in the generated shell.
+  }
+  return null;
+};
+
+const cacheAsset = async (cache, url) => {
+  const response = await fetch(url, { cache: 'no-store' });
+  if (!response.ok) throw new Error(`unable to cache ${url}: ${response.status}`);
+  await cache.put(url, response.clone());
+  return response;
+};
+
+const cacheApplication = async () => {
+  const cache = await caches.open(CACHE_NAME);
+  const shell = await cacheAsset(cache, '/');
+  const html = await shell.text();
+  const assets = new Set(CORE_ASSETS.slice(1).map(value => new URL(
+    value,
+    self.location.origin,
+  ).href));
+
+  for (const match of html.matchAll(/\b(?:src|href)="([^"]+)"/gu)) {
+    const asset = sameOriginAppAsset(match[1]);
+    if (asset) assets.add(asset);
+  }
+
+  const wasmAssets = new Set();
+  for (const asset of assets) {
+    const response = await cacheAsset(cache, asset);
+    const pathname = new URL(asset).pathname;
+    if (!/^\/assets\/.*\.js$/u.test(pathname)) continue;
+    const source = await response.text();
+    for (const match of source.matchAll(/["']([^"']*\/assets\/[^"']+\.wasm)["']/gu)) {
+      const wasm = sameOriginAppAsset(match[1]);
+      if (wasm) wasmAssets.add(wasm);
+    }
+  }
+  await Promise.all([...wasmAssets].map(asset => cacheAsset(cache, asset)));
+};
+
 self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(SHELL_ASSETS))
-      .then(() => self.skipWaiting()),
-  );
+  event.waitUntil(cacheApplication().then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', event => {
@@ -31,15 +80,16 @@ self.addEventListener('activate', event => {
   );
 });
 
-const networkFirst = async request => {
+const networkFirstApplication = async request => {
+  const cache = await caches.open(CACHE_NAME);
   try {
-    return await fetch(request);
-  } catch (error) {
-    const cached = await caches.match(request, { ignoreSearch: true });
-    if (cached) return cached;
-    const landing = await caches.match('/');
-    if (landing) return landing;
-    throw error;
+    const response = await fetch(request);
+    if (response.ok && new URL(response.url).pathname === '/') {
+      await cache.put('/', response.clone());
+    }
+    return response;
+  } catch {
+    return await cache.match('/') ?? offlineResponse();
   }
 };
 
@@ -65,7 +115,11 @@ self.addEventListener('fetch', event => {
   if (/^\/(?:api|health|realtime)(?:\/|$)/u.test(url.pathname)) return;
 
   if (request.mode === 'navigate') {
-    event.respondWith(networkFirst(request));
+    if (url.pathname === '/' || url.pathname === '/app' || url.pathname === '/app/') {
+      event.respondWith(networkFirstApplication(request));
+    } else {
+      event.respondWith(fetch(request).catch(offlineResponse));
+    }
     return;
   }
   if (/^\/(?:assets|shell)\//u.test(url.pathname)

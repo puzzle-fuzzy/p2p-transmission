@@ -3,12 +3,12 @@
 P2P Transmission 是一个无需注册的临时点对点文本与文件传输工具。正式地址：
 [https://p2p.yxswy.com](https://p2p.yxswy.com)。
 
-当前生产版本使用 Rust：Axum 直接渲染无需 WebAssembly 的原生 HTML 首页，用户创建、
-加入或恢复房间后才按需加载 Dioxus WebAssembly 应用。浏览器之间通过 WebRTC DataChannel
-传输正文；Axum 只处理临时会话、房间、加入审批、WebSocket 信令和短期 TURN 凭据，
-不接收或保存文本与文件正文。
+当前生产版本使用 Rust：Axum 在唯一主入口 `/` 提供 Dioxus 应用壳层，浏览器加载
+WebAssembly 工作台并通过 WebRTC DataChannel 传输正文。Axum 只处理临时会话、房间、
+加入审批、WebSocket 信令和短期 TURN 凭据，不接收或保存文本与文件正文。旧 `/app`
+链接会保留查询参数并归一到根路径。
 
-页面支持安装为 PWA，并缓存原生首页与传输工作区壳层；房间、信令和实际传输仍要求联网。
+页面支持安装为 PWA，并缓存根应用壳层与当前版本浏览器资源；房间、信令和实际传输仍要求联网。
 浏览器支持时可使用系统分享邀请链接，并在收到文件请求或完成校验时显示可选系统通知。
 
 ## 快速使用

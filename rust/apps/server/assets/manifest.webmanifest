@@ -2,6 +2,7 @@
   "name": "P2P Transmission",
   "short_name": "P2P Trans",
   "description": "免登录、无云端存储的浏览器点对点文件传输工具",
+  "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

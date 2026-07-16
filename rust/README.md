@@ -8,7 +8,7 @@
 
 当前正式版本：
 
-- Axum 原生 HTML 首页、按需加载的 Dioxus Web/WASM 房间应用与同源服务。
+- Axum 同源服务与根路径唯一入口的 Dioxus Web/WASM 房间应用。
 - 房间、邀请、加入审批、多人接收和 WebRTC 传输。
 - 小文件内存接收，以及超过 100 MiB、最大约 5 GiB 的直接磁盘流式接收。
 - 刷新、断网、系统休眠和浏览器后台恢复后的检查点续传。
@@ -23,9 +23,9 @@
 python scripts/dev.py
 ```
 
-默认构建 Dioxus release 资源并由 Axum 在 <http://127.0.0.1:3410> 同源提供。根路径由 Axum
-直接返回可交互的原生 HTML，Dioxus 应用位于 `/app` 并只在创建、加入或恢复房间时加载。
-release Web 资源不会注入依赖 `dx serve` 的开发遮罩。
+默认构建 Dioxus release 资源并由 Axum 在 <http://127.0.0.1:3410> 同源提供。根路径 `/`
+是唯一主应用入口；旧 `/app` 链接只用于迁移并重定向到根路径。release Web 资源不会注入
+依赖 `dx serve` 的开发遮罩。
 
 如需单独检查 debug 构建：
 
