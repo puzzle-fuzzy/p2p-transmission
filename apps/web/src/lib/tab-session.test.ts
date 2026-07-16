@@ -14,8 +14,8 @@ describe('getTabStorageKey', () => {
 
     expect(assignedName).toMatch(/^p2p-transmission:/u)
     expect(visitorKey).toBe(`p2p.visitorSession:${assignedName}`)
-    expect(getTabStorageKey('p2p.roomSession:v2')).toBe(
-      `p2p.roomSession:v2:${assignedName}`,
+    expect(getTabStorageKey('p2p.roomSession')).toBe(
+      `p2p.roomSession:${assignedName}`,
     )
   })
 

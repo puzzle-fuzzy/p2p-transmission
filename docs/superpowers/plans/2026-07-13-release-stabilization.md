@@ -510,4 +510,3 @@ git commit -m "ci: verify main release quality"
 Run: `bun run verify`
 
 Expected: exit code 0 with all workspace tasks successful.
-

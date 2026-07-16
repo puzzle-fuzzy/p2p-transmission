@@ -17,7 +17,7 @@
 
 该数字只用于发现明显回归，不是线上 SLO，也不代表公网吞吐。
 
-## 2.0 需要补齐的测量
+## 需要补齐的测量
 
 - HTML shell 可见时间、WASM 下载/编译/ready 时间。
 - 创建房间、批准加入、WebSocket attach 和 PeerConnection connected 延迟。

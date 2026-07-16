@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Atomically deploy a GitHub-built Rust 2.0 image on the production host."""
+"""Atomically deploy a GitHub-built image on the production host."""
 
 from __future__ import annotations
 
@@ -23,24 +23,24 @@ from typing import Optional
 
 APP_DIR = Path('/opt/p2p-transmission')
 SOURCE_ARCHIVE_RE = re.compile(r'^p2p-transmission-[0-9a-f]{40}\.tar\.gz$')
-IMAGE_ARCHIVE_RE = re.compile(r'^p2p-transmission-v2-[0-9a-f]{40}\.tar\.gz$')
+IMAGE_ARCHIVE_RE = re.compile(r'^p2p-transmission-image-[0-9a-f]{40}\.tar\.gz$')
 VERSION_RE = re.compile(r'^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$')
 ENV_KEY_RE = re.compile(r'^[A-Z][A-Z0-9_]*$')
 
-V2_ENV = APP_DIR / 'deploy/v2/.env'
-V2_DATA = APP_DIR / 'deploy/v2/data'
-V2_DATABASE = V2_DATA / 'control.sqlite3'
-V2_BACKUPS = APP_DIR / 'deploy/v2/backups'
+PRODUCTION_ENV = APP_DIR / 'deploy/production/.env'
+PRODUCTION_DATA = APP_DIR / 'deploy/production/data'
+PRODUCTION_DATABASE = PRODUCTION_DATA / 'control.sqlite3'
+PRODUCTION_BACKUPS = APP_DIR / 'deploy/production/backups'
 DATABASE_BACKUP_LIMIT = 10
 LEGACY_ENV = APP_DIR / 'deploy/.env'
-NGINX_SOURCE = APP_DIR / 'deploy/v2/nginx/p2p.yxswy.com.conf'
+NGINX_SOURCE = APP_DIR / 'deploy/production/nginx/p2p.yxswy.com.conf'
 NGINX_TARGET = Path('/etc/nginx/conf.d/p2p.yxswy.com.conf')
-NGINX_PRE_V2_BACKUP = Path('/etc/nginx/conf.d/p2p.yxswy.com.conf.pre-rust-v2')
+NGINX_PREVIOUS_BACKUP = Path('/etc/nginx/conf.d/p2p.yxswy.com.conf.previous')
 NGINX_ROLLBACK = Path('/tmp/p2p-transmission-nginx-rollback')
 
 LEGACY_IMAGES = {
-    'p2p-transmission-api:latest': 'p2p-transmission-api:pre-rust-v2',
-    'p2p-transmission-web:latest': 'p2p-transmission-web:pre-rust-v2',
+    'p2p-transmission-api:latest': 'p2p-transmission-api:pre-release',
+    'p2p-transmission-web:latest': 'p2p-transmission-web:pre-release',
 }
 
 
@@ -57,14 +57,14 @@ def best_effort(command: list[str], *, cwd: Path = APP_DIR) -> bool:
     return subprocess.run(command, cwd=cwd, text=True).returncode == 0
 
 
-def compose_v2(*arguments: str) -> list[str]:
+def compose_production(*arguments: str) -> list[str]:
     return [
         'docker',
         'compose',
         '--env-file',
-        'deploy/v2/.env',
+        'deploy/production/.env',
         '-f',
-        'deploy/v2/compose.yml',
+        'deploy/production/compose.yml',
         *arguments,
     ]
 
@@ -134,7 +134,7 @@ def parse_env_text(text: str) -> dict[str, str]:
     return values
 
 
-def build_v2_env(
+def build_production_env(
     existing: dict[str, str],
     legacy: dict[str, str],
     version: str,
@@ -189,53 +189,53 @@ def format_env(values: dict[str, str]) -> str:
     return '\n'.join(lines) + '\n'
 
 
-def prepare_v2_environment(version: str) -> Optional[bytes]:
+def prepare_production_environment(version: str) -> Optional[bytes]:
     if not LEGACY_ENV.is_file():
         raise SystemExit('deploy/.env is missing on the host')
     legacy = parse_env_text(LEGACY_ENV.read_text(encoding='utf-8'))
-    previous = V2_ENV.read_bytes() if V2_ENV.is_file() else None
+    previous = PRODUCTION_ENV.read_bytes() if PRODUCTION_ENV.is_file() else None
     existing = parse_env_text(previous.decode('utf-8')) if previous is not None else {}
     try:
-        rendered = format_env(build_v2_env(existing, legacy, version))
+        rendered = format_env(build_production_env(existing, legacy, version))
     except ValueError as error:
         raise SystemExit(str(error)) from error
 
-    V2_ENV.parent.mkdir(parents=True, exist_ok=True)
-    temporary = V2_ENV.with_name('.env.deploy.tmp')
+    PRODUCTION_ENV.parent.mkdir(parents=True, exist_ok=True)
+    temporary = PRODUCTION_ENV.with_name('.env.deploy.tmp')
     temporary.write_text(rendered, encoding='utf-8')
     os.chmod(temporary, 0o600)
-    os.replace(temporary, V2_ENV)
+    os.replace(temporary, PRODUCTION_ENV)
 
-    V2_DATA.mkdir(parents=True, exist_ok=True)
-    os.chown(V2_DATA, 10001, 10001)
-    os.chmod(V2_DATA, 0o700)
+    PRODUCTION_DATA.mkdir(parents=True, exist_ok=True)
+    os.chown(PRODUCTION_DATA, 10001, 10001)
+    os.chmod(PRODUCTION_DATA, 0o700)
     return previous
 
 
-def restore_v2_environment(previous: Optional[bytes]) -> None:
+def restore_production_environment(previous: Optional[bytes]) -> None:
     if previous is None:
-        V2_ENV.unlink(missing_ok=True)
+        PRODUCTION_ENV.unlink(missing_ok=True)
         return
-    temporary = V2_ENV.with_name('.env.rollback.tmp')
+    temporary = PRODUCTION_ENV.with_name('.env.rollback.tmp')
     temporary.write_bytes(previous)
     os.chmod(temporary, 0o600)
-    os.replace(temporary, V2_ENV)
+    os.replace(temporary, PRODUCTION_ENV)
 
 
 def preserve_rollback_assets(previous_tag: Optional[str]) -> None:
     for current, rollback in LEGACY_IMAGES.items():
         if image_exists(current) and not image_exists(rollback):
             run(['docker', 'image', 'tag', current, rollback])
-    if previous_tag and image_exists(f'p2p-transmission-v2:{previous_tag}'):
+    if previous_tag and image_exists(f'p2p-transmission:{previous_tag}'):
         run([
             'docker',
             'image',
             'tag',
-            f'p2p-transmission-v2:{previous_tag}',
-            'p2p-transmission-v2:previous',
+            f'p2p-transmission:{previous_tag}',
+            'p2p-transmission:previous',
         ])
-    if NGINX_TARGET.is_file() and not NGINX_PRE_V2_BACKUP.exists():
-        shutil.copy2(NGINX_TARGET, NGINX_PRE_V2_BACKUP)
+    if NGINX_TARGET.is_file() and not NGINX_PREVIOUS_BACKUP.exists():
+        shutil.copy2(NGINX_TARGET, NGINX_PREVIOUS_BACKUP)
 
 
 def snapshot_nginx() -> None:
@@ -244,14 +244,14 @@ def snapshot_nginx() -> None:
     shutil.copy2(NGINX_TARGET, NGINX_ROLLBACK)
 
 
-def backup_v2_database(version: str) -> Optional[Path]:
+def backup_production_database(version: str) -> Optional[Path]:
     """Create and verify a consistent SQLite backup before changing the runtime."""
-    if not V2_DATABASE.is_file():
-        print('Rust 2.0 database is not present; backup is not required', flush=True)
+    if not PRODUCTION_DATABASE.is_file():
+        print('production database is not present; backup is not required', flush=True)
         return None
 
-    backup_root = V2_BACKUPS.resolve()
-    expected_parent = (APP_DIR / 'deploy/v2').resolve()
+    backup_root = PRODUCTION_BACKUPS.resolve()
+    expected_parent = (APP_DIR / 'deploy/production').resolve()
     if backup_root.parent != expected_parent:
         raise SystemExit('database backup directory escapes the deployment directory')
     backup_root.mkdir(parents=True, exist_ok=True)
@@ -260,7 +260,7 @@ def backup_v2_database(version: str) -> Optional[Path]:
     timestamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
     destination = backup_root / f'control-{timestamp}-{version}.sqlite3'
     try:
-        source_uri = f'{V2_DATABASE.resolve().as_uri()}?mode=ro'
+        source_uri = f'{PRODUCTION_DATABASE.resolve().as_uri()}?mode=ro'
         with closing(sqlite3.connect(source_uri, uri=True, timeout=30.0)) as source:
             with closing(sqlite3.connect(destination, timeout=30.0)) as target:
                 source.backup(target)
@@ -270,7 +270,7 @@ def backup_v2_database(version: str) -> Optional[Path]:
         os.chmod(destination, 0o600)
     except (OSError, sqlite3.Error) as error:
         destination.unlink(missing_ok=True)
-        raise SystemExit(f'Rust 2.0 database backup failed: {error}') from error
+        raise SystemExit(f'production database backup failed: {error}') from error
 
     backups = sorted(backup_root.glob('control-*.sqlite3'), reverse=True)
     for old_backup in backups[DATABASE_BACKUP_LIMIT:]:
@@ -278,13 +278,13 @@ def backup_v2_database(version: str) -> Optional[Path]:
             raise SystemExit('database backup cleanup encountered an unsafe path')
         old_backup.unlink()
 
-    print(f'Rust 2.0 database backup ready: {destination}', flush=True)
+    print(f'production database backup ready: {destination}', flush=True)
     return destination
 
 
-def install_v2_nginx() -> None:
+def install_production_nginx() -> None:
     if not NGINX_SOURCE.is_file():
-        raise SystemExit('Rust 2.0 Nginx configuration is missing')
+        raise SystemExit('production Nginx configuration is missing')
     temporary = NGINX_TARGET.with_name('p2p.yxswy.com.conf.deploy-tmp')
     shutil.copy2(NGINX_SOURCE, temporary)
     os.chmod(temporary, 0o644)
@@ -302,7 +302,7 @@ def restore_nginx() -> None:
         best_effort(['systemctl', 'reload', 'nginx'])
 
 
-def wait_for_v2_ready() -> None:
+def wait_for_production_ready() -> None:
     url = 'http://127.0.0.1:3410/health/ready'
     for _ in range(45):
         try:
@@ -314,50 +314,50 @@ def wait_for_v2_ready() -> None:
                 and payload.get('service') == 'p2p-server'
                 and payload.get('version')
             ):
-                print(f"Rust 2.0 ready: {payload['version']}", flush=True)
+                print(f"production ready: {payload['version']}", flush=True)
                 return
         except (OSError, ValueError, json.JSONDecodeError):
             pass
         time.sleep(2)
-    run(compose_v2('ps'))
-    run(compose_v2('logs', '--tail=200', 'app'))
-    raise SystemExit('Rust 2.0 readiness check failed')
+    run(compose_production('ps'))
+    run(compose_production('logs', '--tail=200', 'app'))
+    raise SystemExit('production readiness check failed')
 
 
 def rollback_runtime(previous_env: Optional[bytes], previous_tag: Optional[str]) -> None:
-    best_effort(compose_v2('stop', 'app'))
+    best_effort(compose_production('stop', 'app'))
     restore_nginx()
-    restore_v2_environment(previous_env)
-    if previous_tag and image_exists(f'p2p-transmission-v2:{previous_tag}'):
-        best_effort(compose_v2('up', '-d', '--no-build', '--no-deps', 'app'))
+    restore_production_environment(previous_env)
+    if previous_tag and image_exists(f'p2p-transmission:{previous_tag}'):
+        best_effort(compose_production('up', '-d', '--no-build', '--no-deps', 'app'))
     else:
         best_effort(compose_legacy('up', '-d', '--no-build', '--no-deps', 'api', 'web'))
 
 
-def deploy_v2(image_archive: Path, version: str) -> None:
+def deploy_production(image_archive: Path, version: str) -> None:
     previous_env_values = (
-        parse_env_text(V2_ENV.read_text(encoding='utf-8')) if V2_ENV.is_file() else {}
+        parse_env_text(PRODUCTION_ENV.read_text(encoding='utf-8')) if PRODUCTION_ENV.is_file() else {}
     )
     previous_tag = previous_env_values.get('P2P_IMAGE_TAG')
-    previous_env = prepare_v2_environment(version)
+    previous_env = prepare_production_environment(version)
     preserve_rollback_assets(previous_tag)
     snapshot_nginx()
 
-    expected_image = f'p2p-transmission-v2:{version}'
+    expected_image = f'p2p-transmission:{version}'
     try:
-        backup_v2_database(version)
+        backup_production_database(version)
         run(['docker', 'load', '--input', str(image_archive)])
         if not image_exists(expected_image):
             raise SystemExit(f'image archive did not contain {expected_image}')
-        run(compose_v2('config', '--quiet'))
-        run(compose_v2('up', '-d', '--no-build', '--no-deps', 'app'))
-        wait_for_v2_ready()
-        install_v2_nginx()
+        run(compose_production('config', '--quiet'))
+        run(compose_production('up', '-d', '--no-build', '--no-deps', 'app'))
+        wait_for_production_ready()
+        install_production_nginx()
         run(compose_legacy('stop', 'api', 'web'))
         NGINX_ROLLBACK.unlink(missing_ok=True)
         print(f'production now runs {expected_image}', flush=True)
     except BaseException:
-        print('Rust 2.0 release failed; restoring the previous production runtime', flush=True)
+        print('production release failed; restoring the previous production runtime', flush=True)
         rollback_runtime(previous_env, previous_tag)
         raise
 
@@ -372,7 +372,7 @@ def deploy(archive: Path, version: str, image_archive: Optional[Path]) -> None:
         if image is None:
             print('deployment source updated; runtime was not changed', flush=True)
             return
-        deploy_v2(image, version)
+        deploy_production(image, version)
     finally:
         archive.unlink(missing_ok=True)
         if image is not None:

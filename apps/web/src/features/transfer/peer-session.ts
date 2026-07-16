@@ -24,7 +24,7 @@ import {
 import type { FileSelection } from './file-selection'
 
 const CHANNEL_LABEL = 'p2p-transfer'
-const CHANNEL_PROTOCOL = 'p2p-transfer.v2'
+const CHANNEL_PROTOCOL = 'p2p-transfer'
 const DECISION_TIMEOUT_MS = 30_000
 const RECEIPT_TIMEOUT_MS = 30_000
 const CHUNK_INACTIVITY_TIMEOUT_MS = 60_000

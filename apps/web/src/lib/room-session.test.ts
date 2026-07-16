@@ -8,7 +8,7 @@ import {
 } from './room-session'
 
 const legacyRoomSessionKey = 'p2p.roomSession'
-const roomSessionKey = 'p2p.roomSession:v2:p2p-transmission:tab-a'
+ const roomSessionKey = 'p2p.roomSession:p2p-transmission:tab-a'
 
 describe('room session persistence', () => {
   beforeEach(() => {

@@ -4,7 +4,7 @@
 
 **Goal:** Deliver the confirmed receiver text dialog, room-code copy action, real transfer-avatar motion, and consent-gated WebRTC file batches of at most 10 files and 100 MiB.
 
-**Architecture:** Upgrade the DataChannel contract to protocol v2, keep JSON control frames separate from headed ArrayBuffer chunks, and isolate binary pumping/backpressure in a file-transfer engine rather than growing PeerSession further. React consumes typed PeerSession events through pure presentation helpers; App is the sole owner of protocol acknowledgements, dialogs, clipboard calls, object URLs, progress-frame scheduling, and the 400 ms generation-safe terminal presentation.
+**Architecture:** Upgrade the DataChannel contract to current transfer protocol, keep JSON control frames separate from headed ArrayBuffer chunks, and isolate binary pumping/backpressure in a file-transfer engine rather than growing PeerSession further. React consumes typed PeerSession events through pure presentation helpers; App is the sole owner of protocol acknowledgements, dialogs, clipboard calls, object URLs, progress-frame scheduling, and the 400 ms generation-safe terminal presentation.
 
 **Tech Stack:** Bun workspaces, TypeScript 6, React 19, Vite 8, Vitest 4, Testing Library, Tailwind CSS 4, WebRTC RTCDataChannel.
 
@@ -15,7 +15,7 @@
 - Only file batches expose 接收 / 拒绝; rejected peers receive zero binary chunks.
 - One active outgoing transfer exists at a time.
 - A batch contains 1–10 files and no more than 100 MiB total.
-- DataChannel protocol is p2p-transfer.v2; v1 is not accepted by PeerSession.
+- DataChannel protocol is p2p-transfer; v1 is not accepted by PeerSession.
 - Binary chunks use a 16-byte P2P2 header, negotiated payload size, strict index checking, and backpressure.
 - No text or file body passes through WebSocket or API.
 - Every timer, AbortController, Blob part, object URL, and backpressure waiter is cleaned on terminal state, room reset, or unmount.
@@ -28,9 +28,9 @@
 
 ### Shared contracts
 
-- Modify: packages/contracts/src/transfer.ts — protocol v2 control messages and validation.
+- Modify: packages/contracts/src/transfer.ts — current transfer protocol control messages and validation.
 - Create: packages/contracts/src/file-chunk.ts — binary frame encoder/parser.
-- Modify: packages/contracts/src/transfer.test.ts — v2 control-frame coverage.
+- Modify: packages/contracts/src/transfer.test.ts — current protocol control-frame coverage.
 - Create: packages/contracts/src/file-chunk.test.ts — binary golden/invalid frame coverage.
 - Modify: packages/contracts/src/index.ts — public exports.
 
@@ -40,7 +40,7 @@
 - Create: apps/web/src/features/transfer/file-selection.test.ts.
 - Create: apps/web/src/features/transfer/file-transfer-engine.ts — per-peer binary pump, drain, cancellation, and tombstones.
 - Create: apps/web/src/features/transfer/file-transfer-engine.test.ts.
-- Modify: apps/web/src/features/transfer/peer-session.ts — v2 orchestration and typed events.
+- Modify: apps/web/src/features/transfer/peer-session.ts — current orchestration and typed events.
 - Modify: apps/web/src/features/transfer/peer-session.test.ts.
 - Create: apps/web/src/features/transfer/ui-state.ts — pure outgoing activity/FIFO aggregation.
 - Create: apps/web/src/features/transfer/ui-state.test.ts.
@@ -73,7 +73,7 @@
 
 ---
 
-### Task 1: Protocol v2 Control and Binary Contracts
+### Task 1: Current transfer protocol Control and Binary Contracts
 
 **Files:**
 - Modify: packages/contracts/src/transfer.ts
@@ -87,9 +87,9 @@
 - Produces: encodeFileChunkFrame, parseFileChunkFrame, FileChunkFrame.
 - Consumes: no DOM, File, Blob, React, WebRTC, or service APIs.
 
-- [ ] **Step 1: Replace existing parser expectations with failing v2 control tests**
+- [ ] **Step 1: Replace existing parser expectations with failing current protocol control tests**
 
-Write table tests for every exact v2 frame plus boundary failures:
+Write table tests for every exact current protocol frame plus boundary failures:
 
 ~~~ts
 const files = [{
@@ -146,9 +146,9 @@ Add invalid magic, version, type, header length, zero/fractional/out-of-uint32 s
 
 Run: bun test packages/contracts/src/transfer.test.ts packages/contracts/src/file-chunk.test.ts
 
-Expected: FAIL because the current v1 parser rejects v2 and file-chunk.ts does not exist.
+Expected: FAIL because the current v1 parser rejects current protocol and file-chunk.ts does not exist.
 
-- [ ] **Step 4: Implement exact v2 types and validation**
+- [ ] **Step 4: Implement exact current protocol types and validation**
 
 Define these exported limits and descriptor:
 
@@ -225,7 +225,7 @@ Expected: all new and existing contract checks PASS.
 
 ~~~bash
 git add packages/contracts/src
-git commit -m "feat: define file transfer protocol v2"
+git commit -m "feat: define file transfer current transfer protocol"
 ~~~
 
 ---
@@ -414,14 +414,14 @@ git commit -m "feat: add backpressured file transfer engine"
 
 ---
 
-### Task 4: PeerSession v2 Text Delivery
+### Task 4: PeerSession Text Delivery
 
 **Files:**
 - Modify: apps/web/src/features/transfer/peer-session.ts
 - Modify: apps/web/src/features/transfer/peer-session.test.ts
 
 **Interfaces:**
-- Consumes: v2 control parser/encoder.
+- Consumes: current control parser/encoder.
 - Produces: direct text events plus acknowledgeText/discardText.
 - Keeps existing peer negotiation and peerSessionId generation guards.
 
@@ -454,9 +454,9 @@ Run: bun run --cwd apps/web test -- src/features/transfer/peer-session.test.ts
 
 Expected: FAIL against current request/decision text behavior.
 
-- [ ] **Step 4: Implement v2 channel identity and text state**
+- [ ] **Step 4: Implement channel identity and text state**
 
-Set CHANNEL_PROTOCOL to p2p-transfer.v2. Replace IncomingTextRequest with:
+Set CHANNEL_PROTOCOL to p2p-transfer. Replace IncomingTextRequest with:
 
 ~~~ts
 type PendingIncomingText = {
@@ -488,7 +488,7 @@ Expected: all peer negotiation regressions and new text tests PASS.
 
 ~~~bash
 git add apps/web/src/features/transfer/peer-session.ts apps/web/src/features/transfer/peer-session.test.ts
-git commit -m "feat: deliver text directly in protocol v2"
+git commit -m "feat: deliver text directly in current transfer protocol"
 ~~~
 
 ---
@@ -560,7 +560,7 @@ export type ReceivedFile = {
 }
 ~~~
 
-Each PeerEntry creates one StreamTombstones registry. Binary handler dispatches ArrayBuffer only, checks tombstones before active-stream validation, and clears the registry on peer close. String handler dispatches v2 control only. Never interleave files within a peer. An accepted decision starts that peer's pump with fire-and-track (`void pumpPeerBatch(...)` plus owned rejection handling); it never awaits another peer's pump.
+Each PeerEntry creates one StreamTombstones registry. Binary handler dispatches ArrayBuffer only, checks tombstones before active-stream validation, and clears the registry on peer close. String handler dispatches current control only. Never interleave files within a peer. An accepted decision starts that peer's pump with fire-and-track (`void pumpPeerBatch(...)` plus owned rejection handling); it never awaits another peer's pump.
 
 - [ ] **Step 6: Implement typed public methods/events**
 
@@ -978,10 +978,10 @@ git commit -m "feat: connect real file transfer experience"
 
 **Files:**
 - Modify: apps/web/README.md
-- Modify: services/api/README.md only to state v2 payload boundaries; TURN details belong to the next plan.
+- Modify: services/api/README.md only to state current payload boundaries; TURN details belong to the next plan.
 - Modify: this plan checkboxes after completion.
 
-- [ ] **Step 1: Document v2 text/file behavior**
+- [ ] **Step 1: Document current text/file behavior**
 
 Document text direct modal, file consent, 10/100-MiB limits, in-memory Blob fallback, no server payload, cancellation, and browser download behavior.
 

@@ -783,7 +783,7 @@ Test absent, valid, unknown key, duplicate key, duplicate room, empty/encoded-in
 
 - [ ] **Step 2: Write failing storage migration tests**
 
-Require visitor and room keys to share the same `p2p-transmission:` tab suffix, survive same-tab refresh, isolate different `window.name` values, and use `sessionStorage`. Use the versioned key `p2p.roomSession:v2:<tab-name>`. Every load/clear deletes legacy `localStorage['p2p.roomSession']`; it never migrates that value.
+Require visitor and room keys to share the same `p2p-transmission:` tab suffix, survive same-tab refresh, isolate different `window.name` values, and use `sessionStorage`. Use the room key `p2p.roomSession:<tab-name>`. Every load/clear deletes legacy `localStorage['p2p.roomSession']`; it never migrates that value.
 
 The room guard must require exact keys and reject an object containing `inviteToken`, `requestId`, `token`, or any other extra property.
 

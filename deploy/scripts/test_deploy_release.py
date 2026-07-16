@@ -23,8 +23,8 @@ class DeployReleaseTests(unittest.TestCase):
         self.assertEqual(values['TURN_URLS'], 'turn:example.test')
         self.assertEqual(values['TURN_SHARED_SECRET'], 'secret-value')
 
-    def test_builds_production_v2_env_from_legacy_turn_settings(self) -> None:
-        values = deploy_release.build_v2_env(
+    def test_builds_production_env_from_legacy_turn_settings(self) -> None:
+        values = deploy_release.build_production_env(
             {},
             {
                 'TURN_URLS': 'turn:turn.p2p.yxswy.com:3478?transport=udp',
@@ -38,8 +38,8 @@ class DeployReleaseTests(unittest.TestCase):
         self.assertEqual(values['P2P_IMAGE_TAG'], '2.0.0-abcdef0')
         self.assertEqual(values['P2P_TURN_SECRET'], 'turn-secret-0123456789abcdef')
 
-    def test_preserves_existing_v2_secrets_during_update(self) -> None:
-        values = deploy_release.build_v2_env(
+    def test_preserves_existing_secrets_during_update(self) -> None:
+        values = deploy_release.build_production_env(
             {
                 'P2P_CAPABILITY_SECRET': 'existing-capability-secret-0123456789',
                 'P2P_TURN_SECRET': 'existing-turn-secret',
@@ -64,24 +64,24 @@ class DeployReleaseTests(unittest.TestCase):
             root = Path(directory)
             original_values = (
                 deploy_release.APP_DIR,
-                deploy_release.V2_DATABASE,
-                deploy_release.V2_BACKUPS,
+                deploy_release.PRODUCTION_DATABASE,
+                deploy_release.PRODUCTION_BACKUPS,
             )
             deploy_release.APP_DIR = root
-            deploy_release.V2_DATABASE = root / 'deploy/v2/data/control.sqlite3'
-            deploy_release.V2_BACKUPS = root / 'deploy/v2/backups'
+            deploy_release.PRODUCTION_DATABASE = root / 'deploy/production/data/control.sqlite3'
+            deploy_release.PRODUCTION_BACKUPS = root / 'deploy/production/backups'
             try:
-                deploy_release.V2_DATABASE.parent.mkdir(parents=True)
-                with closing(sqlite3.connect(deploy_release.V2_DATABASE)) as database:
+                deploy_release.PRODUCTION_DATABASE.parent.mkdir(parents=True)
+                with closing(sqlite3.connect(deploy_release.PRODUCTION_DATABASE)) as database:
                     database.execute('CREATE TABLE rooms (code TEXT PRIMARY KEY)')
                     database.execute('INSERT INTO rooms VALUES (?)', ('ABC123',))
                     database.commit()
 
-                deploy_release.V2_BACKUPS.mkdir(parents=True)
+                deploy_release.PRODUCTION_BACKUPS.mkdir(parents=True)
                 for index in range(11):
-                    (deploy_release.V2_BACKUPS / f'control-20000101T0000000000{index}Z-old.sqlite3').touch()
+                    (deploy_release.PRODUCTION_BACKUPS / f'control-20000101T0000000000{index}Z-old.sqlite3').touch()
 
-                backup = deploy_release.backup_v2_database('2.0.0-test')
+                backup = deploy_release.backup_production_database('2.0.0-test')
 
                 self.assertIsNotNone(backup)
                 assert backup is not None
@@ -91,14 +91,14 @@ class DeployReleaseTests(unittest.TestCase):
                         [('ABC123',)],
                     )
                 self.assertEqual(
-                    len(list(deploy_release.V2_BACKUPS.glob('control-*.sqlite3'))),
+                    len(list(deploy_release.PRODUCTION_BACKUPS.glob('control-*.sqlite3'))),
                     deploy_release.DATABASE_BACKUP_LIMIT,
                 )
             finally:
                 (
                     deploy_release.APP_DIR,
-                    deploy_release.V2_DATABASE,
-                    deploy_release.V2_BACKUPS,
+                    deploy_release.PRODUCTION_DATABASE,
+                    deploy_release.PRODUCTION_BACKUPS,
                 ) = original_values
 
 

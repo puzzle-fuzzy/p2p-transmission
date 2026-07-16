@@ -1,19 +1,19 @@
 [workspace]
 members = [
-  "v2/apps/server",
-  "v2/apps/web",
-  "v2/crates/browser-platform",
-  "v2/crates/domain",
-  "v2/crates/protocol",
-  "v2/crates/test-support",
-  "v2/crates/transfer",
+  "rust/apps/server",
+  "rust/apps/web",
+  "rust/crates/browser-platform",
+  "rust/crates/domain",
+  "rust/crates/protocol",
+  "rust/crates/test-support",
+  "rust/crates/transfer",
 ]
 default-members = [
-  "v2/apps/server",
-  "v2/crates/domain",
-  "v2/crates/protocol",
-  "v2/crates/test-support",
-  "v2/crates/transfer",
+  "rust/apps/server",
+  "rust/crates/domain",
+  "rust/crates/protocol",
+  "rust/crates/test-support",
+  "rust/crates/transfer",
 ]
 exclude = ["spikes/dioxus-webrtc"]
 resolver = "2"

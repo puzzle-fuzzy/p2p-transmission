@@ -15,7 +15,7 @@ The result should remain fast, minimal, and explicit:
 
 ## Considered Approaches
 
-### 1. Preserve protocol v2 and improve the batch UX (selected)
+### 1. Preserve current transfer protocol and improve the batch UX (selected)
 
 Keep the current whole-batch accept or reject decision. Improve the interface and expose individual download links only after the accepted batch has arrived.
 

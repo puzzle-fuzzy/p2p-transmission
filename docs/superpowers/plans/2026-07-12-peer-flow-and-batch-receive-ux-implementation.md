@@ -4,13 +4,13 @@
 
 **Goal:** Put an accurate, state-aware peer flow in the sender header, make the room code one copy target, bound long sender file lists, and improve the reliable whole-batch receiver flow.
 
-**Architecture:** Replace count-only peer readiness with exact ready peer IDs, then derive the sender's connection count and avatars from one source. Keep transfer protocol v2 unchanged. Reuse `TransferPeerFlow` and `FileTransferRow` across stable sender and receiver states, while `App` continues to own peer-session orchestration and Blob URL cleanup.
+**Architecture:** Replace count-only peer readiness with exact ready peer IDs, then derive the sender's connection count and avatars from one source. Keep transfer current transfer protocol unchanged. Reuse `TransferPeerFlow` and `FileTransferRow` across stable sender and receiver states, while `App` continues to own peer-session orchestration and Blob URL cleanup.
 
 **Tech Stack:** React 19, TypeScript 6, Tailwind CSS 4, Vitest, Testing Library, Bun, Vite, WebRTC DataChannel.
 
 ## Global Constraints
 
-- File transfer remains whole-batch accept or reject under protocol v2.
+- File transfer remains whole-batch accept or reject under current transfer protocol.
 - Selective transfer, ZIP generation, directory-picker integration, and automatic multi-file download remain out of scope.
 - Only the `transferring` phase animates the peer connector.
 - No ready receiver means sender avatar only; a ready receiver adds a neutral line; active transfer replaces the line with accent dots.

@@ -50,7 +50,7 @@ const expectProtocolError = (value: unknown) => {
   expect(result.error.message.length).toBeGreaterThan(0)
 }
 
-describe('transfer protocol v2', () => {
+describe('transfer protocol', () => {
   test('accepts and encodes every control-frame shape', () => {
     const messages: TransferProtocolMessage[] = [
       {

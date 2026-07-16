@@ -1,6 +1,6 @@
 import { getTabStorageKey } from './tab-session'
 
-const ROOM_SESSION_KEY = 'p2p.roomSession:v2'
+const ROOM_SESSION_KEY = 'p2p.roomSession'
 const LEGACY_ROOM_SESSION_KEY = 'p2p.roomSession'
 const ROOM_SESSION_KEYS = ['roomCode', 'role', 'expiresAt'] as const
 

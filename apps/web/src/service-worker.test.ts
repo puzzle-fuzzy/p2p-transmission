@@ -32,7 +32,7 @@ const createHarness = () => {
     keys: vi.fn(async () => [
       'unrelated-cache',
       'p2p-transmission-v1',
-      'p2p-transmission-static-v2',
+      'p2p-transmission-static',
     ]),
     match: vi.fn(async () => ({ source: 'unrelated-cache' })),
     open: vi.fn(async () => cache),

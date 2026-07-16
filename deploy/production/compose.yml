@@ -1,0 +1,47 @@
+name: p2p-transmission
+
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: deploy/production/Dockerfile
+      args:
+        RUST_IMAGE: ${P2P_RUST_IMAGE:-rust:1.97.0-alpine}
+        RUNTIME_IMAGE: ${P2P_RUNTIME_IMAGE:-alpine:3.23}
+    image: p2p-transmission:${P2P_IMAGE_TAG:-2.0.1}
+    restart: unless-stopped
+    environment:
+      P2P_ADDR: 0.0.0.0:3410
+      P2P_WEB_DIST: /app/web
+      P2P_DATABASE_PATH: /app/data/control.sqlite3
+      P2P_ALLOWED_ORIGINS: ${P2P_ALLOWED_ORIGINS:?set the public HTTPS origin}
+      P2P_SECURE_COOKIES: "true"
+      P2P_CAPABILITY_SECRET: ${P2P_CAPABILITY_SECRET:?set a random secret of at least 32 bytes}
+      P2P_ICE_URLS: ${P2P_ICE_URLS:-stun:stun.l.google.com:19302}
+      P2P_TURN_URLS: ${P2P_TURN_URLS:?set the production TURN URLs}
+      P2P_TURN_SECRET: ${P2P_TURN_SECRET:?set the TURN shared secret}
+      P2P_SESSION_RATE_MAX: ${P2P_SESSION_RATE_MAX:-60}
+      P2P_ROOM_RATE_MAX: ${P2P_ROOM_RATE_MAX:-60}
+      P2P_JOIN_RATE_MAX: ${P2P_JOIN_RATE_MAX:-120}
+      P2P_SIGNAL_RATE_MAX: ${P2P_SIGNAL_RATE_MAX:-600}
+      RUST_LOG: ${RUST_LOG:-p2p_server=info,tower_http=info}
+    volumes:
+      - type: bind
+        source: ./data
+        target: /app/data
+    ports:
+      - "${P2P_BIND_IP:-127.0.0.1}:${P2P_BIND_PORT:-3410}:3410"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:3410/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    stop_grace_period: 20s

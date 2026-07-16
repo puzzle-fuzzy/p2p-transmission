@@ -1,0 +1,10 @@
+[application]
+name = "p2p-web"
+default_platform = "web"
+
+[web.app]
+title = "P2P Transmission"
+
+[web.watcher]
+reload_html = true
+watch_path = ["src", "assets", "index.html"]

@@ -56,9 +56,9 @@ Rejected alternatives:
 - **One DataChannel per file:** simpler per-file routing, but creates unnecessary channel negotiation/lifecycle overhead and complicates multi-receiver aggregation.
 - **API file relay/storage:** easier delivery reporting, but violates the product promise that content does not pass through or remain on a server.
 
-## 5. Transfer Protocol v2
+## 5. Transfer Current transfer protocol
 
-The channel subprotocol becomes `p2p-transfer.v2`, and JSON control frames use `v: 2`. Both peers in a room run the same deployed client, so no v1/v2 mixed-session compatibility layer is required. Existing v1 tests remain as historical coverage only if the v1 parser is retained; PeerSession uses v2 exclusively.
+The channel subprotocol becomes `p2p-transfer`, and JSON control frames use `v: 2`. Both peers in a room run the same deployed client, so no legacy/current mixed-session compatibility layer is required. Existing v1 tests remain as historical coverage only if the v1 parser is retained; PeerSession uses the current protocol exclusively.
 
 ### 5.1 Limits
 
@@ -488,7 +488,7 @@ All limits and cleanup services use injectable clocks/schedulers, expose explici
 
 ### Automated
 
-- contracts: exact v2 frame parsing, 10-file/100-MiB boundaries, malformed metadata, aggregate overflow;
+- contracts: exact current frame parsing, 10-file/100-MiB boundaries, malformed metadata, aggregate overflow;
 - PeerSession: direct text delivery, text receipt, file reject-before-body, ordered chunks, byte mismatch, backpressure, progress, cancel, timeout, peer close, and cleanup;
 - UI/state: text Copy/Close semantics, file Accept/Reject semantics, room-code copy, Avatar phase aggregation, generation-safe terminal hold, and object URL revocation;
 - config/API: `off|static|api`, invalid partial static config, atomic bootstrap rollback, HMAC output with a fixed clock, epoch-millisecond expiry/grace, no-store, multi-key rate limits, state capacities/cleanup, and no secret leakage;

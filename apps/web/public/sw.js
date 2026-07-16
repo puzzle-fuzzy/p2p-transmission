@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'p2p-transmission-'
-const CACHE_NAME = `${CACHE_PREFIX}static-v2`
+ const CACHE_NAME = `${CACHE_PREFIX}static`
 const STATIC_ASSETS = [
   '/favicon.svg',
   '/icons.svg',

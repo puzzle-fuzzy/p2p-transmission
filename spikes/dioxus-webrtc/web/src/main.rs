@@ -41,7 +41,7 @@ fn App() -> Element {
     rsx! {
         style { {STYLE} }
         main { class: "shell",
-            p { class: "eyebrow", "P2P Transmission 2.0 / M1" }
+             p { class: "eyebrow", "P2P Transmission / M1" }
             h1 { "Rust WebRTC 技术验证" }
             p { class: "lede",
                 "Dioxus/WASM 负责浏览器端，Axum 只转发 signaling。这个页面用于验证 WebRTC、文件分片、完整性和背压，不代表最终产品视觉。"

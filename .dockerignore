@@ -8,7 +8,7 @@ node_modules
 dist
 **/dist
 deploy/data
-deploy/v2/data
+deploy/production/data
 deploy/coturn/.local
 apps/web/test-results
 apps/web/playwright-report

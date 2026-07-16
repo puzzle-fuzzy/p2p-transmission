@@ -28,7 +28,7 @@ class FakeDataChannel implements DataChannelLike {
   onmessage: ((event: { data: unknown }) => void) | null = null
   sent: (string | ArrayBuffer)[] = []
 
-  constructor(label = 'p2p-transfer', protocol = 'p2p-transfer.v2') {
+  constructor(label = 'p2p-transfer', protocol = 'p2p-transfer') {
     this.label = label
     this.protocol = protocol
   }
@@ -205,8 +205,8 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-describe('peer session v2', () => {
-  test('keeps peer generation guards and creates a v2 binary channel', async () => {
+describe('peer session', () => {
+  test('keeps peer generation guards and creates a binary channel', async () => {
     const connection = new FakePeerConnection()
     const signals: SignalClientMessage[] = []
     const session = createPeerSession({
@@ -225,7 +225,7 @@ describe('peer session v2', () => {
     expect(connection.channels).toHaveLength(1)
     expect(connection.channels[0]).toMatchObject({
       label: 'p2p-transfer',
-      protocol: 'p2p-transfer.v2',
+      protocol: 'p2p-transfer',
       binaryType: 'arraybuffer',
     })
     expect(signals).toContainEqual(expect.objectContaining({
