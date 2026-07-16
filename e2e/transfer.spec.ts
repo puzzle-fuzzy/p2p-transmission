@@ -16,7 +16,19 @@ const sha256File = async (path: string) => {
   return hash.digest('hex')
 }
 
-const connectSingleReceiverRoom = async (owner: Page, receiver: Page) => {
+const connectSingleReceiverRoom = async (
+  owner: Page,
+  receiver: Page,
+  options: { persistentSource?: boolean } = {},
+) => {
+  if (!options.persistentSource) {
+    await owner.addInitScript(() => {
+      Object.defineProperty(window, 'showOpenFilePicker', {
+        configurable: true,
+        value: undefined,
+      })
+    })
+  }
   await owner.goto('/app')
   await owner.getByRole('button', { name: '创建房间' }).click()
   const roomCode = (await owner.getByRole('button', { name: /复制房间码/ }).textContent())?.trim()
@@ -1274,7 +1286,7 @@ test('a streamed sender reloads and resumes from its persisted source checkpoint
   })
 
   try {
-    await connectSingleReceiverRoom(owner, receiver)
+    await connectSingleReceiverRoom(owner, receiver, { persistentSource: true })
     await expect(owner.locator('#transfer-file-input')).toHaveCount(0)
     const persistentFilePicker = owner.getByRole('button', { name: '选择文件' })
     await expect(persistentFilePicker).toHaveCount(1)
