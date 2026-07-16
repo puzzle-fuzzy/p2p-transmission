@@ -544,29 +544,16 @@ def restore_compose(snapshot: Path) -> bool:
     return restore_runtime_file(snapshot, PRODUCTION_COMPOSE, 0o644)
 
 
-def readiness_matches(
-    payload: object,
-    expected_release: str,
-    *,
-    allow_unversioned: bool = False,
-) -> bool:
-    release = payload.get('release') if isinstance(payload, dict) else None
-    exact_release = release == expected_release
-    legacy_version = expected_release.rsplit('-', 1)[0]
-    compatible_unversioned = (
-        allow_unversioned and not release and payload.get('version') == legacy_version
-        if isinstance(payload, dict)
-        else False
-    )
+def readiness_matches(payload: object, expected_release: str) -> bool:
     return (
         isinstance(payload, dict)
         and payload.get('status') == 'ready'
         and payload.get('service') == 'p2p-server'
-        and (exact_release or compatible_unversioned)
+        and payload.get('release') == expected_release
     )
 
 
-def wait_for_readiness(expected_release: str, *, allow_unversioned: bool = False) -> bool:
+def wait_for_readiness(expected_release: str) -> bool:
     url = 'http://127.0.0.1:3410/health/ready'
     for _ in range(45):
         try:
@@ -575,9 +562,8 @@ def wait_for_readiness(expected_release: str, *, allow_unversioned: bool = False
             if response.status == 200 and readiness_matches(
                 payload,
                 expected_release,
-                allow_unversioned=allow_unversioned,
             ):
-                actual = payload.get('release') or payload.get('version')
+                actual = payload.get('release')
                 print(f'production ready: {actual}', flush=True)
                 return True
         except (OSError, ValueError, json.JSONDecodeError):
@@ -695,7 +681,7 @@ def rollback_runtime(preflight: ProductionPreflight) -> None:
     if prerequisites_restored:
         runtime_restored = best_effort(
             compose_production('up', '-d', '--no-build', '--no-deps', 'app')
-        ) and wait_for_readiness(preflight.previous_tag, allow_unversioned=True)
+        ) and wait_for_readiness(preflight.previous_tag)
 
     if not prerequisites_restored or not runtime_restored:
         raise SystemExit('automatic production rollback failed; manual intervention is required')

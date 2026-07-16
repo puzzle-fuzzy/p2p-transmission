@@ -16,7 +16,7 @@ ENTRYPOINT_GZIP_BUDGET = 528 * 1024
 
 
 def gzip_size(path: Path) -> int:
-    return len(gzip.compress(path.read_bytes(), compresslevel=9, mtime=0))
+    return len(gzip.compress(path.read_bytes(), compresslevel=6, mtime=0))
 
 
 def format_kib(size: int) -> str:

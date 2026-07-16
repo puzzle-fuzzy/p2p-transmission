@@ -3,6 +3,7 @@ const CACHE_NAME = `${CACHE_PREFIX}v2-shell`;
 const SHELL_ASSETS = [
   '/',
   '/app',
+  '/app/',
   '/favicon.svg',
   '/manifest.webmanifest',
   '/shell/app-shell.js',

@@ -9,6 +9,7 @@ colors:
   ink-muted: "rgba(255,255,255,0.56)"
   ink-dim: "rgba(255,255,255,0.2)"
   border: "rgba(255,251,235,0.15)"
+  control-border: "rgba(255,251,235,0.36)"
   border-dashed: "rgba(255,251,235,0.15)"
 typography:
   body:
@@ -57,6 +58,7 @@ components:
     padding: "10px 16px"
   input-field:
     backgroundColor: "transparent"
+    borderColor: "{colors.control-border}"
     textColor: "{colors.ink}"
     rounded: "{rounded.md}"
     padding: "16px"
@@ -96,13 +98,14 @@ components:
 - **Ink** (`rgba(255,255,255,0.80)`): 正文颜色。标题、输入文本、按钮文字。
 - **Ink Muted** (`rgba(255,255,255,0.56)`): 次要文字。文件描述、日志内容、辅助提示。
 - **Ink Dim** (`rgba(255,255,255,0.20)`): 禁用和装饰文字。分割线文字、占位符、时间戳。
-- **Border** (`rgba(255,251,235,0.15)`): 描边色。输入框边框、分割线、按钮轮廓。
+- **Border** (`rgba(255,251,235,0.15)`): 结构描边色。分割线、按钮轮廓和非必要边界。
+- **Control Border** (`rgba(255,251,235,0.36)`): 输入控件的默认可见边界；在 Charcoal 上达到至少 3:1，满足 WCAG 2.2 AA 非文本对比度。
 
 ### Named Rules
 
 **The One Color Rule.** Signal Purple 是唯一的彩色，只出现在交互元素（按钮、聚焦、进度、完成标记）上。它的稀有度就是它的意义。不要将它用在纯装饰元素上。
 
-**The Opacity Scale Rule.** 层次不靠阴影，靠白色叠加的透明度阶梯：5% → 10% → 15% → 56% → 80%。每跳对应一个语义角色。不要跳过层级或使用任意值。
+**The Opacity Scale Rule.** 层次不靠阴影，靠白色叠加的透明度阶梯：5% → 10% → 15% → 56% → 80%。每跳对应一个语义角色。输入控件边界使用 36% 作为无障碍例外，以满足 3:1 非文本对比度。
 
 ## 3. Typography
 
@@ -150,7 +153,7 @@ components:
 
 ### Inputs / Fields
 
-- **Style:** 透明背景 + 1px 实色描边 ( `rgba(255,251,235,0.15)` )，12px 圆角。
+- **Style:** 透明背景 + 1px 可见控件描边 ( `rgba(255,251,235,0.36)` )，12px 圆角。
 - **Textarea:** 同输入框风格，内边距 16px，右下角字数统计。
 - **Focus:** 描边切换至 Signal Purple (`#5e11d1`)。无发光、无偏移、无动画外的额外反馈。
 - **Verification Code（六位）:** 六个独立等宽输入框，每个 `w-12 h-14`，`font-mono` (20px)，居中文字。支持粘贴分发和自动跳格。

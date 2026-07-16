@@ -52,6 +52,12 @@ test('the landing page is server-rendered and does not load WebAssembly', async 
     scope: '/',
     start_url: '/',
   })
+  for (const path of ['/unknown-route', '/assets/missing.js']) {
+    const missing = await page.request.get(path)
+    expect(missing.status()).toBe(404)
+  }
+  const trailingApp = await page.request.get('/app/')
+  expect(trailingApp.ok()).toBe(true)
   await expect.poll(async () => page.evaluate(async () => {
     if (!('serviceWorker' in navigator)) return false
     const registration = await navigator.serviceWorker.ready
@@ -75,6 +81,34 @@ test('the landing page is server-rendered and does not load WebAssembly', async 
   }
 })
 
+test('an invalid stored room is cleared without trapping landing navigation', async ({ page }) => {
+  await page.goto('/')
+  await page.evaluate(() => {
+    window.localStorage.setItem(
+      'p2p_room_session',
+      JSON.stringify({
+        room_code: 'ABC234',
+        role: 'receiver',
+        join_request_id: 'join_pending',
+        invite_request_id: null,
+        peer_id: null,
+      }),
+    )
+  })
+  await page.route('**/api/sessions', route => route.fulfill({
+    status: 503,
+    contentType: 'application/json',
+    body: JSON.stringify({ error: { code: 'unavailable', message: 'temporary outage' } }),
+  }))
+
+  await page.reload()
+  await expect(page).toHaveURL(/\/app$/u)
+  await expect(page.getByRole('heading', { name: '加入房间' })).toBeVisible()
+  await expect.poll(() => page.evaluate(
+    () => window.localStorage.getItem('p2p_room_session'),
+  )).toBeNull()
+})
+
 test('the application entrypoint renders a useful shell before WebAssembly boots', async ({
   page,
 }) => {
@@ -96,9 +130,11 @@ test('the installed PWA keeps a useful shell available offline', async ({ contex
 
   await context.setOffline(true)
   try {
-    const response = await page.goto('/app', { waitUntil: 'domcontentloaded' })
-    expect(response?.ok()).toBe(true)
-    await expect(page.getByRole('heading', { name: '正在准备安全传输' })).toBeVisible()
+    for (const path of ['/app', '/app/']) {
+      const response = await page.goto(path, { waitUntil: 'domcontentloaded' })
+      expect(response?.ok()).toBe(true)
+      await expect(page.getByRole('heading', { name: '正在准备安全传输' })).toBeVisible()
+    }
   } finally {
     await context.setOffline(false)
   }

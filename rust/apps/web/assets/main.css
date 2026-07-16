@@ -15,6 +15,7 @@
   --ink-dim: rgba(255, 255, 255, 0.2);
   --border: rgba(255, 251, 235, 0.15);
   --border-subtle: rgba(255, 251, 235, 0.08);
+  --control-border: rgba(255, 251, 235, 0.36);
   --surface-hover: rgba(255, 255, 255, 0.05);
   --accent-surface: rgba(94, 17, 209, 0.15);
   --scrim: rgba(0, 0, 0, 0.6);
@@ -64,6 +65,11 @@ button:disabled {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+.sr-only:focus-visible + .file-picker-button {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
 }
 
 .app-shell {
@@ -153,7 +159,7 @@ h1 {
   display: grid;
   height: 68px;
   place-items: center;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 9px;
   background: transparent;
   color: var(--ink-strong);
@@ -1067,6 +1073,10 @@ h1 {
   gap: 8px;
 }
 
+.dialog-actions-primary-first {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+}
+
 .share-code {
   display: flex;
   align-items: center;
@@ -1183,6 +1193,10 @@ h1 {
   .transfer-request-dialog,
   .recipient-picker-dialog {
     padding: 20px;
+  }
+
+  .dialog-actions {
+    grid-template-columns: 1fr;
   }
 }
 

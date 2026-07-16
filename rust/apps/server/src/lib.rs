@@ -44,11 +44,12 @@ pub fn release_version() -> &'static str {
 pub fn app(web_root: impl Into<PathBuf>, state: AppState) -> Router {
     let web_root = web_root.into();
     let index = web_root.join("index.html");
-    let static_files = ServeDir::new(web_root).fallback(ServeFile::new(index.clone()));
+    let static_files = ServeDir::new(web_root);
 
     Router::new()
         .route("/", get(landing))
-        .route_service("/app", ServeFile::new(index))
+        .route_service("/app", ServeFile::new(index.clone()))
+        .route_service("/app/", ServeFile::new(index))
         .route("/shell/landing.css", get(landing_css))
         .route("/shell/landing.js", get(landing_js))
         .route("/shell/app-shell.js", get(app_shell_js))
@@ -262,20 +263,30 @@ mod tests {
         assert!(!body.contains(".wasm"));
         assert!(!body.contains("shell fixture"));
 
-        let app_shell = app(&web_root, state.clone())
-            .oneshot(Request::get("/app").body(Body::empty()).expect("request"))
-            .await
-            .expect("application shell response")
-            .into_body()
-            .collect()
-            .await
-            .expect("collect application shell")
-            .to_bytes();
-        assert!(
-            app_shell
-                .windows(b"shell fixture".len())
-                .any(|window| window == b"shell fixture")
-        );
+        for path in ["/app", "/app/"] {
+            let app_shell = app(&web_root, state.clone())
+                .oneshot(Request::get(path).body(Body::empty()).expect("request"))
+                .await
+                .expect("application shell response")
+                .into_body()
+                .collect()
+                .await
+                .expect("collect application shell")
+                .to_bytes();
+            assert!(
+                app_shell
+                    .windows(b"shell fixture".len())
+                    .any(|window| window == b"shell fixture")
+            );
+        }
+
+        for path in ["/unknown-route", "/assets/missing.js"] {
+            let missing = app(&web_root, state.clone())
+                .oneshot(Request::get(path).body(Body::empty()).expect("request"))
+                .await
+                .expect("missing static response");
+            assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        }
 
         state.services.storage.close().await;
         fs::remove_dir_all(web_root).expect("remove static fixture directory");

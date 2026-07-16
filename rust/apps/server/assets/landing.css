@@ -8,9 +8,10 @@
   --ink: rgba(255, 255, 255, 0.8);
   --ink-strong: rgba(255, 248, 231, 0.9);
   --ink-on-accent: rgba(255, 255, 255, 0.9);
-  --ink-muted: rgba(255, 255, 255, 0.5);
+  --ink-muted: rgba(255, 255, 255, 0.56);
   --ink-dim: rgba(255, 255, 255, 0.2);
   --border: rgba(255, 251, 235, 0.15);
+  --control-border: rgba(255, 251, 235, 0.36);
   --surface-hover: rgba(255, 255, 255, 0.05);
 }
 
@@ -96,7 +97,7 @@ h1 {
   width: 100%;
   height: 68px;
   padding: 0 16px 0 24px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 12px;
   background: transparent;
   color: var(--ink-strong);

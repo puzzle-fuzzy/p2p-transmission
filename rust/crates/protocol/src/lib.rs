@@ -45,7 +45,6 @@ pub struct HealthResponse {
     pub status: HealthState,
     pub service: String,
     pub version: String,
-    #[serde(default)]
     pub release: String,
 }
 

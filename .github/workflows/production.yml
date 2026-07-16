@@ -198,7 +198,6 @@ jobs:
           GITHUB_SHA: ${{ github.sha }}
         run: |
           git archive --format=tar.gz --output="p2p-transmission-$GITHUB_SHA.tar.gz" "$GITHUB_SHA"
-          git archive --format=tar.gz --output="p2p-transmission-deployer-$GITHUB_SHA.tar.gz" "$GITHUB_SHA" deploy/scripts/deploy-release.py
           python3 - <<'PY'
           import json
           import os
@@ -248,30 +247,13 @@ jobs:
           RELEASE_VERSION: ${{ needs.container.outputs.release-version }}
         run: |
           SOURCE_ARCHIVE="p2p-transmission-$GITHUB_SHA.tar.gz"
-          DEPLOYER_ARCHIVE="p2p-transmission-deployer-$GITHUB_SHA.tar.gz"
           IMAGE_ARCHIVE="p2p-transmission-image-$GITHUB_SHA.tar.gz"
           RETIRED_FILES="p2p-transmission-retired-$GITHUB_SHA.json"
           scp "$SOURCE_ARCHIVE" "$IMAGE_ARCHIVE" "$RETIRED_FILES" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/"
           # Release values are locally validated identifiers.
           # shellcheck disable=SC2029
-          if ssh "$DEPLOY_USER@$DEPLOY_HOST" \
-            "sudo /usr/local/sbin/p2p-transmission-deploy --help" 2>&1 \
-            | grep -q -- '--retired-files'; then
-            # shellcheck disable=SC2029
-            ssh "$DEPLOY_USER@$DEPLOY_HOST" \
-              "sudo /usr/local/sbin/p2p-transmission-deploy --archive /tmp/$SOURCE_ARCHIVE --image-archive /tmp/$IMAGE_ARCHIVE --retired-files /tmp/$RETIRED_FILES --version $RELEASE_VERSION"
-          else
-            echo "::notice::Bootstrapping the source-manifest capable deployer"
-            scp "$DEPLOYER_ARCHIVE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/$SOURCE_ARCHIVE"
-            # The old CLI supports a source-only update when no image archive is supplied.
-            # shellcheck disable=SC2029
-            ssh "$DEPLOY_USER@$DEPLOY_HOST" \
-              "sudo /usr/local/sbin/p2p-transmission-deploy --archive /tmp/$SOURCE_ARCHIVE --version $RELEASE_VERSION"
-            scp "$SOURCE_ARCHIVE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/"
-            # shellcheck disable=SC2029
-            ssh "$DEPLOY_USER@$DEPLOY_HOST" \
-              "sudo /usr/local/sbin/p2p-transmission-deploy --archive /tmp/$SOURCE_ARCHIVE --image-archive /tmp/$IMAGE_ARCHIVE --retired-files /tmp/$RETIRED_FILES --version $RELEASE_VERSION"
-          fi
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" \
+            "sudo /usr/local/sbin/p2p-transmission-deploy --archive /tmp/$SOURCE_ARCHIVE --image-archive /tmp/$IMAGE_ARCHIVE --retired-files /tmp/$RETIRED_FILES --version $RELEASE_VERSION"
 
       - name: Verify the public Rust service
         if: steps.release_head.outputs.current == 'true'

@@ -79,8 +79,7 @@ struct StoredRoomSession {
     role: RoomRole,
     join_request_id: Option<String>,
     invite_request_id: Option<String>,
-    #[serde(default)]
-    peer_id: Option<String>,
+    peer_id: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -171,6 +170,7 @@ enum Screen {
     Waiting {
         room_code: String,
         request_id: String,
+        peer_id: String,
         revision: u64,
         expires_at_ms: u64,
     },
@@ -590,6 +590,7 @@ fn initialize(mut model: Signal<AppModel>, target: Signal<Option<RealtimeTarget>
             }) => (room_code.clone(), capability.clone()),
             _ => (String::new(), None),
         };
+        let stored_room_session = restored_room_session();
         let identity = new_client_id("visitor");
         let suffix = identity
             .chars()
@@ -614,7 +615,7 @@ fn initialize(mut model: Signal<AppModel>, target: Signal<Option<RealtimeTarget>
         };
         model.write().session = Some(session.clone());
 
-        if let Some(stored) = restored_room_session()
+        if let Some(stored) = stored_room_session
             && restore_room(model, target, &session, stored).await
         {
             return;
@@ -674,13 +675,13 @@ async fn restore_room(
                 state.notice = Some("房间已创建，可以分享邀请链接".to_owned());
             }
         }
-        let peer_id = stored.peer_id.unwrap_or_else(|| new_client_id("peer"));
+        let peer_id = stored.peer_id.clone();
         persist_room_session(&StoredRoomSession {
             room_code: room_code.clone(),
             role,
             join_request_id: stored.join_request_id,
             invite_request_id: stored.invite_request_id.clone(),
-            peer_id: Some(peer_id.clone()),
+            peer_id: peer_id.clone(),
         });
         target.set(Some(member_target(room_code, revision, peer_id)));
         return true;
@@ -694,6 +695,7 @@ async fn restore_room(
                 model.write().screen = Screen::Waiting {
                     room_code: stored.room_code.clone(),
                     request_id: request_id.clone(),
+                    peer_id: stored.peer_id.clone(),
                     revision: status.revision,
                     expires_at_ms: status.expires_at_ms,
                 };
@@ -705,7 +707,7 @@ async fn restore_room(
                 return true;
             }
             JoinRequestStateWire::Approved => {
-                enter_receiver_room(model, target, snapshot, request_id);
+                enter_receiver_room(model, target, snapshot, request_id, stored.peer_id);
                 return true;
             }
             JoinRequestStateWire::Rejected
@@ -850,7 +852,7 @@ fn submit_create_room(
                     role: RoomRole::Owner,
                     join_request_id: None,
                     invite_request_id: Some(invite_request_id.clone()),
-                    peer_id: Some(peer_id.clone()),
+                    peer_id: peer_id.clone(),
                 };
                 persist_room_session(&stored);
                 let revision = snapshot.revision;
@@ -895,12 +897,13 @@ fn submit_join(mut model: Signal<AppModel>, mut realtime_target: Signal<Option<R
         let request_id = new_client_id("join");
         match request_join(&room_code, &request_id, None, invite_capability.clone()).await {
             Ok(response) => {
+                let peer_id = new_client_id("peer");
                 persist_room_session(&StoredRoomSession {
                     room_code: room_code.clone(),
                     role: RoomRole::Receiver,
                     join_request_id: Some(request_id.clone()),
                     invite_request_id: None,
-                    peer_id: None,
+                    peer_id: peer_id.clone(),
                 });
                 {
                     let mut state = model.write();
@@ -908,6 +911,7 @@ fn submit_join(mut model: Signal<AppModel>, mut realtime_target: Signal<Option<R
                     state.screen = Screen::Waiting {
                         room_code: room_code.clone(),
                         request_id: request_id.clone(),
+                        peer_id,
                         revision: response.revision,
                         expires_at_ms: response.expires_at_ms,
                     };
@@ -1607,7 +1611,7 @@ fn TransferRequestDialog(
                         }
                     }
                 }
-                div { class: "dialog-actions",
+                div { class: "dialog-actions dialog-actions-primary-first",
                     if streamed {
                         if recovery_available {
                             button {
@@ -3875,6 +3879,7 @@ fn resolve_waiting(mut model: Signal<AppModel>, realtime_target: Signal<Option<R
     let Screen::Waiting {
         room_code,
         request_id,
+        peer_id,
         ..
     } = &model.read().screen
     else {
@@ -3882,6 +3887,7 @@ fn resolve_waiting(mut model: Signal<AppModel>, realtime_target: Signal<Option<R
     };
     let room_code = room_code.clone();
     let request_id = request_id.clone();
+    let peer_id = peer_id.clone();
     spawn(async move {
         let Ok(status) = join_request_status(&room_code, &request_id).await else {
             model.write().error = Some("暂时无法确认申请状态，正在等待重连".to_owned());
@@ -3890,7 +3896,9 @@ fn resolve_waiting(mut model: Signal<AppModel>, realtime_target: Signal<Option<R
         match status.state {
             JoinRequestStateWire::Pending => {}
             JoinRequestStateWire::Approved => match bootstrap_room(&room_code).await {
-                Ok(snapshot) => enter_receiver_room(model, realtime_target, snapshot, request_id),
+                Ok(snapshot) => {
+                    enter_receiver_room(model, realtime_target, snapshot, request_id, peer_id)
+                }
                 Err(error) => model.write().error = Some(friendly_error(&error)),
             },
             JoinRequestStateWire::Rejected => return_to_lobby(
@@ -3912,14 +3920,14 @@ fn enter_receiver_room(
     mut realtime_target: Signal<Option<RealtimeTarget>>,
     snapshot: RoomBootstrapResponse,
     request_id: String,
+    peer_id: String,
 ) {
-    let peer_id = new_client_id("peer");
     persist_room_session(&StoredRoomSession {
         room_code: snapshot.room_code.clone(),
         role: RoomRole::Receiver,
         join_request_id: Some(request_id),
         invite_request_id: None,
-        peer_id: Some(peer_id.clone()),
+        peer_id: peer_id.clone(),
     });
     let revision = snapshot.revision;
     let room_code = snapshot.room_code.clone();
@@ -4011,10 +4019,14 @@ fn member_target(room_code: String, last_revision: u64, peer_id: String) -> Real
 }
 
 fn restored_room_session() -> Option<StoredRoomSession> {
-    load_room_session()
-        .ok()
-        .flatten()
-        .and_then(|value| serde_json::from_str(&value).ok())
+    let value = load_room_session().ok().flatten()?;
+    match serde_json::from_str(&value) {
+        Ok(session) => Some(session),
+        Err(_) => {
+            let _ = clear_room_session();
+            None
+        }
+    }
 }
 
 fn persist_room_session(value: &StoredRoomSession) {
@@ -4312,24 +4324,23 @@ mod tests {
     }
 
     #[test]
-    fn stored_room_session_keeps_peer_identity_and_accepts_pre_recovery_records() {
-        let legacy = serde_json::from_str::<StoredRoomSession>(
+    fn stored_room_session_requires_peer_identity() {
+        let missing_peer_id = serde_json::from_str::<StoredRoomSession>(
             r#"{"room_code":"ABC234","role":"receiver","join_request_id":"join_1","invite_request_id":null}"#,
-        )
-        .expect("legacy room session should remain readable");
-        assert_eq!(legacy.peer_id, None);
+        );
+        assert!(missing_peer_id.is_err());
 
         let current = StoredRoomSession {
             room_code: "ABC234".to_owned(),
             role: RoomRole::Receiver,
             join_request_id: Some("join_1".to_owned()),
             invite_request_id: None,
-            peer_id: Some("peer_stable".to_owned()),
+            peer_id: "peer_stable".to_owned(),
         };
         let encoded = serde_json::to_string(&current).expect("room session should serialize");
         let restored = serde_json::from_str::<StoredRoomSession>(&encoded)
             .expect("room session should restore");
-        assert_eq!(restored.peer_id.as_deref(), Some("peer_stable"));
+        assert_eq!(restored.peer_id, "peer_stable");
     }
 
     #[test]

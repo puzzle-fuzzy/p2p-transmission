@@ -83,20 +83,6 @@ class DeployReleaseTests(unittest.TestCase):
         )
         unversioned = {key: value for key, value in payload.items() if key != 'release'}
         self.assertFalse(deploy_release.readiness_matches(unversioned, '2.0.1-abcdef0'))
-        self.assertTrue(
-            deploy_release.readiness_matches(
-                unversioned,
-                '2.0.1-abcdef0',
-                allow_unversioned=True,
-            )
-        )
-        self.assertFalse(
-            deploy_release.readiness_matches(
-                {**unversioned, 'version': '2.0.0'},
-                '2.0.1-abcdef0',
-                allow_unversioned=True,
-            )
-        )
 
     def test_deployment_requires_the_previous_rollback_image(self) -> None:
         with patch.object(deploy_release, 'image_exists', return_value=True):
@@ -145,7 +131,7 @@ class DeployReleaseTests(unittest.TestCase):
     def test_existing_source_manifest_wins_over_bootstrap_diff(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            stale = root / 'services/api/src/index.ts'
+            stale = root / 'retired/service/src/main.rs'
             bootstrap_only = root / 'docs/keep.md'
             for path in (stale, bootstrap_only):
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -156,7 +142,7 @@ class DeployReleaseTests(unittest.TestCase):
             deploy_release.SOURCE_MANIFEST = root / 'deploy/production/source-files.json'
             deploy_release.SOURCE_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
             deploy_release.SOURCE_MANIFEST.write_text(
-                json.dumps(['services/api/src/index.ts']),
+                json.dumps(['retired/service/src/main.rs']),
                 encoding='utf-8',
             )
             try:
@@ -236,7 +222,7 @@ class DeployReleaseTests(unittest.TestCase):
         ):
             deploy_release.rollback_runtime(preflight)
             self.assertEqual(best_effort.call_count, 3)
-            ready.assert_called_once_with('2.0.1-abcdef0', allow_unversioned=True)
+            ready.assert_called_once_with('2.0.1-abcdef0')
 
         with (
             patch.object(deploy_release, 'best_effort', return_value=True) as best_effort,

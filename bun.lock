@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "p2p-transmission",
+      "name": "p2p-transmission-browser-tests",
       "devDependencies": {
         "@axe-core/playwright": "^4.12.1",
         "@playwright/test": "^1.52.0",
