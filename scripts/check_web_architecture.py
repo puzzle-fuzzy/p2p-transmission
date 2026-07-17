@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import tomllib
 
 
@@ -23,6 +24,61 @@ FORBIDDEN_DEPENDENCIES = {
         "crate::realtime_session",
     ),
     "browser_lifecycle.rs": ("crate::realtime_session",),
+    "app_bootstrap.rs": (
+        "crate::join_request",
+        "crate::lobby",
+        "crate::room_view",
+        "crate::waiting_room",
+    ),
+    "room_entry.rs": (
+        "crate::app_bootstrap",
+        "crate::join_request",
+        "crate::lobby",
+        "crate::room_view",
+        "crate::waiting_room",
+    ),
+    "lobby.rs": (
+        "crate::app_bootstrap",
+        "crate::join_request",
+        "crate::room_view",
+        "crate::waiting_room",
+    ),
+    "waiting_room.rs": (
+        "crate::app_bootstrap",
+        "crate::join_request",
+        "crate::lobby",
+        "crate::room_entry",
+        "crate::room_view",
+    ),
+    "join_request.rs": (
+        "crate::app_bootstrap",
+        "crate::lobby",
+        "crate::room_entry",
+        "crate::room_view",
+        "crate::waiting_room",
+    ),
+    "room_view.rs": (
+        "crate::app_bootstrap",
+        "crate::lobby",
+        "crate::room_entry",
+        "crate::waiting_room",
+    ),
+    "transfer_panel/transfer_request_dialog.rs": (
+        "crate::app_bootstrap",
+        "crate::join_request",
+        "crate::lobby",
+        "crate::room_entry",
+        "crate::room_view",
+        "crate::waiting_room",
+    ),
+    "transfer_panel/recipient_picker_dialog.rs": (
+        "crate::app_bootstrap",
+        "crate::join_request",
+        "crate::lobby",
+        "crate::room_entry",
+        "crate::room_view",
+        "crate::waiting_room",
+    ),
 }
 UI_SHELL_ALLOWED_RUNTIME_DEPENDENCIES = {"dioxus"}
 UI_SHELL_FORBIDDEN_SOURCE_IMPORTS = (
@@ -59,13 +115,28 @@ def ui_shell_runtime_dependencies(manifest: dict[str, object]) -> set[str]:
     return dependencies
 
 
+def imports_dependency(source: str, dependency: str) -> bool:
+    """Recognize direct paths and grouped `use crate::{...}` imports."""
+    if dependency in source:
+        return True
+    if not dependency.startswith("crate::"):
+        return False
+
+    module = re.escape(dependency.removeprefix("crate::"))
+    grouped_imports = re.finditer(r"\buse\s+crate::\{(.*?)\};", source, re.DOTALL)
+    return any(
+        re.search(rf"(?:^|\W){module}\s*(?:::|,|$)", match.group(1))
+        for match in grouped_imports
+    )
+
+
 def main() -> None:
     violations: list[str] = []
     for filename, forbidden in FORBIDDEN_DEPENDENCIES.items():
         path = WEB_SOURCE / filename
         source = path.read_text(encoding="utf-8")
         for dependency in forbidden:
-            if dependency in source:
+            if imports_dependency(source, dependency):
                 violations.append(f"{path.relative_to(ROOT)} imports {dependency}")
 
     ui_shell_manifest_path = UI_SHELL / "Cargo.toml"
