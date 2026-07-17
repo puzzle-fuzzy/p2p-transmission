@@ -18,8 +18,8 @@ pub(super) fn JoinRequestDialog(
     use_effect(|| {
         let _ = show_modal_dialog("join-request-dialog");
     });
-    let state = model.read().clone();
-    let pending = state.decision_request_id.is_some();
+    let decision_pending = use_memo(move || model.read().decision_request_id.is_some());
+    let pending = decision_pending();
     rsx! {
         dialog {
                 id: "join-request-dialog",

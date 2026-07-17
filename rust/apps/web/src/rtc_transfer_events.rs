@@ -18,47 +18,84 @@ fn set_peer_transfer(model: &mut AppModel, peer_id: String, transfer: TransferSt
     }
 }
 
-fn project_transfer_progress(
+fn transfer_progress_is_valid(
     current: &TransferState,
     transfer_id: &str,
     direction: TransferDirection,
     completed_bytes: u64,
-) -> Option<TransferState> {
+) -> bool {
     let TransferState::Active {
         transfer_id: current_id,
         direction: current_direction,
-        streamed,
         file,
-        files,
         completed_bytes: current_bytes,
         awaiting_verification,
         link_state,
         storage_pause,
+        ..
     } = current
     else {
-        return None;
+        return false;
     };
-    if current_id != transfer_id
-        || *current_direction != direction
-        || *awaiting_verification
-        || *link_state != TransferLinkState::Ready
-        || storage_pause.is_some()
-        || completed_bytes < *current_bytes
-        || completed_bytes > file.size_bytes
-    {
-        return None;
+    current_id == transfer_id
+        && *current_direction == direction
+        && !*awaiting_verification
+        && *link_state == TransferLinkState::Ready
+        && storage_pause.is_none()
+        && completed_bytes >= *current_bytes
+        && completed_bytes <= file.size_bytes
+}
+
+fn apply_transfer_progress(
+    current: &mut TransferState,
+    transfer_id: &str,
+    direction: TransferDirection,
+    completed_bytes: u64,
+) -> bool {
+    if !transfer_progress_is_valid(current, transfer_id, direction, completed_bytes) {
+        return false;
     }
-    Some(TransferState::Active {
-        transfer_id: current_id.clone(),
-        direction,
-        streamed: *streamed,
-        file: file.clone(),
-        files: files.clone(),
-        completed_bytes,
-        awaiting_verification: false,
-        link_state: TransferLinkState::Ready,
-        storage_pause: None,
-    })
+    let TransferState::Active {
+        completed_bytes: current_bytes,
+        ..
+    } = current
+    else {
+        unreachable!("validated transfer progress must target an active transfer")
+    };
+    *current_bytes = completed_bytes;
+    true
+}
+
+fn apply_peer_transfer_progress(
+    model: &mut AppModel,
+    peer_id: &str,
+    transfer_id: &str,
+    direction: TransferDirection,
+    completed_bytes: u64,
+) -> bool {
+    let is_receiver = matches!(
+        model.screen,
+        Screen::Room {
+            role: RoomRole::Receiver,
+            ..
+        }
+    );
+    let Some(current) = model.transfers_by_peer.get_mut(peer_id) else {
+        return false;
+    };
+    if !apply_transfer_progress(current, transfer_id, direction, completed_bytes) {
+        return false;
+    }
+    if is_receiver
+        && !apply_transfer_progress(&mut model.transfer, transfer_id, direction, completed_bytes)
+    {
+        model.transfer = model
+            .transfers_by_peer
+            .get(peer_id)
+            .expect("updated receiver transfer should remain available")
+            .clone();
+    }
+    true
 }
 
 pub(super) fn handle_transfer_event(mut model: Signal<AppModel>, peer_id: String, event: RtcEvent) {
@@ -161,15 +198,32 @@ pub(super) fn handle_transfer_event(mut model: Signal<AppModel>, peer_id: String
             completed_bytes,
             ..
         } => {
-            let projected = {
-                let state = model.read();
-                state.transfers_by_peer.get(&peer_id).and_then(|current| {
-                    project_transfer_progress(current, &transfer_id, direction, completed_bytes)
-                })
+            let should_apply = {
+                let state = model.peek();
+                state
+                    .transfers_by_peer
+                    .get(&peer_id)
+                    .is_some_and(|current| {
+                        transfer_progress_is_valid(
+                            current,
+                            &transfer_id,
+                            direction,
+                            completed_bytes,
+                        )
+                    })
             };
-            if let Some(projected) = projected {
-                set_peer_transfer(&mut model.write(), peer_id, projected);
+            if !should_apply {
+                return;
             }
+            let mut state = model.write();
+            let applied = apply_peer_transfer_progress(
+                &mut state,
+                &peer_id,
+                &transfer_id,
+                direction,
+                completed_bytes,
+            );
+            debug_assert!(applied, "validated progress should still be applicable");
         }
         RtcEvent::TransferPaused {
             transfer_id,
@@ -340,6 +394,7 @@ pub(super) fn handle_transfer_event(mut model: Signal<AppModel>, peer_id: String
 mod tests {
     use super::*;
     use p2p_browser_platform::TransferFile;
+    use p2p_protocol::{CURRENT_PROTOCOL, RoomBootstrapResponse};
 
     fn file(name: &str, size_bytes: u64) -> TransferFile {
         TransferFile {
@@ -364,15 +419,53 @@ mod tests {
         }
     }
 
+    fn room_model(role: RoomRole) -> AppModel {
+        let mut model = AppModel {
+            screen: Screen::Room {
+                role,
+                snapshot: RoomBootstrapResponse {
+                    version: CURRENT_PROTOCOL,
+                    room_id: "room-1".to_owned(),
+                    room_code: "ABC234".to_owned(),
+                    revision: 1,
+                    expires_at_ms: 1_000,
+                    participants: Vec::new(),
+                    pending_join_requests: Vec::new(),
+                },
+                invite: None,
+                invite_request_id: None,
+            },
+            ..AppModel::default()
+        };
+        let transfer = active_transfer("transfer-current");
+        model
+            .transfers_by_peer
+            .insert("peer-1".to_owned(), transfer.clone());
+        if role == RoomRole::Receiver {
+            model.transfer = transfer;
+        }
+        model
+    }
+
+    fn completed_bytes(transfer: &TransferState) -> Option<u64> {
+        let TransferState::Active {
+            completed_bytes, ..
+        } = transfer
+        else {
+            return None;
+        };
+        Some(*completed_bytes)
+    }
+
     #[test]
     fn resumed_progress_for_current_active_transfer_moves_forward_and_preserves_metadata() {
-        let projected = project_transfer_progress(
-            &active_transfer("transfer-current"),
+        let mut projected = active_transfer("transfer-current");
+        assert!(apply_transfer_progress(
+            &mut projected,
             "transfer-current",
             TransferDirection::Send,
             72,
-        )
-        .expect("current transfer progress should be projected");
+        ));
 
         let TransferState::Active {
             transfer_id,
@@ -401,28 +494,26 @@ mod tests {
 
     #[test]
     fn progress_for_stale_transfer_id_is_ignored() {
-        assert!(
-            project_transfer_progress(
-                &active_transfer("transfer-current"),
-                "transfer-stale",
-                TransferDirection::Send,
-                72,
-            )
-            .is_none()
-        );
+        let mut current = active_transfer("transfer-current");
+        let before = current.clone();
+        assert!(!apply_transfer_progress(
+            &mut current,
+            "transfer-stale",
+            TransferDirection::Send,
+            72,
+        ));
+        assert_eq!(current, before);
     }
 
     #[test]
     fn progress_for_mismatched_direction_is_ignored() {
-        assert!(
-            project_transfer_progress(
-                &active_transfer("transfer-current"),
-                "transfer-current",
-                TransferDirection::Receive,
-                72,
-            )
-            .is_none()
-        );
+        let mut current = active_transfer("transfer-current");
+        assert!(!apply_transfer_progress(
+            &mut current,
+            "transfer-current",
+            TransferDirection::Receive,
+            72,
+        ));
     }
 
     #[test]
@@ -433,10 +524,12 @@ mod tests {
         };
         *link_state = TransferLinkState::Paused;
 
-        assert!(
-            project_transfer_progress(&current, "transfer-current", TransferDirection::Send, 72,)
-                .is_none()
-        );
+        assert!(!apply_transfer_progress(
+            &mut current,
+            "transfer-current",
+            TransferDirection::Send,
+            72,
+        ));
     }
 
     #[test]
@@ -447,10 +540,12 @@ mod tests {
         };
         *storage_pause = Some(p2p_protocol::StreamPauseReason::DestinationQuotaExceeded);
 
-        assert!(
-            project_transfer_progress(&current, "transfer-current", TransferDirection::Send, 72,)
-                .is_none()
-        );
+        assert!(!apply_transfer_progress(
+            &mut current,
+            "transfer-current",
+            TransferDirection::Send,
+            72,
+        ));
     }
 
     #[test]
@@ -465,48 +560,88 @@ mod tests {
         };
         *awaiting_verification = true;
 
-        assert!(
-            project_transfer_progress(&current, "transfer-current", TransferDirection::Send, 72,)
-                .is_none()
-        );
+        assert!(!apply_transfer_progress(
+            &mut current,
+            "transfer-current",
+            TransferDirection::Send,
+            72,
+        ));
     }
 
     #[test]
     fn progress_that_moves_backwards_is_ignored() {
-        assert!(
-            project_transfer_progress(
-                &active_transfer("transfer-current"),
-                "transfer-current",
-                TransferDirection::Send,
-                11,
-            )
-            .is_none()
-        );
+        let mut current = active_transfer("transfer-current");
+        assert!(!apply_transfer_progress(
+            &mut current,
+            "transfer-current",
+            TransferDirection::Send,
+            11,
+        ));
     }
 
     #[test]
     fn progress_beyond_summary_size_is_ignored() {
-        assert!(
-            project_transfer_progress(
-                &active_transfer("transfer-current"),
-                "transfer-current",
-                TransferDirection::Send,
-                101,
-            )
-            .is_none()
-        );
+        let mut current = active_transfer("transfer-current");
+        assert!(!apply_transfer_progress(
+            &mut current,
+            "transfer-current",
+            TransferDirection::Send,
+            101,
+        ));
     }
 
     #[test]
     fn progress_for_non_active_transfer_is_ignored() {
-        assert!(
-            project_transfer_progress(
-                &TransferState::Idle,
-                "transfer-current",
-                TransferDirection::Receive,
-                72,
-            )
-            .is_none()
+        let mut current = TransferState::Idle;
+        assert!(!apply_transfer_progress(
+            &mut current,
+            "transfer-current",
+            TransferDirection::Receive,
+            72,
+        ));
+    }
+
+    #[test]
+    fn receiver_progress_updates_peer_and_aggregate_without_rebuilding_metadata() {
+        let mut model = room_model(RoomRole::Receiver);
+
+        assert!(apply_peer_transfer_progress(
+            &mut model,
+            "peer-1",
+            "transfer-current",
+            TransferDirection::Send,
+            72,
+        ));
+
+        assert_eq!(
+            model
+                .transfers_by_peer
+                .get("peer-1")
+                .and_then(completed_bytes),
+            Some(72)
         );
+        assert_eq!(completed_bytes(&model.transfer), Some(72));
+    }
+
+    #[test]
+    fn owner_progress_leaves_aggregate_transfer_untouched() {
+        let mut model = room_model(RoomRole::Owner);
+
+        assert!(apply_peer_transfer_progress(
+            &mut model,
+            "peer-1",
+            "transfer-current",
+            TransferDirection::Send,
+            72,
+        ));
+
+        assert_eq!(
+            model
+                .transfers_by_peer
+                .get("peer-1")
+                .and_then(completed_bytes),
+            Some(72)
+        );
+        assert_eq!(model.transfer, TransferState::Idle);
     }
 }

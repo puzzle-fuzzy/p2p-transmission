@@ -1238,6 +1238,16 @@ h1 {
   }
 }
 
+@media (max-width: 360px) {
+  .peer-flow:not(.peer-flow-solo) .peer-side {
+    width: 110px;
+  }
+
+  .peer-flow:not(.peer-flow-solo) .avatar-overlap {
+    margin-left: -23px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

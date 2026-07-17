@@ -209,9 +209,9 @@ pub(super) fn TransferPanel(
                 }
             }
             if !files.is_empty() {
-                div { class: "transfer-file-list", aria_label: "传输文件列表",
+                div { class: "transfer-file-list", role: "list", aria_label: "传输文件列表",
                     for (index, item) in files.iter().enumerate() {
-                        div { class: "transfer-file-row",
+                        div { class: "transfer-file-row", role: "listitem",
                             span {
                                 class: "transfer-file-progress",
                                 style: "--file-progress-scale:{file_progresses[index]:.4}",
@@ -261,12 +261,12 @@ pub(super) fn TransferPanel(
                 }
             }
             if role == RoomRole::Owner && !current_batch_peer_ids.is_empty() {
-                div { class: "receiver-transfer-list", aria_label: "接收者传输结果",
+                div { class: "receiver-transfer-list", role: "list", aria_label: "接收者传输结果",
                     for peer_id in current_batch_peer_ids.iter() {
                         if let Some(receiver) = receivers.iter().find(|receiver| {
                             receiver.peer_id.as_deref() == Some(peer_id.as_str())
                         }) {
-                            div { class: "receiver-transfer-row",
+                            div { class: "receiver-transfer-row", role: "listitem",
                                 span { title: "{receiver.display_name}", "{receiver.display_name}" }
                                 strong { "{receiver_transfer_status(transfers_by_peer.get(peer_id))}" }
                             }

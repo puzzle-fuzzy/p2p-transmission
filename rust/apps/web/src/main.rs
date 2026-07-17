@@ -54,6 +54,31 @@ use room_view::RoomView;
 use rtc_session::{accept_rtc_signal, reset_all_rtc_peers, sync_rtc_peers};
 use waiting_room::WaitingView;
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum AppRoute {
+    Booting,
+    Lobby,
+    Waiting,
+    Room,
+}
+
+fn app_route(screen: &Screen) -> AppRoute {
+    match screen {
+        Screen::Booting => AppRoute::Booting,
+        Screen::Lobby { .. } => AppRoute::Lobby,
+        Screen::Waiting { .. } => AppRoute::Waiting,
+        Screen::Room { .. } => AppRoute::Room,
+    }
+}
+
+fn app_shell_state(state: &AppModel) -> (AppRoute, bool, bool) {
+    (
+        app_route(&state.screen),
+        state.about_open,
+        state.session.is_some(),
+    )
+}
+
 fn main() {
     console_error_panic_hook::set_once();
     dioxus::launch(App);
@@ -83,6 +108,10 @@ fn App() -> Element {
         rtc: rtc_runtime,
         lifecycle_state,
     };
+    let app_shell = use_memo(move || {
+        let state = model.read();
+        app_shell_state(&state)
+    });
 
     let apply_lifecycle_snapshot = Callback::new(
         move |(lease, snapshot): (RealtimeLease, RoomBootstrapResponse)| {
@@ -109,12 +138,10 @@ fn App() -> Element {
 
     use_effect(move || initialize(model, realtime_target));
     use_effect(move || {
-        let state = model.read();
-        if matches!(state.screen, Screen::Booting) {
+        let (route, _, session_ready) = *app_shell.read();
+        if route == AppRoute::Booting {
             return;
         }
-        let session_ready = state.session.is_some();
-        drop(state);
         activate_app_mount();
         if !session_ready {
             return;
@@ -164,19 +191,19 @@ fn App() -> Element {
         });
     });
 
-    let snapshot = model.read().clone();
+    let (route, about_open, _) = *app_shell.read();
     rsx! {
-        match &snapshot.screen {
-            Screen::Booting => rsx! {},
-            Screen::Lobby { .. } => rsx! { LobbyView { model, realtime_target } },
-            Screen::Waiting { .. } => rsx! {
+        match route {
+            AppRoute::Booting => rsx! {},
+            AppRoute::Lobby => rsx! { LobbyView { model, realtime_target } },
+            AppRoute::Waiting => rsx! {
                 div { class: "app-shell",
                     main { class: "lobby",
                         WaitingView { model, realtime_target }
                     }
                 }
             },
-            Screen::Room { .. } => rsx! {
+            AppRoute::Room => rsx! {
                 div { class: "app-shell",
                     main { class: "workspace",
                         RoomView { model, realtime_target, rtc_peers }
@@ -184,8 +211,27 @@ fn App() -> Element {
                 }
             },
         }
-        if snapshot.about_open {
+        if about_open {
             AboutDialog { model }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_shell_selector_ignores_transfer_only_updates() {
+        let mut model = AppModel::default();
+        let initial = app_shell_state(&model);
+
+        model
+            .transfers_by_peer
+            .insert("peer-1".to_owned(), TransferState::Idle);
+        assert!(app_shell_state(&model) == initial);
+
+        model.about_open = true;
+        assert!(app_shell_state(&model) != initial);
     }
 }
