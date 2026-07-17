@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import json
 import os
 import re
@@ -35,11 +37,17 @@ PRODUCTION_COMPOSE = APP_DIR / 'deploy/production/compose.yml'
 PRODUCTION_DATA = APP_DIR / 'deploy/production/data'
 PRODUCTION_DATABASE = PRODUCTION_DATA / 'control.sqlite3'
 PRODUCTION_BACKUPS = APP_DIR / 'deploy/production/backups'
+PRODUCTION_ROLLBACK = APP_DIR / 'deploy/production/rollback'
 PRODUCTION_PROJECT = 'p2p-transmission-production'
 DATABASE_BACKUP_LIMIT = 10
 SOURCE_MANIFEST = APP_DIR / 'deploy/production/source-files.json'
 NGINX_SOURCE = APP_DIR / 'deploy/production/nginx/p2p.yxswy.com.conf'
 NGINX_TARGET = Path('/etc/nginx/conf.d/p2p.yxswy.com.conf')
+PENDING_RELEASE = PRODUCTION_ROLLBACK / 'pending.json'
+PENDING_RELEASE_SCHEMA = 1
+PENDING_RELEASE_MAX_BYTES = 64 * 1024
+NGINX_SNAPSHOT_PREFIX = 'p2p-transmission-nginx-'
+COMPOSE_SNAPSHOT_PREFIX = 'p2p-transmission-compose-'
 
 def run(command: list[str], *, cwd: Path = APP_DIR) -> subprocess.CompletedProcess[str]:
     print('$', ' '.join(command), flush=True)
@@ -192,6 +200,7 @@ def source_path_is_protected(path: str) -> bool:
         ('deploy', 'production', '.env'),
         ('deploy', 'production', 'data'),
         ('deploy', 'production', 'backups'),
+        ('deploy', 'production', 'rollback'),
         ('deploy', 'production', 'source-files.json'),
         ('deploy', 'coturn', '.local'),
         ('deploy', 'coturn', 'turnserver.conf'),
@@ -409,8 +418,11 @@ def restore_production_environment(previous: bytes) -> None:
 
 
 def restore_production_database(backup: Optional[Path]) -> bool:
-    if backup is None or not backup.is_file():
+    if backup is None:
         return True
+    if path_is_linklike(backup) or not backup.is_file():
+        print(f'production database rollback backup is missing or unsafe: {backup}', flush=True)
+        return False
     try:
         copy_sqlite_database(backup, PRODUCTION_DATABASE, overwrite=True)
     except SystemExit as error:
@@ -433,10 +445,26 @@ def preserve_rollback_image(image: str) -> None:
     run(['docker', 'image', 'tag', image, 'p2p-transmission:previous'])
 
 
+def ensure_rollback_directory() -> Path:
+    expected_parent = (APP_DIR / 'deploy/production').resolve()
+    if path_is_linklike(PRODUCTION_ROLLBACK):
+        raise SystemExit('production rollback directory must not be a symbolic link')
+    try:
+        PRODUCTION_ROLLBACK.mkdir(parents=True, exist_ok=True)
+        rollback_root = PRODUCTION_ROLLBACK.resolve()
+    except OSError as error:
+        raise SystemExit(f'cannot prepare the production rollback directory: {error}') from error
+    if rollback_root.parent != expected_parent:
+        raise SystemExit('production rollback directory escapes the deployment directory')
+    os.chmod(rollback_root, 0o700)
+    return rollback_root
+
+
 def snapshot_runtime_file(source: Path, prefix: str) -> Path:
     if path_is_linklike(source) or not source.is_file():
         raise SystemExit(f'production rollback source is missing or unsafe: {source}')
-    descriptor, name = tempfile.mkstemp(prefix=prefix, dir='/run')
+    rollback_root = ensure_rollback_directory()
+    descriptor, name = tempfile.mkstemp(prefix=prefix, dir=rollback_root)
     snapshot = Path(name)
     try:
         with source.open('rb') as source_file, os.fdopen(descriptor, 'wb') as destination:
@@ -481,11 +509,11 @@ def restore_runtime_file(snapshot: Path, target: Path, mode: int) -> bool:
 
 
 def snapshot_nginx() -> Path:
-    return snapshot_runtime_file(NGINX_TARGET, 'p2p-transmission-nginx-')
+    return snapshot_runtime_file(NGINX_TARGET, NGINX_SNAPSHOT_PREFIX)
 
 
 def snapshot_compose() -> Path:
-    return snapshot_runtime_file(PRODUCTION_COMPOSE, 'p2p-transmission-compose-')
+    return snapshot_runtime_file(PRODUCTION_COMPOSE, COMPOSE_SNAPSHOT_PREFIX)
 
 
 def backup_production_database(version: str) -> Optional[Path]:
@@ -604,6 +632,152 @@ class ProductionPreflight:
         return cleanup_snapshot_paths(self.nginx_snapshot, self.compose_snapshot)
 
 
+def ensure_no_pending_release() -> None:
+    if PENDING_RELEASE.exists() or path_is_linklike(PENDING_RELEASE):
+        raise SystemExit(
+            'another production release is pending; finalize or roll it back before staging'
+        )
+
+
+def pending_snapshot_path(raw_path: object, prefix: str, label: str) -> Path:
+    if not isinstance(raw_path, str):
+        raise SystemExit(f'pending release {label} path is invalid')
+    candidate = Path(raw_path)
+    try:
+        rollback_root = ensure_rollback_directory()
+        resolved = candidate.resolve(strict=True)
+    except OSError as error:
+        raise SystemExit(f'pending release {label} snapshot is unavailable: {error}') from error
+    if (
+        resolved.parent != rollback_root
+        or not resolved.name.startswith(prefix)
+        or path_is_linklike(candidate)
+        or not resolved.is_file()
+    ):
+        raise SystemExit(f'pending release {label} snapshot is missing or unsafe')
+    return resolved
+
+
+def pending_database_backup_path(raw_path: object) -> Optional[Path]:
+    if raw_path is None:
+        return None
+    if not isinstance(raw_path, str):
+        raise SystemExit('pending release database backup path is invalid')
+    candidate = Path(raw_path)
+    try:
+        backup_root = PRODUCTION_BACKUPS.resolve(strict=True)
+        resolved = candidate.resolve(strict=True)
+    except OSError as error:
+        raise SystemExit(f'pending release database backup is unavailable: {error}') from error
+    if (
+        resolved.parent != backup_root
+        or path_is_linklike(candidate)
+        or not resolved.is_file()
+    ):
+        raise SystemExit('pending release database backup is missing or unsafe')
+    return resolved
+
+
+def write_pending_release(preflight: ProductionPreflight, version: str) -> None:
+    ensure_no_pending_release()
+    ensure_rollback_directory()
+    payload = {
+        'schema': PENDING_RELEASE_SCHEMA,
+        'release_version': version,
+        'previous_environment': base64.b64encode(preflight.previous_env).decode('ascii'),
+        'previous_tag': preflight.previous_tag,
+        'database_backup': (
+            str(preflight.database_backup) if preflight.database_backup is not None else None
+        ),
+        'nginx_snapshot': str(preflight.nginx_snapshot),
+        'compose_snapshot': str(preflight.compose_snapshot),
+    }
+    rendered = (json.dumps(payload, sort_keys=True) + '\n').encode('utf-8')
+    atomic_write_bytes(PENDING_RELEASE, rendered, 0o600)
+    print(f'production release {version} is staged pending public verification', flush=True)
+
+
+def load_pending_release(expected_version: str) -> ProductionPreflight:
+    if not VERSION_RE.fullmatch(expected_version):
+        raise SystemExit('release version contains unsupported characters')
+    try:
+        rollback_root = ensure_rollback_directory()
+        resolved = PENDING_RELEASE.resolve(strict=True)
+        metadata = PENDING_RELEASE.stat()
+    except OSError as error:
+        raise SystemExit(f'pending production release is unavailable: {error}') from error
+    if (
+        resolved.parent != rollback_root
+        or path_is_linklike(PENDING_RELEASE)
+        or not resolved.is_file()
+        or (os.name != 'nt' and stat.S_IMODE(metadata.st_mode) & 0o077)
+        or metadata.st_size > PENDING_RELEASE_MAX_BYTES
+    ):
+        raise SystemExit('pending production release state is missing or unsafe')
+    try:
+        payload = json.loads(resolved.read_text(encoding='utf-8'))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise SystemExit(f'cannot read pending production release: {error}') from error
+    if not isinstance(payload, dict) or payload.get('schema') != PENDING_RELEASE_SCHEMA:
+        raise SystemExit('pending production release schema is unsupported')
+    if payload.get('release_version') != expected_version:
+        raise SystemExit('pending production release does not match the requested version')
+
+    previous_tag = payload.get('previous_tag')
+    encoded_environment = payload.get('previous_environment')
+    if not isinstance(previous_tag, str) or not VERSION_RE.fullmatch(previous_tag):
+        raise SystemExit('pending production release previous tag is invalid')
+    if not isinstance(encoded_environment, str):
+        raise SystemExit('pending production release environment is invalid')
+    try:
+        previous_env = base64.b64decode(encoded_environment, validate=True)
+        previous_values = parse_env_text(previous_env.decode('utf-8'))
+    except (binascii.Error, UnicodeDecodeError) as error:
+        raise SystemExit('pending production release environment is invalid') from error
+    if previous_values.get('P2P_IMAGE_TAG') != previous_tag:
+        raise SystemExit('pending production release environment tag does not match its metadata')
+
+    return ProductionPreflight(
+        previous_env=previous_env,
+        previous_tag=previous_tag,
+        database_backup=pending_database_backup_path(payload.get('database_backup')),
+        nginx_snapshot=pending_snapshot_path(
+            payload.get('nginx_snapshot'), NGINX_SNAPSHOT_PREFIX, 'Nginx'
+        ),
+        compose_snapshot=pending_snapshot_path(
+            payload.get('compose_snapshot'), COMPOSE_SNAPSHOT_PREFIX, 'Compose'
+        ),
+        expected_image=f'p2p-transmission:{expected_version}',
+    )
+
+
+def close_pending_release(preflight: ProductionPreflight) -> None:
+    try:
+        PENDING_RELEASE.unlink()
+    except OSError as error:
+        raise SystemExit(f'cannot clear pending production release state: {error}') from error
+    preflight.cleanup_snapshots()
+
+
+def finalize_pending_release(version: str) -> None:
+    preflight = load_pending_release(version)
+    wait_for_production_ready(version)
+    close_pending_release(preflight)
+    print(f'production release finalized: {preflight.expected_image}', flush=True)
+
+
+def rollback_pending_release(version: str) -> None:
+    if not PENDING_RELEASE.exists():
+        if path_is_linklike(PENDING_RELEASE):
+            raise SystemExit('pending production release state is missing or unsafe')
+        print(f'no pending production release to roll back for {version}', flush=True)
+        return
+    preflight = load_pending_release(version)
+    rollback_runtime(preflight)
+    close_pending_release(preflight)
+    print(f'production release rolled back from {preflight.expected_image}', flush=True)
+
+
 def preflight_production(image_archive: Path, version: str) -> ProductionPreflight:
     if not PRODUCTION_ENV.is_file():
         raise SystemExit('production environment is missing on the host')
@@ -689,20 +863,28 @@ def rollback_runtime(preflight: ProductionPreflight) -> None:
 
 def deploy_production(preflight: ProductionPreflight, version: str) -> None:
     try:
+        # Record rollback state before changing the environment, container, or Nginx.
+        # This lets the workflow recover when SSH disconnects after the remote
+        # process started but before its exit status reached GitHub Actions.
+        write_pending_release(preflight, version)
         prepare_production_environment(version, preflight.previous_env)
         run(compose_production('config', '--quiet'))
         run(compose_production('up', '-d', '--no-build', '--no-deps', 'app'))
         wait_for_production_ready(version)
         install_production_nginx()
-        preflight.cleanup_snapshots()
-        print(f'production now runs {preflight.expected_image}', flush=True)
     except BaseException as release_error:
         print('production release failed; restoring the previous production runtime', flush=True)
         try:
             rollback_runtime(preflight)
         except BaseException as rollback_error:
-            preflight.cleanup_snapshots()
             raise SystemExit(f'production release and rollback failed: {rollback_error}') from release_error
+        try:
+            PENDING_RELEASE.unlink(missing_ok=True)
+        except OSError as cleanup_error:
+            print(
+                f'pending production release cleanup failed: {cleanup_error}',
+                flush=True,
+            )
         preflight.cleanup_snapshots()
         raise
 
@@ -715,6 +897,7 @@ def deploy(
 ) -> None:
     if not VERSION_RE.fullmatch(version):
         raise SystemExit('release version contains unsupported characters')
+    ensure_no_pending_release()
     archive = validate_source_archive(archive)
     image = validate_image_archive(image_archive)
     retired_path, bootstrap_files = validate_retired_files(retired_files)
@@ -724,6 +907,7 @@ def deploy(
         try:
             extract_archive(archive)
             remove_retired_source_files(current_files, bootstrap_files)
+            write_source_manifest(current_files)
         except BaseException as source_error:
             compose_restored = restore_compose(preflight.compose_snapshot)
             preflight.cleanup_snapshots()
@@ -733,7 +917,6 @@ def deploy(
                 ) from source_error
             raise
         deploy_production(preflight, version)
-        write_source_manifest(current_files)
     finally:
         archive.unlink(missing_ok=True)
         image.unlink(missing_ok=True)
@@ -742,12 +925,23 @@ def deploy(
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument('--archive', required=True, type=Path)
-    parser.add_argument('--version', required=True)
-    parser.add_argument('--image-archive', required=True, type=Path)
-    parser.add_argument('--retired-files', required=True, type=Path)
+    actions = parser.add_subparsers(dest='action', required=True)
+    stage = actions.add_parser('stage', help='switch production and retain rollback state')
+    stage.add_argument('--archive', required=True, type=Path)
+    stage.add_argument('--version', required=True)
+    stage.add_argument('--image-archive', required=True, type=Path)
+    stage.add_argument('--retired-files', required=True, type=Path)
+    finalize = actions.add_parser('finalize', help='accept a publicly verified release')
+    finalize.add_argument('--version', required=True)
+    rollback = actions.add_parser('rollback', help='restore the release staged previously')
+    rollback.add_argument('--version', required=True)
     args = parser.parse_args()
-    deploy(args.archive, args.version, args.image_archive, args.retired_files)
+    if args.action == 'stage':
+        deploy(args.archive, args.version, args.image_archive, args.retired_files)
+    elif args.action == 'finalize':
+        finalize_pending_release(args.version)
+    else:
+        rollback_pending_release(args.version)
     return 0
 
 

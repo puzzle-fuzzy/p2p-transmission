@@ -247,7 +247,8 @@ jobs:
           print(f'bootstrap retired source files: {len(retired)}')
           PY
 
-      - name: Deploy the Rust image and switch production
+      - name: Stage the Rust image and retain rollback state
+        id: stage
         if: steps.release_head.outputs.current == 'true'
         env:
           DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
@@ -258,72 +259,64 @@ jobs:
           SOURCE_ARCHIVE="p2p-transmission-$GITHUB_SHA.tar.gz"
           IMAGE_ARCHIVE="p2p-transmission-image-$GITHUB_SHA.tar.gz"
           RETIRED_FILES="p2p-transmission-retired-$GITHUB_SHA.json"
+          DEPLOY_SCRIPT="p2p-transmission-deploy-$GITHUB_SHA.py"
           scp "$SOURCE_ARCHIVE" "$IMAGE_ARCHIVE" "$RETIRED_FILES" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/"
+          # Run the helper shipped by this release so the first two-phase rollout
+          # does not depend on the older helper currently installed on the host.
+          scp deploy/scripts/deploy-release.py "$DEPLOY_USER@$DEPLOY_HOST:/tmp/$DEPLOY_SCRIPT"
           # Release values are locally validated identifiers.
           # shellcheck disable=SC2029
           ssh "$DEPLOY_USER@$DEPLOY_HOST" \
-            "sudo /usr/local/sbin/p2p-transmission-deploy --archive /tmp/$SOURCE_ARCHIVE --image-archive /tmp/$IMAGE_ARCHIVE --retired-files /tmp/$RETIRED_FILES --version $RELEASE_VERSION"
+            "sudo /usr/bin/python3 /tmp/$DEPLOY_SCRIPT stage --archive /tmp/$SOURCE_ARCHIVE --image-archive /tmp/$IMAGE_ARCHIVE --retired-files /tmp/$RETIRED_FILES --version $RELEASE_VERSION"
 
       - name: Verify the public Rust service
+        id: public_verify
         if: steps.release_head.outputs.current == 'true'
         env:
           EXPECTED_APP_VERSION: ${{ needs.container.outputs.app-version }}
           EXPECTED_RELEASE_VERSION: ${{ needs.container.outputs.release-version }}
         run: |
-          python3 - <<'PY'
-          import http.client
-          import json
-          import os
-          import time
-          import urllib.request
+          python3 deploy/scripts/verify-public-release.py \
+            --app-version "$EXPECTED_APP_VERSION" \
+            --release-version "$EXPECTED_RELEASE_VERSION"
 
-          expected_app = os.environ['EXPECTED_APP_VERSION']
-          expected_release = os.environ['EXPECTED_RELEASE_VERSION']
-          for attempt in range(30):
-              try:
-                  with urllib.request.urlopen(
-                      'https://p2p.yxswy.com/health/ready', timeout=5
-                  ) as response:
-                      payload = json.load(response)
-                  if (
-                      response.status == 200
-                      and payload.get('status') == 'ready'
-                      and payload.get('service') == 'p2p-server'
-                      and payload.get('version') == expected_app
-                      and payload.get('release') == expected_release
-                  ):
-                      break
-              except (OSError, ValueError):
-                  pass
-              if attempt == 29:
-                  raise SystemExit('public readiness check failed')
-              time.sleep(2)
+      - name: Finalize the publicly verified release
+        id: finalize
+        if: steps.release_head.outputs.current == 'true'
+        env:
+          DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
+          DEPLOY_USER: ${{ secrets.TENCENT_DEPLOY_USER }}
+          RELEASE_VERSION: ${{ needs.container.outputs.release-version }}
+        run: |
+          # Release values are locally validated identifiers.
+          # shellcheck disable=SC2029
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" \
+            "sudo /usr/local/sbin/p2p-transmission-deploy finalize --version $RELEASE_VERSION"
 
-          with urllib.request.urlopen('https://p2p.yxswy.com/', timeout=5) as response:
-              index = response.read().decode('utf-8')
-          if (
-              response.status != 200
-              or 'P2P Transmission' not in index
-              or 'id="boot-fallback"' not in index
-              or '/shell/app.css' not in index
-              or 'assets/p2p-web-' not in index
-              or 'action="/app"' in index
-          ):
-              raise SystemExit('public root application shell check failed')
+      - name: Roll back any staged release that was not finalized
+        if: always() && steps.release_head.outputs.current == 'true' && steps.stage.outcome != 'skipped' && steps.finalize.outcome != 'success'
+        env:
+          DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
+          DEPLOY_USER: ${{ secrets.TENCENT_DEPLOY_USER }}
+          RELEASE_VERSION: ${{ needs.container.outputs.release-version }}
+        run: |
+          # Release values are locally validated identifiers.
+          # shellcheck disable=SC2029
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" \
+            "sudo /usr/local/sbin/p2p-transmission-deploy rollback --version $RELEASE_VERSION"
 
-          connection = http.client.HTTPSConnection('p2p.yxswy.com', timeout=5)
-          connection.request('GET', '/app?intent=create')
-          legacy = connection.getresponse()
-          legacy.read()
-          if (
-              legacy.status != 307
-              or legacy.getheader('Location') != '/?intent=create'
-              or legacy.getheader('Cache-Control') != 'no-store'
-          ):
-              raise SystemExit('public legacy application redirect check failed')
-          connection.close()
-          print(json.dumps(payload, ensure_ascii=False))
-          PY
+      - name: Remove temporary remote deployment helper
+        if: always() && steps.release_head.outputs.current == 'true'
+        continue-on-error: true
+        env:
+          DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
+          DEPLOY_USER: ${{ secrets.TENCENT_DEPLOY_USER }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          # The commit SHA is a locally validated identifier.
+          # shellcheck disable=SC2029
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" \
+            "rm -f /tmp/p2p-transmission-deploy-$GITHUB_SHA.py"
 
       - name: Remove temporary SSH material
         if: always()

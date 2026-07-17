@@ -55,9 +55,11 @@ curl -fsS http://127.0.0.1:3410/health/ready
 3. 复用当前生产环境中的 TURN、能力密钥、限流参数和 ICE 配置。
 4. 使用 SQLite 在线 backup 创建并校验发布前备份。
 5. 保留上一 Rust 镜像并校验 Compose 配置。
-6. 启动新容器，核对本机 ready 中的不可变 release 标识，再原子更新 Nginx。
+6. 启动新容器，核对本机 ready 中的不可变 release 标识，再原子更新 Nginx；旧运行环境保持为 pending 回滚状态。
+7. 从 GitHub Runner 实际请求公网 CSS、启动脚本、Service Worker、哈希 JS 和 WASM，并确认退役 HTML 入口返回 404。
+8. 公网验收通过后 finalize；失败或 finalize 未完成时自动回滚。
 
-如果启动、ready 或 Nginx 检查失败，脚本会恢复发布前的环境文件、数据库备份、Nginx 配置和上一 Rust 镜像。
+如果启动、ready、Nginx 或公网资源检查失败，脚本会恢复发布前的环境文件、数据库备份、Nginx 配置和上一 Rust 镜像。
 
 ## 4. 备份、更新和回滚
 

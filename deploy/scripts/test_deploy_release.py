@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 MODULE_PATH = Path(__file__).with_name('deploy-release.py')
 PRODUCTION_COMPOSE = MODULE_PATH.parent.parent / 'production' / 'compose.yml'
+PRODUCTION_WORKFLOW = MODULE_PATH.parents[2] / '.github' / 'workflows' / 'production.yml'
 SPEC = importlib.util.spec_from_file_location('deploy_release', MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 deploy_release = importlib.util.module_from_spec(SPEC)
@@ -262,6 +263,184 @@ class DeployReleaseTests(unittest.TestCase):
         )
         with patch.object(Path, 'unlink', side_effect=[OSError('busy'), None]):
             self.assertFalse(preflight.cleanup_snapshots())
+
+    def test_staged_release_retains_rollback_state_until_finalize(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rollback_root = root / 'deploy/production/rollback'
+            rollback_root.mkdir(parents=True)
+            nginx_snapshot = rollback_root / 'p2p-transmission-nginx-test'
+            compose_snapshot = rollback_root / 'p2p-transmission-compose-test'
+            nginx_snapshot.write_text('old nginx', encoding='utf-8')
+            compose_snapshot.write_text('old compose', encoding='utf-8')
+            preflight = deploy_release.ProductionPreflight(
+                previous_env=b'P2P_IMAGE_TAG=2.0.1-old\n',
+                previous_tag='2.0.1-old',
+                database_backup=None,
+                nginx_snapshot=nginx_snapshot,
+                compose_snapshot=compose_snapshot,
+                expected_image='p2p-transmission:2.0.1-new',
+            )
+            with (
+                patch.object(deploy_release, 'APP_DIR', root),
+                patch.object(deploy_release, 'PRODUCTION_ROLLBACK', rollback_root),
+                patch.object(deploy_release, 'PENDING_RELEASE', rollback_root / 'pending.json'),
+                patch.object(deploy_release, 'wait_for_production_ready') as ready,
+            ):
+                deploy_release.write_pending_release(preflight, '2.0.1-new')
+                self.assertTrue(deploy_release.PENDING_RELEASE.is_file())
+                self.assertTrue(nginx_snapshot.is_file())
+                self.assertTrue(compose_snapshot.is_file())
+
+                loaded = deploy_release.load_pending_release('2.0.1-new')
+                self.assertEqual(loaded.previous_tag, '2.0.1-old')
+                deploy_release.finalize_pending_release('2.0.1-new')
+
+                ready.assert_called_once_with('2.0.1-new')
+                self.assertFalse(deploy_release.PENDING_RELEASE.exists())
+                self.assertFalse(nginx_snapshot.exists())
+                self.assertFalse(compose_snapshot.exists())
+
+    def test_pending_release_rejects_a_different_version(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rollback_root = root / 'deploy/production/rollback'
+            rollback_root.mkdir(parents=True)
+            nginx_snapshot = rollback_root / 'p2p-transmission-nginx-test'
+            compose_snapshot = rollback_root / 'p2p-transmission-compose-test'
+            nginx_snapshot.touch()
+            compose_snapshot.touch()
+            preflight = deploy_release.ProductionPreflight(
+                previous_env=b'P2P_IMAGE_TAG=2.0.1-old\n',
+                previous_tag='2.0.1-old',
+                database_backup=None,
+                nginx_snapshot=nginx_snapshot,
+                compose_snapshot=compose_snapshot,
+                expected_image='p2p-transmission:2.0.1-new',
+            )
+            with (
+                patch.object(deploy_release, 'APP_DIR', root),
+                patch.object(deploy_release, 'PRODUCTION_ROLLBACK', rollback_root),
+                patch.object(deploy_release, 'PENDING_RELEASE', rollback_root / 'pending.json'),
+            ):
+                deploy_release.write_pending_release(preflight, '2.0.1-new')
+                with self.assertRaises(SystemExit):
+                    deploy_release.load_pending_release('2.0.1-other')
+                with self.assertRaises(SystemExit):
+                    deploy_release.ensure_no_pending_release()
+
+    def test_pending_release_can_run_the_existing_automatic_rollback(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rollback_root = root / 'deploy/production/rollback'
+            rollback_root.mkdir(parents=True)
+            nginx_snapshot = rollback_root / 'p2p-transmission-nginx-test'
+            compose_snapshot = rollback_root / 'p2p-transmission-compose-test'
+            nginx_snapshot.touch()
+            compose_snapshot.touch()
+            preflight = deploy_release.ProductionPreflight(
+                previous_env=b'P2P_IMAGE_TAG=2.0.1-old\n',
+                previous_tag='2.0.1-old',
+                database_backup=None,
+                nginx_snapshot=nginx_snapshot,
+                compose_snapshot=compose_snapshot,
+                expected_image='p2p-transmission:2.0.1-new',
+            )
+            with (
+                patch.object(deploy_release, 'APP_DIR', root),
+                patch.object(deploy_release, 'PRODUCTION_ROLLBACK', rollback_root),
+                patch.object(deploy_release, 'PENDING_RELEASE', rollback_root / 'pending.json'),
+                patch.object(deploy_release, 'rollback_runtime') as rollback,
+            ):
+                deploy_release.write_pending_release(preflight, '2.0.1-new')
+                deploy_release.rollback_pending_release('2.0.1-new')
+
+                rollback.assert_called_once()
+                restored = rollback.call_args.args[0]
+                self.assertEqual(restored.previous_tag, '2.0.1-old')
+                self.assertFalse(deploy_release.PENDING_RELEASE.exists())
+                self.assertFalse(nginx_snapshot.exists())
+                self.assertFalse(compose_snapshot.exists())
+
+    def test_rollback_is_a_safe_noop_when_stage_never_created_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            pending = Path(directory) / 'pending.json'
+            with patch.object(deploy_release, 'PENDING_RELEASE', pending):
+                deploy_release.rollback_pending_release('2.0.1-new')
+
+    def test_successful_switch_records_pending_state_without_cleaning_snapshots(self) -> None:
+        preflight = deploy_release.ProductionPreflight(
+            previous_env=b'P2P_IMAGE_TAG=2.0.1-old\n',
+            previous_tag='2.0.1-old',
+            database_backup=None,
+            nginx_snapshot=Path('/rollback/nginx'),
+            compose_snapshot=Path('/rollback/compose'),
+            expected_image='p2p-transmission:2.0.1-new',
+        )
+        events: list[str] = []
+        with (
+            patch.object(
+                deploy_release,
+                'prepare_production_environment',
+                side_effect=lambda *_: events.append('prepare'),
+            ),
+            patch.object(deploy_release, 'run'),
+            patch.object(deploy_release, 'wait_for_production_ready'),
+            patch.object(deploy_release, 'install_production_nginx'),
+            patch.object(
+                deploy_release,
+                'write_pending_release',
+                side_effect=lambda *_: events.append('pending'),
+            ) as write_pending,
+            patch.object(deploy_release, 'cleanup_snapshot_paths') as cleanup,
+        ):
+            deploy_release.deploy_production(preflight, '2.0.1-new')
+            write_pending.assert_called_once_with(preflight, '2.0.1-new')
+            self.assertEqual(events, ['pending', 'prepare'])
+            cleanup.assert_not_called()
+
+    def test_pending_state_write_failure_rolls_the_local_switch_back(self) -> None:
+        preflight = deploy_release.ProductionPreflight(
+            previous_env=b'P2P_IMAGE_TAG=2.0.1-old\n',
+            previous_tag='2.0.1-old',
+            database_backup=None,
+            nginx_snapshot=Path('/rollback/nginx'),
+            compose_snapshot=Path('/rollback/compose'),
+            expected_image='p2p-transmission:2.0.1-new',
+        )
+        with (
+            patch.object(deploy_release, 'prepare_production_environment'),
+            patch.object(deploy_release, 'run'),
+            patch.object(deploy_release, 'wait_for_production_ready'),
+            patch.object(deploy_release, 'install_production_nginx'),
+            patch.object(
+                deploy_release,
+                'write_pending_release',
+                side_effect=OSError('state unavailable'),
+            ),
+            patch.object(deploy_release, 'rollback_runtime') as rollback,
+            patch.object(deploy_release, 'cleanup_snapshot_paths', return_value=True) as cleanup,
+            patch.object(deploy_release, 'PENDING_RELEASE', Path('/missing/pending.json')),
+        ):
+            with self.assertRaises(OSError):
+                deploy_release.deploy_production(preflight, '2.0.1-new')
+            rollback.assert_called_once_with(preflight)
+            cleanup.assert_called_once_with(preflight.nginx_snapshot, preflight.compose_snapshot)
+
+    def test_production_workflow_rolls_back_failed_public_verification(self) -> None:
+        workflow = PRODUCTION_WORKFLOW.read_text(encoding='utf-8')
+        verification = workflow.index('id: public_verify')
+        finalization = workflow.index('Finalize the publicly verified release')
+        rollback = workflow.index('Roll back any staged release that was not finalized')
+        self.assertLess(verification, finalization)
+        self.assertLess(finalization, rollback)
+        self.assertIn("steps.finalize.outcome != 'success'", workflow)
+        self.assertIn("steps.stage.outcome != 'skipped'", workflow)
+        self.assertNotIn("steps.stage.outcome == 'success'", workflow)
+        self.assertIn('p2p-transmission-deploy finalize --version', workflow)
+        self.assertIn('p2p-transmission-deploy rollback --version', workflow)
+        self.assertIn('deploy/scripts/verify-public-release.py', workflow)
+        self.assertNotIn('/app?intent=create', workflow)
 
     def test_creates_verified_database_backup_and_prunes_old_copies(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

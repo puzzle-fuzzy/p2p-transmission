@@ -15,6 +15,7 @@ deploy/.env
 deploy/data/
 deploy/production/data/
 deploy/production/backups/
+deploy/production/rollback/
 deploy/production/source-files.json
 deploy/**/*.sqlite
 deploy/**/*.sqlite-*
