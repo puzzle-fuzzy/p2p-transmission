@@ -3,6 +3,8 @@ import { mkdir } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { enterRoomCode } from './room-code.helper'
+
 const currentDirectory = dirname(fileURLToPath(import.meta.url))
 const peerReadyTimeout = 20_000
 
@@ -149,7 +151,7 @@ test('two browsers can create, approve, connect, and restore a room', async ({
   }
 })
 
-test('a receiver can cancel a pending join request', async ({ browser, baseURL }) => {
+test('a receiver can enter a room code one cell at a time, submit with Enter, and cancel', { tag: '@smoke' }, async ({ browser, baseURL }) => {
   const ownerContext = await browser.newContext({ baseURL })
   const receiverContext = await browser.newContext({ baseURL })
   const owner = await ownerContext.newPage()
@@ -162,8 +164,12 @@ test('a receiver can cancel a pending join request', async ({ browser, baseURL }
     expect(roomCode).toMatch(/^[A-Z2-9]{6}$/)
 
     await receiver.goto('/')
-    await receiver.getByRole('textbox', { name: '输入 6 位房间码' }).fill(roomCode ?? '')
-    await receiver.getByRole('button', { name: '请求加入' }).click()
+    const inputs = await enterRoomCode(receiver, roomCode ?? '')
+    expect(await inputs.evaluateAll(roomCodeInputs => roomCodeInputs.map(input => (
+      (input as HTMLInputElement).value
+    )))).toEqual(Array.from(roomCode ?? ''))
+    await expect(inputs.last()).toBeFocused()
+    await receiver.keyboard.press('Enter')
     await expect(owner.getByRole('dialog', { name: '加入申请' })).toBeVisible()
 
     await receiver.getByRole('button', { name: '更换房间' }).click()

@@ -8,7 +8,7 @@
 
 ```bash
 python -X utf8 scripts/verify.py
-python -X utf8 scripts/test_e2e.py
+python -X utf8 scripts/test_e2e.py --full
 python -X utf8 -m unittest discover -s deploy/scripts -p "test_*.py"
 cargo audit --deny warnings
 ```

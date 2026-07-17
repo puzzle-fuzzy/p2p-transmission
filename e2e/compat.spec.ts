@@ -1,26 +1,8 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 import { Buffer } from 'node:buffer'
 import { open, readFile } from 'node:fs/promises'
 
-const connectSingleReceiverRoom = async (owner: Page, receiver: Page) => {
-  await owner.goto('/')
-  await owner.getByRole('button', { name: '创建房间' }).click()
-  const roomCode = (await owner.getByRole('button', { name: /复制房间码/ }).textContent())?.trim()
-  expect(roomCode).toMatch(/^[A-Z2-9]{6}$/)
-
-  await receiver.goto('/')
-  await receiver.getByRole('textbox', { name: '输入 6 位房间码' }).fill(roomCode ?? '')
-  await receiver.getByRole('button', { name: '请求加入' }).click()
-  const requestDialog = owner.getByRole('dialog', { name: '加入申请' })
-  await expect(requestDialog).toBeVisible()
-  await requestDialog.getByRole('button', { name: '允许加入' }).click()
-  await expect(owner.getByRole('heading', { name: '选择要发送的文件' })).toBeVisible({
-    timeout: 20_000,
-  })
-  await expect(receiver.getByRole('heading', { name: '等待对方发送' })).toBeVisible({
-    timeout: 20_000,
-  })
-}
+import { connectSingleReceiverRoom } from './room.helper'
 
 test('Firefox and WebKit complete the buffered transfer path', async ({ browser, baseURL }, testInfo) => {
   test.skip(
@@ -33,7 +15,7 @@ test('Firefox and WebKit complete the buffered transfer path', async ({ browser,
   const receiver = await receiverContext.newPage()
   const payload = Buffer.from('cross-browser buffered transfer\n'.repeat(4096))
 
-  await connectSingleReceiverRoom(owner, receiver)
+  await connectSingleReceiverRoom(owner, receiver, { readyTimeout: 20_000 })
   const fileInput = owner.locator('#transfer-file-input')
   for (let index = 0; index < 20; index += 1) {
     if (await fileInput.evaluate(element => element === document.activeElement)) break
@@ -80,7 +62,7 @@ test('Firefox and WebKit explain the streamed-file fallback', async ({ browser, 
   await source.truncate(100 * 1024 * 1024 + 1)
   await source.close()
 
-  await connectSingleReceiverRoom(owner, receiver)
+  await connectSingleReceiverRoom(owner, receiver, { readyTimeout: 20_000 })
   await owner.locator('#transfer-file-input').setInputFiles(sourcePath)
   const transferDialog = receiver.getByRole('dialog', { name: '接收文件' })
   await expect(transferDialog.getByRole('alert')).toHaveText(

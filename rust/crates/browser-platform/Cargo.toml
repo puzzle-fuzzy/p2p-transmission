@@ -22,6 +22,7 @@ wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 web-sys = { workspace = true, features = [
   "Clipboard",
+  "console",
   "Blob",
   "BlobPropertyBag",
   "CloseEvent",
@@ -35,6 +36,7 @@ web-sys = { workspace = true, features = [
   "Headers",
   "History",
   "HtmlDialogElement",
+  "HtmlElement",
   "HtmlInputElement",
   "IdbDatabase",
   "IdbFactory",
@@ -46,6 +48,7 @@ web-sys = { workspace = true, features = [
   "Location",
   "MessageEvent",
   "Navigator",
+  "Performance",
   "Request",
   "RequestCredentials",
   "RequestInit",

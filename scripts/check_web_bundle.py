@@ -11,10 +11,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DIST = ROOT / "target" / "dx" / "p2p-web" / "release" / "web" / "public"
 APP_STYLESHEET = ROOT / "rust" / "apps" / "web" / "assets" / "main.css"
-WASM_GZIP_BUDGET = 512 * 1024
-JAVASCRIPT_GZIP_BUDGET = 20 * 1024
-CSS_GZIP_BUDGET = 8 * 1024
-ENTRYPOINT_GZIP_BUDGET = 528 * 1024
+HTML_GZIP_BUDGET = 8 * 1024
+WASM_GZIP_BUDGET = 480 * 1024
+JAVASCRIPT_GZIP_BUDGET = 18 * 1024
+CSS_GZIP_BUDGET = 6 * 1024
+ENTRYPOINT_GZIP_BUDGET = 500 * 1024
 
 
 def gzip_size(path: Path) -> int:
@@ -38,15 +39,20 @@ def main() -> None:
     dist = args.dist.resolve()
     wasm_files = assets_with_suffix(dist, ".wasm")
     javascript_files = assets_with_suffix(dist, ".js")
-    if not wasm_files or not javascript_files:
-        raise SystemExit(f"missing production WebAssembly or JavaScript assets in {dist}")
+    index_html = dist / "index.html"
+    if not index_html.is_file() or not wasm_files or not javascript_files:
+        raise SystemExit(
+            f"missing production HTML, WebAssembly, or JavaScript assets in {dist}"
+        )
 
+    html_gzip = gzip_size(index_html)
     wasm_gzip = sum(gzip_size(path) for path in wasm_files)
     javascript_gzip = sum(gzip_size(path) for path in javascript_files)
     css_gzip = gzip_size(APP_STYLESHEET)
     entrypoint_gzip = wasm_gzip + javascript_gzip + css_gzip
 
     rows = (
+        ("HTML shell", html_gzip, HTML_GZIP_BUDGET),
         ("WebAssembly", wasm_gzip, WASM_GZIP_BUDGET),
         ("JavaScript", javascript_gzip, JAVASCRIPT_GZIP_BUDGET),
         ("CSS", css_gzip, CSS_GZIP_BUDGET),

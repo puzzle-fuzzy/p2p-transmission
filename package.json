@@ -10,7 +10,9 @@
     "bun": "1.3.14"
   },
   "scripts": {
-    "e2e": "playwright test --config e2e/playwright.config.ts",
+    "e2e": "playwright test --config e2e/playwright.smoke.config.ts",
+    "e2e:full": "playwright test --config e2e/playwright.config.ts",
+    "e2e:performance": "playwright test --config e2e/playwright.performance.config.ts",
     "e2e:stress": "playwright test --config e2e/playwright.stress.config.ts",
     "check:docs": "python scripts/check-doc-links.py"
   },

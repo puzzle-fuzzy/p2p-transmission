@@ -131,49 +131,50 @@ h1 {
 }
 
 .room-code-control {
-  position: relative;
   margin-top: 18px;
-}
-
-.room-code-native {
-  position: absolute;
-  z-index: 2;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  padding: 0;
-  border: 0;
-  opacity: 0.01;
-  background: transparent;
-  color: transparent;
-  caret-color: transparent;
 }
 
 .room-code {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 5px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 
-.room-code span {
-  display: grid;
+.room-code-input {
+  width: 100%;
+  min-width: 0;
   height: 68px;
-  place-items: center;
+  padding: 0;
   border: 1px solid var(--control-border);
   border-radius: 9px;
   background: transparent;
+  caret-color: var(--ink-strong);
   color: var(--ink-strong);
   font-family: ui-monospace, "Cascadia Mono", monospace;
   font-size: 1.15rem;
+  text-align: center;
+  text-transform: uppercase;
   transition: border-color 160ms ease, background-color 160ms ease;
 }
 
-.room-code span.filled {
+.room-code-input.filled {
   background: var(--surface-hover);
 }
 
-.room-code-control:focus-within .room-code span {
+.room-code-input:focus {
   border-color: var(--accent-visible);
+}
+
+.room-code-input[aria-invalid="true"] {
+  border-color: var(--ink-muted);
+}
+
+.room-code-input:disabled {
+  color: var(--ink-dim);
 }
 
 .form-message {
@@ -308,6 +309,42 @@ h1 {
 
 .booting-view p {
   margin: 0;
+}
+
+.boot-room-code-cell {
+  display: block;
+  cursor: wait;
+}
+
+.boot-room-code-cell::after {
+  display: block;
+  width: 12px;
+  height: 1px;
+  margin: 33px auto 0;
+  background: var(--ink-dim);
+  content: "";
+}
+
+.boot-status {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  padding-top: 7px;
+  color: var(--ink-muted);
+  gap: 8px;
+}
+
+.boot-status p {
+  margin: 0;
+  color: inherit;
+}
+
+.boot-noscript {
+  margin: 14px 0 0;
+  color: var(--ink);
+  font-size: 0.75rem;
+  line-height: 1.6;
+  text-align: center;
 }
 
 .service-dot {
@@ -650,37 +687,40 @@ h1 {
 }
 
 .transfer-file-row {
+  position: relative;
   display: flex;
   width: min(100%, 420px);
   min-width: 0;
   align-items: center;
   justify-content: space-between;
   margin-top: 20px;
-  padding: 12px 0;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--surface-hover);
   gap: 16px;
+  isolation: isolate;
   text-align: left;
 }
 
 .transfer-file-list {
+  display: grid;
   width: min(100%, 420px);
   max-height: 260px;
   margin-top: 20px;
   overflow-y: auto;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
+  gap: 8px;
 }
 
 .transfer-file-list .transfer-file-row {
   width: 100%;
   margin-top: 0;
-  border-top: 0;
-  border-bottom: 1px solid var(--border-subtle);
 }
 
-.transfer-file-list .transfer-file-row:last-child {
-  border-bottom: 0;
+.transfer-file-meta,
+.transfer-file-row code {
+  position: relative;
+  z-index: 1;
 }
 
 .transfer-file-meta {
@@ -715,27 +755,20 @@ h1 {
   font-size: 0.75rem;
 }
 
-.transfer-progress {
-  width: min(100%, 420px);
-  height: 3px;
-  margin-top: 20px;
-  overflow: hidden;
-  background: var(--surface-active);
-}
-
-.transfer-progress span {
-  display: block;
-  width: 100%;
-  height: 100%;
-  background: var(--accent-visible);
-  transform: scaleX(var(--progress-scale, 0));
+.transfer-file-progress {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  background: var(--accent-surface);
+  pointer-events: none;
+  transform: scaleX(var(--file-progress-scale, 0));
   transform-origin: left center;
   transition: transform 160ms linear;
 }
 
 .transfer-progress-copy {
   width: min(100%, 420px);
-  margin-bottom: 0;
+  margin: 10px 0 0;
   text-align: right;
 }
 
@@ -1158,7 +1191,7 @@ h1 {
     gap: 4px;
   }
 
-  .room-code span {
+  .room-code-input {
     height: 69px;
   }
 

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url))
 
-test('the root renders the Dioxus transfer workspace', async ({ page }, testInfo) => {
+test('the root renders the Dioxus transfer workspace', { tag: '@smoke' }, async ({ page }, testInfo) => {
   const pageErrors: string[] = []
   page.on('pageerror', error => pageErrors.push(error.message))
 
@@ -15,12 +15,38 @@ test('the root renders the Dioxus transfer workspace', async ({ page }, testInfo
   await expect(page.getByRole('heading', { name: '加入房间' })).toBeVisible()
   await expect(page.locator('#boot-fallback')).toHaveCount(0)
 
+  const roomCodeGroup = page.getByRole('group', { name: '输入 6 位房间码' })
+  const roomCodeInputs = roomCodeGroup.getByRole('textbox')
   const roomCode = page.getByRole('textbox', { name: '输入 6 位房间码' })
+  await expect(roomCodeInputs).toHaveCount(6)
   await expect(roomCode).toBeVisible()
   await expect(page.getByRole('button', { name: '请求加入' })).toBeDisabled()
   await expect(page.getByRole('button', { name: '创建房间' })).toBeEnabled()
-  await roomCode.fill('ab23cd')
-  await expect(roomCode).toHaveValue('AB23CD')
+  await roomCode.focus()
+  await page.keyboard.type('a')
+  await expect(roomCodeInputs.nth(1)).toBeFocused()
+  await page.keyboard.press('Backspace')
+  await expect(roomCode).toBeFocused()
+  await roomCode.evaluate(input => {
+    const clipboardData = new DataTransfer()
+    clipboardData.setData('text', 'ab23cd')
+    input.dispatchEvent(new ClipboardEvent('paste', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData,
+    }))
+  })
+  expect(await roomCodeInputs.evaluateAll(inputs => inputs.map(input => (
+    (input as HTMLInputElement).value
+  )))).toEqual(['A', 'B', '2', '3', 'C', 'D'])
+  await expect(roomCodeInputs.nth(5)).toBeFocused()
+  expect(await roomCodeInputs.nth(5).evaluate(element => (
+    getComputedStyle(element).caretColor
+  ))).not.toBe('rgba(0, 0, 0, 0)')
+  expect(await roomCodeInputs.nth(5).evaluate(element => {
+    const input = element as HTMLInputElement
+    return [input.selectionStart, input.selectionEnd]
+  })).toEqual([1, 1])
   await expect(page.getByRole('button', { name: '请求加入' })).toBeEnabled()
 
   const resources = await page.evaluate(() =>
@@ -98,14 +124,28 @@ test('an invalid stored room is cleared without a navigation trap', async ({ pag
   )).toBeNull()
 })
 
-test('the root keeps a useful boot fallback before WebAssembly starts', async ({ page }) => {
-  await page.route(/\/assets\/p2p-web-.*\.js$/u, route => route.abort())
+test('the root keeps a useful anonymous lobby when WebAssembly is blocked', { tag: '@smoke' }, async ({ page }) => {
+  let blockedWasmRequest = false
+  await page.route(/\.wasm(?:\?.*)?$/u, route => {
+    blockedWasmRequest = true
+    return route.abort()
+  })
   const response = await page.goto('/')
   expect(response?.ok()).toBe(true)
-  await expect(page.locator('#boot-fallback')).toBeVisible()
-  await expect(page.locator('#boot-fallback')).toHaveAttribute('aria-busy', 'true')
-  await expect(page.locator('#boot-fallback')).toContainText('正在准备')
-  await expect(page.getByRole('status')).toBeVisible()
+  expect(blockedWasmRequest).toBe(true)
+  const shell = page.locator('#boot-fallback')
+  await expect(shell).toBeVisible()
+  await expect(shell).toHaveAttribute('aria-busy', 'true')
+  await expect(shell.getByRole('heading', { name: '加入房间' })).toBeVisible()
+  await expect(shell.locator('.boot-room-code-cell')).toHaveCount(6)
+  await expect(shell.getByRole('status')).toContainText('正在初始化安全会话')
+  await expect(shell.getByRole('button', { name: '请求加入' })).toBeDisabled()
+  await expect(shell.getByRole('button', { name: '创建房间' })).toBeDisabled()
+  await expect(shell.getByRole('textbox')).toHaveCount(0)
+  await expect(shell.locator('.footer-links')).toContainText('关于 P2P Transmission')
+  await expect(shell.locator(
+    'a[href], input:not(:disabled), button:not(:disabled), [tabindex]:not([tabindex="-1"])',
+  )).toHaveCount(0)
 })
 
 test('the installed PWA keeps the root workspace available offline', async ({ context, page }) => {

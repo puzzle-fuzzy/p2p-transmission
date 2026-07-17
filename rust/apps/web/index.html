@@ -15,18 +15,66 @@
     <script src="/shell/app-shell.js" defer></script>
   </head>
   <body>
-    <div id="main">
-      <div id="boot-fallback" class="app-shell" aria-busy="true">
-        <main class="lobby">
-          <section class="booting-view" role="status" aria-live="polite">
+    <div id="boot-fallback" class="app-shell" aria-busy="true">
+      <main class="lobby">
+        <section class="lobby-panel" aria-labelledby="boot-lobby-title">
+          <h1 id="boot-lobby-title">加入房间</h1>
+          <p class="join-copy">输入发送者提供的 6 位房间码，或直接打开邀请链接</p>
+
+          <div class="room-code-control">
+            <div class="room-code boot-room-code" aria-hidden="true">
+              <span class="room-code-input boot-room-code-cell"></span>
+              <span class="room-code-input boot-room-code-cell"></span>
+              <span class="room-code-input boot-room-code-cell"></span>
+              <span class="room-code-input boot-room-code-cell"></span>
+              <span class="room-code-input boot-room-code-cell"></span>
+              <span class="room-code-input boot-room-code-cell"></span>
+            </div>
+          </div>
+
+          <div
+            id="boot-status-copy"
+            class="form-message boot-status"
+            role="status"
+            aria-live="polite"
+          >
             <span class="service-dot" aria-hidden="true"></span>
-            <p>正在准备安全会话…</p>
-            <noscript>
-              <span>传输工作区需要浏览器启用 JavaScript 和 WebAssembly。</span>
-            </noscript>
-          </section>
-        </main>
-      </div>
+            <p>正在初始化安全会话，稍候即可使用</p>
+          </div>
+
+          <button
+            class="primary-button"
+            type="button"
+            disabled
+            aria-describedby="boot-status-copy"
+          >请求加入</button>
+          <div class="divider" aria-hidden="true">
+            <span></span>
+            <strong>OR</strong>
+            <span></span>
+          </div>
+          <button
+            class="secondary-button"
+            type="button"
+            disabled
+            aria-describedby="boot-status-copy"
+          >创建房间</button>
+
+          <p class="privacy-copy">
+            文件和文本正文通过加密的 WebRTC 通道传输，优先尝试设备直连，必要时经加密中继转发；应用服务器只协调连接，不保存传输内容。接收完成的文件会暂存在当前页面中，关闭结果或退出房间后释放。
+          </p>
+          <div class="footer-links" aria-hidden="true">
+            <span class="text-link">关于 P2P Transmission</span>
+            <span class="text-link">GitHub</span>
+          </div>
+          <noscript>
+            <p class="boot-noscript" role="alert">
+              传输工作区需要浏览器启用 JavaScript 和 WebAssembly。
+            </p>
+          </noscript>
+        </section>
+      </main>
     </div>
+    <div id="main" hidden inert aria-hidden="true"></div>
   </body>
 </html>

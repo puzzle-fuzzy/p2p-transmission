@@ -87,7 +87,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bunx playwright install --with-deps chromium firefox webkit
       - run: cargo install dioxus-cli --version 0.7.6 --locked
-      - run: python -X utf8 scripts/test_e2e.py
+      - run: python -X utf8 scripts/test_e2e.py --full
 
   container:
     runs-on: ubuntu-latest

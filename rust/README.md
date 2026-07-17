@@ -40,6 +40,14 @@ python scripts/verify.py
 python scripts/test_e2e.py
 ```
 
-`verify.py` 覆盖 Rust 格式、native/wasm Clippy、测试、server release 和 Dioxus release 构建；浏览器 E2E 单独运行，便于 CI 分 job。
+`test_e2e.py` 默认只运行快速桌面 Chromium smoke 层。轻量性能基线、完整浏览器矩阵和 opt-in 大文件压力门禁分别运行：
+
+```bash
+python scripts/test_e2e.py --performance
+python scripts/test_e2e.py --full
+python -X utf8 scripts/test_large_file.py --size-gib 1 --profile baseline
+```
+
+`verify.py` 覆盖 Rust 格式、native/wasm Clippy、测试、server release 和 Dioxus release 构建；浏览器 smoke、性能基线、完整回归与压力门禁分层运行，避免日常检查误触耗时场景。性能基线只硬性约束结构与 `CLS <= 0.1`，其余耗时指标用于观察趋势。
 
 生产容器、环境变量、备份和回滚步骤见 [`../docs/release/RELEASE.md`](../docs/release/RELEASE.md)。

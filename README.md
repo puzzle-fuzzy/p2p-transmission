@@ -82,9 +82,22 @@ python -X utf8 -m unittest discover -s deploy/scripts -p "test_*.py"
 git diff --check
 ```
 
-验证覆盖 native/WASM 格式与 Clippy、Rust 单元/集成测试、release 构建、浏览器入口 gzip
-体积预算、Chromium/Firefox/WebKit 浏览器矩阵、无障碍门禁、真实 DataChannel 传输以及部署
-脚本。`Cargo.lock` 还会在 CI 中通过 RustSec 审计，已知漏洞、警告或前端体积回退会阻止发布。
+`scripts/test_e2e.py` 默认只运行快速 Chromium smoke 层（页面壳、无障碍、房间码交互与
+128 KiB DataChannel 传输）。单浏览器性能基线、完整浏览器回归与压力测试必须显式运行：
+
+```bash
+python scripts/test_e2e.py --performance
+python scripts/test_e2e.py --full
+python -X utf8 scripts/test_large_file.py --size-gib 1 --profile baseline
+```
+
+性能契约记录导航、FCP、LCP、CLS 与 WASM 可交互标记；目前只把结构完整性和
+`CLS <= 0.1` 作为硬门禁，毫秒指标用于观察发布趋势，避免受不同 CI 机器性能影响。
+
+完整验证覆盖 native/WASM 格式与 Clippy、Rust 单元/集成测试、release 构建、浏览器入口
+gzip 体积预算、Chromium/Firefox/WebKit 浏览器矩阵、无障碍门禁、真实 DataChannel 传输
+以及部署脚本。`Cargo.lock` 还会在 CI 中通过 RustSec 审计，已知漏洞、警告或前端体积回退
+会阻止发布。
 
 ## 生产部署
 

@@ -2,6 +2,8 @@ import { expect, test, type Page } from '@playwright/test'
 import { Buffer } from 'node:buffer'
 import { open, rm, writeFile } from 'node:fs/promises'
 
+import { connectSingleReceiverRoom } from './room.helper'
+
 const GIB = 1024 ** 3
 const MIB = 1024 ** 2
 const SEGMENT_BYTES = 8 * MIB
@@ -23,21 +25,6 @@ if (!Number.isInteger(disconnectCount) || disconnectCount < 0 || disconnectCount
 }
 if (!['native', 'opfs'].includes(sinkMode) || (sinkMode === 'native' && !sinkUrl)) {
   throw new Error('P2P_STRESS_SINK must be opfs or native with P2P_STRESS_SINK_URL')
-}
-
-const connectSingleReceiverRoom = async (owner: Page, receiver: Page) => {
-  await owner.goto('/')
-  await owner.getByRole('button', { name: '创建房间' }).click()
-  const roomCode = (await owner.getByRole('button', { name: /复制房间码/ }).textContent())?.trim()
-  expect(roomCode).toMatch(/^[A-Z2-9]{6}$/)
-
-  await receiver.goto('/')
-  await receiver.getByRole('textbox', { name: '输入 6 位房间码' }).fill(roomCode ?? '')
-  await receiver.getByRole('button', { name: '请求加入' }).click()
-  const requestDialog = owner.getByRole('dialog', { name: '加入申请' })
-  await expect(requestDialog).toBeVisible()
-  await requestDialog.getByRole('button', { name: '允许加入' }).click()
-  await expect(owner.getByRole('heading', { name: '选择要发送的文件' })).toBeVisible()
 }
 
 const installSenderThrottle = async (page: Page, frameDelayMs: number) => {
@@ -267,7 +254,7 @@ test(`${sizeGiB} GiB streamed transfer writes to ${sinkMode} under the selected 
   await installReceiverDisk(receiver, outputName, disconnectSegments, sinkUrl)
 
   try {
-    await connectSingleReceiverRoom(owner, receiver)
+    await connectSingleReceiverRoom(owner, receiver, { readiness: 'owner' })
     if (sinkMode === 'opfs') {
       const storage = await receiver.evaluate(async () => navigator.storage.estimate())
       expect((storage.quota ?? 0) - (storage.usage ?? 0)).toBeGreaterThan(sizeBytes + 64 * MIB)

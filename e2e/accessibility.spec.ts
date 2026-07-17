@@ -18,7 +18,7 @@ async function expectNoHorizontalOverflow(page: Page) {
   )).toBe(true)
 }
 
-test('the root transfer workspace passes WCAG axe rules', async ({ page }) => {
+test('the root transfer workspace passes WCAG axe rules', { tag: '@smoke' }, async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('heading', { name: '加入房间' })).toBeVisible()
   await expectNoAccessibilityViolations(page)

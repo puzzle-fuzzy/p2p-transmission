@@ -66,13 +66,18 @@ jobs:
       - name: Install Dioxus CLI
         run: cargo install dioxus-cli --version 0.7.6 --locked
 
-      - name: Run browser E2E
-        run: bun run e2e
+      - name: Run browser smoke E2E
+        run: python -X utf8 scripts/test_e2e.py
+
+      - name: Run browser performance contract
+        run: python -X utf8 scripts/test_e2e.py --performance
 
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
-          path: playwright-report/
+          path: |
+            playwright-report/
+            test-results/performance/
           if-no-files-found: ignore

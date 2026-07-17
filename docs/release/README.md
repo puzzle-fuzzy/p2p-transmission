@@ -42,7 +42,7 @@ M8 存储异常恢复截图：
 
 ```bash
 python scripts/capture_shell.py
-python scripts/test_e2e.py --capture-room --capture-transfer
+python scripts/test_e2e.py --full --capture-room --capture-transfer
 ```
 
 截图只记录当前实现状态。视觉方向与交互原则以仓库根目录的 [`DESIGN.md`](../../DESIGN.md) 为准。

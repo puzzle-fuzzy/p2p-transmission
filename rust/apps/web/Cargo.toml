@@ -13,3 +13,7 @@ p2p-protocol = { path = "../../crates/protocol" }
 qrcode.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+web-sys = { workspace = true, features = ["ClipboardEvent", "DataTransfer"] }
