@@ -2214,6 +2214,7 @@ dependencies = [
  "dioxus",
  "p2p-browser-platform",
  "p2p-protocol",
+ "p2p-transfer",
  "p2p-ui-shell",
  "qrcode",
  "serde",

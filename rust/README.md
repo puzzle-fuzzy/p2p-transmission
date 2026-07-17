@@ -24,9 +24,8 @@ python scripts/dev.py
 ```
 
 默认构建 Dioxus release 资源并由 Axum 在 <http://127.0.0.1:3410> 同源提供。根路径 `/`
-是唯一主应用入口；Axum 启动时只渲染并组装一次公开大厅，浏览器状态留在独立 WASM 岛中。
-旧 `/app` 链接只用于迁移并重定向到根路径。release Web 资源不会注入依赖 `dx serve` 的
-开发遮罩。
+是唯一应用入口；Axum 启动时只渲染并组装一次公开大厅，浏览器状态留在独立 WASM 岛中。
+release Web 资源不会注入依赖 `dx serve` 的开发遮罩。
 
 如需单独检查 debug 构建：
 

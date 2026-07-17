@@ -4,7 +4,8 @@ const CORE_ASSETS = [
   '/',
   '/favicon.svg',
   '/manifest.webmanifest',
-  '/shell/app.css',
+  '/shell/app-shell.css',
+  '/shell/room-restore.js',
   '/shell/app-shell.js',
 ];
 
@@ -93,9 +94,20 @@ const networkFirstApplication = async request => {
   }
 };
 
+const networkFirstAsset = async request => {
+  const cache = await caches.open(CACHE_NAME);
+  try {
+    const response = await fetch(request, { cache: 'no-store' });
+    if (response.ok) await cache.put(request, response.clone());
+    return response;
+  } catch {
+    return await cache.match(request) ?? offlineResponse();
+  }
+};
+
 const staleWhileRevalidate = async request => {
   const cache = await caches.open(CACHE_NAME);
-  const cached = await cache.match(request, { ignoreSearch: true });
+  const cached = await cache.match(request);
   const refresh = fetch(request).then(response => {
     if (response.ok) void cache.put(request, response.clone());
     return response;
@@ -115,16 +127,20 @@ self.addEventListener('fetch', event => {
   if (/^\/(?:api|health|realtime)(?:\/|$)/u.test(url.pathname)) return;
 
   if (request.mode === 'navigate') {
-    if (url.pathname === '/' || url.pathname === '/app' || url.pathname === '/app/') {
+    if (url.pathname === '/') {
       event.respondWith(networkFirstApplication(request));
     } else {
       event.respondWith(fetch(request).catch(offlineResponse));
     }
     return;
   }
-  if (/^\/(?:assets|shell)\//u.test(url.pathname)
+  if (/^\/assets\//u.test(url.pathname)) {
+    event.respondWith(staleWhileRevalidate(request));
+    return;
+  }
+  if (/^\/shell\//u.test(url.pathname)
       || url.pathname === '/favicon.svg'
       || url.pathname === '/manifest.webmanifest') {
-    event.respondWith(staleWhileRevalidate(request));
+    event.respondWith(networkFirstAsset(request));
   }
 });

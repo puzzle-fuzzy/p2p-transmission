@@ -10,11 +10,11 @@ state.
 ## Components
 
 - `LobbyShell`: owns the stable `.app-shell > main.lobby > form.lobby-panel`
-  structure and all durable lobby copy. Its optional `root_id` prop lets the
-  server emit the mount root without an extra wrapper. The invitation status
-  overlays the reserved guidance area so URL intent cannot shift the form.
-- `InitializingLobby`: renders the useful but inert first response: six empty
-  room-code cells, an initialization status, and two disabled actions.
+  structure and all durable lobby copy. The invitation status overlays the
+  reserved guidance area so URL intent cannot shift the form.
+- `InitializingLobby`: renders the useful but inert first response: a default
+  lobby with six empty room-code cells and two disabled actions, plus a hidden
+  room-restoration status that the pre-paint browser hint can select.
 - `LobbyFeedback`: supplies the reserved empty row, live status, or accessible
   validation error without changing layout height.
 

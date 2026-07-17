@@ -13,7 +13,13 @@
     >
     <link rel="manifest" href="/manifest.webmanifest">
     <title>{app_title}</title>
-    <link rel="stylesheet" href="/shell/app.css">
+    <link rel="stylesheet" href="/shell/app-shell.css">
+    <style>
+      .boot-room-restore { display: none; }
+      html[data-p2p-room-restore="pending"] #boot-fallback .boot-lobby-shell { display: none; }
+      html[data-p2p-room-restore="pending"] #boot-fallback .boot-room-restore { display: block; }
+    </style>
+    <script src="/shell/room-restore.js"></script>
     <script src="/shell/app-shell.js" defer></script>
   </head>
   <body>

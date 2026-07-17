@@ -124,8 +124,39 @@ test('an invalid stored room is cleared without a navigation trap', async ({ pag
   )).toBeNull()
 })
 
+test('a valid stored room selects the restoration shell before the first paint', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      'p2p_room_session',
+      JSON.stringify({
+        room_code: 'ABC234',
+        role: 'receiver',
+        join_request_id: 'join_restoring',
+        invite_request_id: null,
+        peer_id: 'peer_restoring',
+      }),
+    )
+  })
+  await page.route('**/shell/app-shell.css', route => route.abort())
+  await page.route(/\.wasm(?:\?.*)?$/u, route => route.abort())
+
+  const response = await page.goto('/', { waitUntil: 'domcontentloaded' })
+  expect(response?.ok()).toBe(true)
+  await expect(page.locator('html')).toHaveAttribute('data-p2p-room-restore', 'pending')
+
+  const fallback = page.locator('#boot-fallback')
+  const restorationShell = fallback.locator('.boot-room-restore')
+  await expect(restorationShell).toBeVisible()
+  await expect(restorationShell.getByRole('status')).toContainText('正在恢复上次房间，请稍候')
+  await expect(fallback.locator('.boot-lobby-shell')).toBeHidden()
+  await expect(fallback.getByRole('heading', { name: '加入房间' })).toBeHidden()
+  await expect(fallback.getByRole('button', { name: '请求加入' })).toBeHidden()
+  await expect(fallback.getByRole('button', { name: '创建房间' })).toBeHidden()
+})
+
 test('the root keeps a useful anonymous lobby when WebAssembly is blocked', { tag: '@smoke' }, async ({ page }) => {
   let blockedWasmRequest = false
+  await page.route('**/shell/app-shell.css', route => route.abort())
   await page.route(/\.wasm(?:\?.*)?$/u, route => {
     blockedWasmRequest = true
     return route.abort()
@@ -135,6 +166,7 @@ test('the root keeps a useful anonymous lobby when WebAssembly is blocked', { ta
   expect(blockedWasmRequest).toBe(true)
   const shell = page.locator('#boot-fallback')
   await expect(shell).toBeVisible()
+  await expect(shell.locator('.boot-room-restore')).toBeHidden()
   expect(await shell.getAttribute('aria-busy')).toBeNull()
   await expect(shell.getByRole('heading', { name: '加入房间' })).toBeVisible()
   await expect(shell.locator('.boot-room-code-cell')).toHaveCount(6)
@@ -161,7 +193,9 @@ test('the installed PWA keeps the root workspace available offline', async ({ co
     return requests.flat().map(request => new URL(request.url).pathname)
   })
   expect(cachedPaths).toContain('/')
-  expect(cachedPaths).toContain('/shell/app.css')
+  expect(cachedPaths).toContain('/shell/app-shell.css')
+  expect(cachedPaths).toContain('/shell/room-restore.js')
+  expect(cachedPaths).not.toContain('/shell/app.css')
   expect(cachedPaths.some(path => path.endsWith('.wasm'))).toBe(true)
   expect(cachedPaths).not.toContain('/app')
   expect(cachedPaths).not.toContain('/app/')
@@ -184,68 +218,18 @@ test('the installed PWA keeps the root workspace available offline', async ({ co
   }
 })
 
-test('unknown routes and missing assets return 404', async ({ request }) => {
-  for (const path of ['/unknown-route', '/assets/missing.js', '/appx']) {
+test('unknown routes, removed legacy routes, and missing assets return 404', async ({ request }) => {
+  for (const path of [
+    '/unknown-route',
+    '/assets/missing.js',
+    '/app',
+    '/app/',
+    '/app?intent=create',
+    '/app/?room=ABC234',
+    '/appx',
+    '/index.html',
+  ]) {
     const response = await request.get(path, { maxRedirects: 0 })
     expect(response.status()).toBe(404)
   }
-})
-
-test.describe('legacy /app route compatibility', () => {
-  test('old application entrypoints redirect temporarily and preserve queries', async ({ request }) => {
-    for (const [path, location] of [
-      ['/app', '/'],
-      ['/app/', '/'],
-      ['/index.html', '/'],
-      ['/app?intent=create', '/?intent=create'],
-      ['/app/?room=ABC234', '/?room=ABC234'],
-    ] as const) {
-      const response = await request.get(path, { maxRedirects: 0 })
-      expect(response.status()).toBe(307)
-      expect(response.headers()['location']).toBe(location)
-      expect(response.headers()['cache-control']).toContain('no-store')
-    }
-  })
-
-  test('an old hash invitation redirects to root and still submits the join request', async ({
-    baseURL,
-    browser,
-  }) => {
-    const ownerContext = await browser.newContext({ baseURL })
-    const receiverContext = await browser.newContext({ baseURL })
-    const owner = await ownerContext.newPage()
-    const receiver = await receiverContext.newPage()
-
-    try {
-      await owner.goto('/')
-      const inviteResponse = owner.waitForResponse(response => {
-        const path = new URL(response.url()).pathname
-        return response.request().method() === 'POST'
-          && /^\/api\/rooms\/[A-Z2-9]{6}\/invite-capabilities$/u.test(path)
-      })
-      const createButton = owner.getByRole('button', { name: '创建房间' })
-      await expect(createButton).toBeEnabled()
-      await createButton.click()
-
-      const invite = await (await inviteResponse).json() as { capability: string }
-      const roomCodeButton = owner.getByRole('button', { name: /复制房间码/ })
-      await expect(roomCodeButton).toBeVisible()
-      const roomCode = (await roomCodeButton.textContent())?.trim() ?? ''
-      expect(roomCode).toMatch(/^[A-Z2-9]{6}$/u)
-      expect(invite.capability).not.toBe('')
-
-      const legacyInvite = new URL('/app', baseURL ?? 'http://127.0.0.1:3410')
-      legacyInvite.hash = `room=${roomCode}&capability=${invite.capability}`
-      const response = await receiver.goto(legacyInvite.href)
-      expect(response?.ok()).toBe(true)
-
-      await expect.poll(() => receiver.evaluate(() => window.location.pathname)).toBe('/')
-      await expect(receiver).toHaveURL(url => url.pathname === '/' && url.hash === '')
-      await expect(receiver.getByRole('heading', { name: '等待发送者确认' })).toBeVisible()
-      await expect(owner.getByRole('dialog', { name: '加入申请' })).toBeVisible()
-    } finally {
-      await receiverContext.close()
-      await ownerContext.close()
-    }
-  })
 })

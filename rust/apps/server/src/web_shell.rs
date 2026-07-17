@@ -211,9 +211,25 @@ mod tests {
                 .expect("production template and shared lobby must remain compatible");
 
         assert!(renderer.html().contains(p2p_ui_shell::LOBBY_TITLE));
+        assert!(renderer.html().contains(p2p_ui_shell::RESTORING_ROOM_COPY));
         assert!(renderer.html().contains(p2p_ui_shell::NOSCRIPT_COPY));
         assert_eq!(renderer.html().matches(BOOT_FALLBACK_ID).count(), 1);
         assert_eq!(renderer.html().matches(ISLAND_MOUNT_ID).count(), 1);
+        assert!(renderer.html().contains("href=\"/shell/app-shell.css\""));
+        let critical_restore_style = renderer
+            .html()
+            .find(".boot-room-restore { display: none; }")
+            .expect("the room restore state needs inline critical CSS for old service workers");
+        let restore_script = renderer
+            .html()
+            .find("<script src=\"/shell/room-restore.js\"></script>")
+            .expect("the room restore hint must block body parsing before first paint");
+        let fallback = renderer
+            .html()
+            .find(BOOT_FALLBACK_ID)
+            .expect("the boot fallback must exist");
+        assert!(critical_restore_style < restore_script);
+        assert!(restore_script < fallback);
         assert!(
             renderer.html().len() <= SSR_SOURCE_RESPONSE_RAW_BUDGET,
             "server-rendered source shell is {} bytes; budget is {} bytes",

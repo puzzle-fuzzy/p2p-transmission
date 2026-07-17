@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 
-use p2p_browser_platform::{TransferDirection, TransferFile};
 use p2p_protocol::{
     CancelReason, CreateInviteResponse, RoomBootstrapResponse, SessionResponse,
     Signal as ProtocolSignal, StreamPauseReason, TransferMode,
 };
+use p2p_transfer::{TransferDirection, TransferFile};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

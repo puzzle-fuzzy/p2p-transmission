@@ -8,6 +8,19 @@ pub const DEFAULT_STREAM_SEGMENT_BYTES: u32 = 8 * 1024 * 1024;
 pub const DEFAULT_STREAM_ACK_WINDOW_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TransferDirection {
+    Send,
+    Receive,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TransferFile {
+    pub name: String,
+    pub mime: Option<String>,
+    pub size_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TransferPlanError {
     ZeroChunkSize,
     ZeroSegmentSize,

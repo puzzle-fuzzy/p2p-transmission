@@ -69,7 +69,8 @@ test('two browsers can create, approve, connect, and restore a room', async ({
     await expect(ownerPeerFlow.locator('.peer-track')).toHaveCount(0)
     await expect(ownerPeerFlow.locator('.receiver-side')).toHaveCount(0)
     await expect(owner.locator('.receiver-placeholder')).toHaveCount(0)
-    await expect(owner.locator('.leave-button .leave-icon')).toBeVisible()
+    const leaveButton = owner.getByRole('button', { name: '退出房间' })
+    await expect(leaveButton.locator('.button-icon')).toBeVisible()
 
     const shareButton = owner.getByRole('button', { name: '分享房间' })
     await shareButton.click()
@@ -139,12 +140,14 @@ test('two browsers can create, approve, connect, and restore a room', async ({
     await receiver.reload()
     await expect(receiver.getByText('接收者', { exact: true })).toBeVisible()
     await expect(receiver.getByRole('heading', { name: '等待对方发送' })).toBeVisible({ timeout: peerReadyTimeout })
+    await expect(receiver.locator('html')).not.toHaveAttribute('data-p2p-room-restore', /.+/u)
 
     await owner.reload()
     await expect(owner.getByText('发送者', { exact: true })).toBeVisible()
     await expect(owner.getByRole('heading', { name: '选择要发送的文件' })).toBeVisible({ timeout: peerReadyTimeout })
     await expect(owner.getByText('房间已创建，可以分享邀请链接', { exact: true })).toBeVisible()
     await expect(owner.locator('.avatar-entering')).toHaveCount(0)
+    await expect(owner.locator('html')).not.toHaveAttribute('data-p2p-room-restore', /.+/u)
   } finally {
     await receiverContext.close()
     await ownerContext.close()

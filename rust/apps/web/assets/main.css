@@ -339,6 +339,36 @@ h1 {
   color: inherit;
 }
 
+.boot-room-restore {
+  display: none;
+}
+
+.boot-room-restore-status {
+  display: flex;
+  width: 100%;
+  max-width: 384px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-muted);
+  font-size: 0.75rem;
+  gap: 8px;
+  text-align: center;
+}
+
+.boot-room-restore-status p {
+  margin: 0;
+  color: inherit;
+}
+
+html[data-p2p-room-restore="pending"] #boot-fallback .boot-lobby-shell {
+  display: none;
+}
+
+html[data-p2p-room-restore="pending"] #boot-fallback .boot-room-restore {
+  display: block;
+}
+
 .boot-noscript {
   margin: 14px 0 0;
   color: var(--ink);
@@ -481,11 +511,7 @@ h1 {
   letter-spacing: 0.15em;
 }
 
-.icon-button {
-  padding: 0 10px;
-  font-size: 0.75rem;
-}
-
+.icon-button,
 .leave-button {
   display: inline-flex;
   width: 44px;
@@ -496,7 +522,7 @@ h1 {
   border-radius: 50%;
 }
 
-.leave-icon {
+.button-icon {
   display: block;
   width: 18px;
   height: 18px;
@@ -541,7 +567,7 @@ h1 {
 
 .peer-side {
   display: flex;
-  width: 116px;
+  width: 132px;
   min-width: 0;
   align-items: center;
 }
@@ -617,6 +643,18 @@ h1 {
 
 .avatar-overlap {
   margin-left: -20px;
+}
+
+.avatar-overflow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--ink-muted);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: -0.02em;
 }
 
 .avatar-highlighted {
@@ -1204,7 +1242,7 @@ h1 {
   }
 
   .peer-side {
-    width: 98px;
+    width: 110px;
   }
 
   .peer-track {
@@ -1235,16 +1273,6 @@ h1 {
 
   .dialog-actions {
     grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 360px) {
-  .peer-flow:not(.peer-flow-solo) .peer-side {
-    width: 110px;
-  }
-
-  .peer-flow:not(.peer-flow-solo) .avatar-overlap {
-    margin-left: -23px;
   }
 }
 

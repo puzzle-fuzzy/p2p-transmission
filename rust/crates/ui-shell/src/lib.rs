@@ -11,6 +11,7 @@ pub const LOBBY_TITLE: &str = "加入房间";
 pub const LOBBY_JOIN_COPY: &str = "输入发送者提供的 6 位房间码，或直接打开邀请链接";
 pub const INVITE_READY_COPY: &str = "已读取邀请链接，确认后加入房间";
 pub const INITIALIZING_COPY: &str = "正在初始化安全会话，稍候即可使用";
+pub const RESTORING_ROOM_COPY: &str = "正在恢复上次房间，请稍候";
 pub const JOIN_REQUEST_LABEL: &str = "请求加入";
 pub const CREATE_ROOM_LABEL: &str = "创建房间";
 pub const ABOUT_LABEL: &str = "关于 P2P Transmission";
@@ -52,7 +53,6 @@ impl LobbyFeedback {
 pub fn LobbyShell(
     room_code: Element,
     footer: Element,
-    #[props(default)] root_id: Option<String>,
     #[props(default)] feedback: LobbyFeedback,
     #[props(default)] invite_ready: bool,
     #[props(default = JOIN_REQUEST_LABEL.to_owned())] primary_label: String,
@@ -67,7 +67,6 @@ pub fn LobbyShell(
 
     rsx! {
         div {
-            id: root_id,
             class: "app-shell",
             main { class: "lobby",
                 form {
@@ -137,13 +136,17 @@ pub fn LobbyShell(
 #[component]
 pub fn InitializingLobby() -> Element {
     rsx! {
-        LobbyShell {
-            root_id: Some("boot-fallback".to_owned()),
-            room_code: rsx! { InitializingRoomCode {} },
-            footer: rsx! { InitializingFooter {} },
-            feedback: LobbyFeedback::status(INITIALIZING_COPY),
-            primary_disabled: true,
-            secondary_disabled: true,
+        div { id: "boot-fallback",
+            div { class: "boot-lobby-shell",
+                LobbyShell {
+                    room_code: rsx! { InitializingRoomCode {} },
+                    footer: rsx! { InitializingFooter {} },
+                    feedback: LobbyFeedback::status(INITIALIZING_COPY),
+                    primary_disabled: true,
+                    secondary_disabled: true,
+                }
+            }
+            RoomRestoreFallback {}
         }
     }
 }
@@ -204,6 +207,24 @@ fn InitializingFooter() -> Element {
     }
 }
 
+#[component]
+fn RoomRestoreFallback() -> Element {
+    rsx! {
+        div { class: "app-shell boot-room-restore",
+            main { class: "lobby",
+                div {
+                    class: "boot-room-restore-status",
+                    role: "status",
+                    aria_live: "polite",
+                    aria_atomic: "true",
+                    span { class: "service-dot", aria_hidden: "true" }
+                    p { {RESTORING_ROOM_COPY} }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,6 +238,7 @@ mod tests {
         assert!(!html.contains("aria-busy"));
         assert!(html.contains(LOBBY_JOIN_COPY));
         assert!(html.contains(INITIALIZING_COPY));
+        assert!(html.contains(RESTORING_ROOM_COPY));
         assert!(html.contains(PRIVACY_COPY));
         assert!(html.contains(NOSCRIPT_COPY));
         assert_eq!(
@@ -227,6 +249,12 @@ mod tests {
         assert!(!html.contains("<input"));
         assert!(!html.contains("<a"));
         assert!(!html.contains("tabindex"));
+        let restore_shell = html
+            .split_once("boot-room-restore")
+            .map(|(_, shell)| shell)
+            .expect("room restore fallback should be rendered after the lobby");
+        assert!(!restore_shell.contains("<button"));
+        assert!(!restore_shell.contains("<input"));
     }
 
     #[test]

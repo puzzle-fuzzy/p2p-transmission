@@ -3,8 +3,7 @@ use p2p_browser_platform::{
     RealtimeEvent, bootstrap_room, clear_room_session, join_request_status, sleep_ms,
 };
 use p2p_protocol::{
-    CURRENT_PROTOCOL, JoinDecisionWire, JoinRequestStateWire, ParticipantRoleWire,
-    RoomBootstrapResponse, ServerRealtimeMessage,
+    CURRENT_PROTOCOL, JoinRequestStateWire, RoomBootstrapResponse, ServerRealtimeMessage,
 };
 
 use crate::app_state::{
@@ -16,81 +15,19 @@ use crate::realtime_connection::{
     RealtimeLease, defer_realtime_socket_clear, mark_realtime_connected, realtime_lease_is_current,
     realtime_suppression_is_current, schedule_reconnect, suppress_realtime_lease,
 };
+use crate::realtime_event_reducer::{
+    AttachmentDecision, RealtimeEffect, RevisionStep, RevisionedModelEvent, reduce_attachment,
+    reduce_authoritative_snapshot, reduce_revisioned_model_event, reduce_room_expired,
+    reduce_server_error, reduce_signal, reduce_socket_closed, reduce_socket_error,
+    reduce_socket_opened, revision_step, screen_revision, snapshot_revision_allowed,
+    waiting_request_missing,
+};
 use crate::realtime_runtime::{LifecycleState, RealtimeSessionRuntime, RtcRuntime};
 use crate::realtime_target::{RealtimeTarget, RealtimeTargetKind, member_target};
 use crate::room_session::persist_room_session;
 use crate::rtc_session::{accept_rtc_signal, remove_rtc_peer, reset_all_rtc_peers, sync_rtc_peers};
 
 const AVATAR_ENTRY_HOLD_MS: u32 = 700;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum RevisionStep {
-    Ignore,
-    Apply,
-    RefreshSnapshot,
-}
-
-fn revision_step(current: u64, incoming: u64) -> RevisionStep {
-    if incoming <= current {
-        RevisionStep::Ignore
-    } else if current.checked_add(1) == Some(incoming) {
-        RevisionStep::Apply
-    } else {
-        RevisionStep::RefreshSnapshot
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum AttachedStep {
-    Ready,
-    AwaitSnapshot,
-}
-
-fn attached_step(local_revision: u64, attached_revision: u64) -> AttachedStep {
-    if local_revision == attached_revision {
-        AttachedStep::Ready
-    } else {
-        AttachedStep::AwaitSnapshot
-    }
-}
-
-fn snapshot_revision_allowed(
-    local_revision: u64,
-    observed_revision: u64,
-    incoming_revision: u64,
-) -> bool {
-    incoming_revision >= local_revision && incoming_revision >= observed_revision
-}
-
-fn room_expired_should_apply(current_revision: u64, incoming_revision: u64) -> bool {
-    // Expiration is authoritative and terminal, so a revision gap must not keep a dead room open.
-    incoming_revision >= current_revision
-}
-
-fn screen_revision(model: &AppModel) -> Option<u64> {
-    match &model.screen {
-        Screen::Waiting { revision, .. } => Some(*revision),
-        Screen::Room { snapshot, .. } => Some(snapshot.revision),
-        Screen::Booting | Screen::Lobby { .. } => None,
-    }
-}
-
-fn observe_attachment(
-    model: &AppModel,
-    target: Signal<Option<RealtimeTarget>>,
-    revision: u64,
-) -> Option<AttachedStep> {
-    let local_revision = screen_revision(model)?;
-    let step = attached_step(local_revision, revision);
-    if let Some(target) = target.peek().as_ref() {
-        target.reconcile_applied_revision(local_revision);
-        match step {
-            AttachedStep::Ready => target.mark_revision_applied(revision),
-            AttachedStep::AwaitSnapshot => target.mark_snapshot_pending(revision),
-        }
-    }
-    Some(step)
-}
 
 fn begin_revisioned_event(
     model: &AppModel,
@@ -247,282 +184,263 @@ pub(super) fn handle_realtime_event(
     lease: RealtimeLease,
     event: RealtimeEvent,
 ) {
-    let RealtimeSessionRuntime {
-        mut model,
-        target: realtime_target,
-        connection,
-        rtc,
-        lifecycle_state,
-    } = runtime;
-    if !realtime_lease_is_current(&lease, connection, realtime_target) {
+    if !realtime_lease_is_current(&lease, runtime.connection, runtime.target) {
         return;
     }
 
     match event {
-        RealtimeEvent::Open => model.write().realtime = RealtimePhase::Connecting,
-        RealtimeEvent::Message(message) => match message {
-            ServerRealtimeMessage::Attached { revision, .. } => {
-                if observe_attachment(&model.read(), realtime_target, revision)
-                    == Some(AttachedStep::Ready)
-                    && mark_realtime_connected(connection, &lease)
-                {
-                    complete_attachment(model, rtc, lifecycle_state, &lease, true);
-                }
-            }
-            ServerRealtimeMessage::JoinWatching { revision, .. } => {
-                if observe_attachment(&model.read(), realtime_target, revision)
-                    == Some(AttachedStep::Ready)
-                    && mark_realtime_connected(connection, &lease)
-                {
-                    complete_attachment(model, rtc, lifecycle_state, &lease, false);
-                }
-            }
-            ServerRealtimeMessage::RoomSnapshot {
+        RealtimeEvent::Open => {
+            apply_realtime_effects(runtime, &lease, reduce_socket_opened());
+        }
+        RealtimeEvent::Message(message) => handle_server_message(runtime, &lease, message),
+        RealtimeEvent::Error(error) => {
+            apply_realtime_effects(runtime, &lease, reduce_socket_error(error));
+        }
+        RealtimeEvent::Closed { code, .. } => {
+            let has_target = runtime.target.peek().is_some();
+            apply_realtime_effects(runtime, &lease, reduce_socket_closed(code, has_target));
+        }
+    }
+}
+
+fn handle_server_message(
+    runtime: RealtimeSessionRuntime,
+    lease: &RealtimeLease,
+    message: ServerRealtimeMessage,
+) {
+    match message {
+        ServerRealtimeMessage::Attached { revision, .. } => {
+            handle_attachment(runtime, lease, revision, true);
+        }
+        ServerRealtimeMessage::JoinWatching { revision, .. } => {
+            handle_attachment(runtime, lease, revision, false);
+        }
+        ServerRealtimeMessage::RoomSnapshot {
+            room_id,
+            room_code,
+            revision,
+            expires_at_ms,
+            participants,
+            pending_join_requests,
+            ..
+        } => handle_room_snapshot(
+            runtime,
+            lease,
+            RoomBootstrapResponse {
+                version: CURRENT_PROTOCOL,
                 room_id,
                 room_code,
                 revision,
                 expires_at_ms,
                 participants,
                 pending_join_requests,
-                ..
-            } => {
-                let snapshot = RoomBootstrapResponse {
-                    version: CURRENT_PROTOCOL,
-                    room_id,
-                    room_code,
-                    revision,
-                    expires_at_ms,
-                    participants,
-                    pending_join_requests,
-                };
-                let waiting_missing = match &model.read().screen {
-                    Screen::Waiting { request_id, .. } => !snapshot
-                        .pending_join_requests
-                        .iter()
-                        .any(|request| &request.request_id == request_id),
-                    _ => false,
-                };
-                let Some(entering) = apply_authoritative_snapshot(runtime, &lease, snapshot) else {
-                    return;
-                };
-                schedule_avatar_cleanup(model, entering);
-                if waiting_missing {
-                    resolve_waiting(runtime, lease.clone());
-                }
-            }
-            ServerRealtimeMessage::JoinRequested {
-                revision, request, ..
-            } => {
-                if should_apply_revisioned_event(runtime, &lease, revision) {
-                    let applied = if let Screen::Room {
-                        role: RoomRole::Owner,
-                        snapshot,
-                        ..
-                    } = &mut model.write().screen
-                    {
-                        snapshot.revision = revision;
-                        if !snapshot
-                            .pending_join_requests
-                            .iter()
-                            .any(|existing| existing.request_id == request.request_id)
-                        {
-                            snapshot.pending_join_requests.push(request);
-                        }
-                        true
-                    } else {
-                        false
-                    };
-                    if applied {
-                        mark_target_event_revision_applied(realtime_target, revision);
-                    }
-                }
-            }
-            ServerRealtimeMessage::JoinDecided {
-                revision,
+            },
+        ),
+        ServerRealtimeMessage::JoinRequested {
+            revision, request, ..
+        } => handle_revisioned_model_event(
+            runtime,
+            lease,
+            revision,
+            RevisionedModelEvent::JoinRequested(request),
+        ),
+        ServerRealtimeMessage::JoinDecided {
+            revision,
+            request_id,
+            decision,
+            ..
+        } => handle_revisioned_model_event(
+            runtime,
+            lease,
+            revision,
+            RevisionedModelEvent::JoinDecided {
                 request_id,
                 decision,
-                ..
-            } => {
-                if should_apply_revisioned_event(runtime, &lease, revision) {
-                    if model.read().decision_request_id.as_deref() == Some(&request_id) {
-                        model.write().decision_request_id = None;
-                    }
-                    let waiting = matches!(
-                        &model.read().screen,
-                        Screen::Waiting { request_id: current, .. } if current == &request_id
-                    );
-                    if waiting {
-                        if let Screen::Waiting {
-                            revision: current, ..
-                        } = &mut model.write().screen
-                        {
-                            *current = revision;
-                        }
-                        mark_target_event_revision_applied(realtime_target, revision);
-                        match decision {
-                            JoinDecisionWire::Approved => resolve_waiting(runtime, lease.clone()),
-                            JoinDecisionWire::Rejected => return_to_lobby(
-                                model,
-                                realtime_target,
-                                Some("发送者未允许本次加入申请".to_owned()),
-                            ),
-                        }
-                    } else {
-                        let applied =
-                            if let Screen::Room { snapshot, .. } = &mut model.write().screen {
-                                snapshot.revision = revision;
-                                snapshot
-                                    .pending_join_requests
-                                    .retain(|request| request.request_id != request_id);
-                                true
-                            } else {
-                                false
-                            };
-                        if applied {
-                            mark_target_event_revision_applied(realtime_target, revision);
-                        }
-                    }
-                }
-            }
-            ServerRealtimeMessage::PeerOnline {
-                revision,
+            },
+        ),
+        ServerRealtimeMessage::PeerOnline {
+            revision,
+            session_id,
+            peer_id,
+            ..
+        } => handle_revisioned_model_event(
+            runtime,
+            lease,
+            revision,
+            RevisionedModelEvent::PeerOnline {
                 session_id,
                 peer_id,
-                ..
-            } => {
-                if should_apply_revisioned_event(runtime, &lease, revision) {
-                    let should_refresh =
-                        if let Screen::Room { snapshot, .. } = &mut model.write().screen {
-                            snapshot.revision = revision;
-                            if let Some(participant) = snapshot
-                                .participants
-                                .iter_mut()
-                                .find(|participant| participant.session_id == session_id)
-                            {
-                                participant.online = true;
-                                participant.peer_id = Some(peer_id.clone());
-                            }
-                            true
-                        } else {
-                            false
-                        };
-                    if should_refresh {
-                        mark_target_event_revision_applied(realtime_target, revision);
-                    }
-                    sync_rtc_peers(model, rtc.connection, rtc.peers, rtc.config);
-                    if should_refresh {
-                        refresh_room_snapshot(runtime, lease.clone());
-                    }
-                }
+            },
+        ),
+        ServerRealtimeMessage::PeerOffline {
+            revision,
+            session_id,
+            ..
+        } => handle_revisioned_model_event(
+            runtime,
+            lease,
+            revision,
+            RevisionedModelEvent::PeerOffline { session_id },
+        ),
+        ServerRealtimeMessage::RoomExpired { revision, .. } => {
+            let effects = {
+                let model = runtime.model.read();
+                reduce_room_expired(&model, revision)
+            };
+            apply_realtime_effects(runtime, lease, effects);
+        }
+        ServerRealtimeMessage::Error { code, message, .. } => {
+            apply_realtime_effects(runtime, lease, reduce_server_error(&code, message));
+        }
+        ServerRealtimeMessage::Signal {
+            from_peer_id,
+            signal,
+            ..
+        } => apply_realtime_effects(runtime, lease, reduce_signal(from_peer_id, signal)),
+    }
+}
+
+fn handle_attachment(
+    runtime: RealtimeSessionRuntime,
+    lease: &RealtimeLease,
+    revision: u64,
+    member: bool,
+) {
+    let decision = {
+        let model = runtime.model.read();
+        reduce_attachment(&model, revision, member)
+    };
+    match decision {
+        AttachmentDecision::Ignore => {}
+        AttachmentDecision::Ready {
+            local_revision,
+            incoming_revision,
+            member,
+        } => {
+            if let Some(target) = runtime.target.peek().as_ref() {
+                target.reconcile_applied_revision(local_revision);
+                target.mark_revision_applied(incoming_revision);
             }
-            ServerRealtimeMessage::PeerOffline {
-                revision,
-                session_id,
-                ..
-            } => {
-                if should_apply_revisioned_event(runtime, &lease, revision) {
-                    let own_session = model
-                        .read()
-                        .session
-                        .as_ref()
-                        .map(|session| session.session_id.clone());
-                    let remote_peer_id = if own_session.as_deref() != Some(session_id.as_str()) {
-                        match &model.read().screen {
-                            Screen::Room { snapshot, .. } => snapshot
-                                .participants
-                                .iter()
-                                .find(|participant| participant.session_id == session_id)
-                                .and_then(|participant| participant.peer_id.clone()),
-                            _ => None,
-                        }
-                    } else {
-                        None
-                    };
-                    let should_refresh =
-                        if let Screen::Room { snapshot, .. } = &mut model.write().screen {
-                            snapshot.revision = revision;
-                            if let Some(participant) = snapshot
-                                .participants
-                                .iter_mut()
-                                .find(|participant| participant.session_id == session_id)
-                            {
-                                participant.online = false;
-                                participant.peer_id = None;
-                            }
-                            true
-                        } else {
-                            false
-                        };
-                    if should_refresh {
-                        mark_target_event_revision_applied(realtime_target, revision);
-                    }
-                    if let Some(peer_id) = remote_peer_id {
-                        let preserve_peer = rtc.peers.read().get(&peer_id).is_some_and(|peer| {
-                            peer.data_channel_ready() || peer.resumable_transfer_active()
-                        });
-                        if !preserve_peer {
-                            remove_rtc_peer(model, rtc.peers, &peer_id);
-                        }
-                    }
-                    if should_refresh {
-                        refresh_room_snapshot(runtime, lease.clone());
-                    }
-                }
-            }
-            ServerRealtimeMessage::RoomExpired { revision, .. } => {
-                let current_revision = screen_revision(&model.read());
-                if current_revision
-                    .is_some_and(|current| room_expired_should_apply(current, revision))
-                {
-                    mark_target_event_revision_applied(realtime_target, revision);
-                    return_to_lobby(
-                        model,
-                        realtime_target,
-                        Some("房间已过期，请创建或加入新的房间".to_owned()),
-                    );
-                }
-            }
-            ServerRealtimeMessage::Error { code, message, .. } => {
-                if code == "join_request_resolved" {
-                    resolve_waiting(runtime, lease.clone());
-                } else if code == "connection_replaced" {
-                    suppress_realtime_connection(runtime, lease);
-                } else {
-                    model.write().error = Some(message);
-                }
-            }
-            ServerRealtimeMessage::Signal {
-                from_peer_id,
-                signal,
-                ..
-            } => {
-                accept_rtc_signal(
-                    model,
-                    rtc.connection,
-                    rtc.peers,
-                    rtc.config,
-                    from_peer_id,
-                    signal,
+            if mark_realtime_connected(runtime.connection, lease) {
+                complete_attachment(
+                    runtime.model,
+                    runtime.rtc,
+                    runtime.lifecycle_state,
+                    lease,
+                    member,
                 );
             }
-        },
-        RealtimeEvent::Error(error) => {
-            model.write().realtime = RealtimePhase::Reconnecting;
-            model.write().error = Some(error);
         }
-        RealtimeEvent::Closed { code, .. } => {
-            if code == 4001 {
-                suppress_realtime_connection(runtime, lease);
-            } else if realtime_target.peek().is_some() {
-                model.write().realtime = RealtimePhase::Reconnecting;
+        AttachmentDecision::AwaitSnapshot {
+            local_revision,
+            incoming_revision,
+        } => {
+            if let Some(target) = runtime.target.peek().as_ref() {
+                target.reconcile_applied_revision(local_revision);
+                target.mark_snapshot_pending(incoming_revision);
+            }
+        }
+    }
+}
+
+fn handle_room_snapshot(
+    runtime: RealtimeSessionRuntime,
+    lease: &RealtimeLease,
+    snapshot: RoomBootstrapResponse,
+) {
+    let waiting_missing = {
+        let model = runtime.model.read();
+        waiting_request_missing(&model, &snapshot)
+    };
+    let Some(entering) = apply_authoritative_snapshot(runtime, lease, snapshot) else {
+        return;
+    };
+    schedule_avatar_cleanup(runtime.model, entering);
+    if waiting_missing {
+        resolve_waiting(runtime, lease.clone());
+    }
+}
+
+fn handle_revisioned_model_event(
+    mut runtime: RealtimeSessionRuntime,
+    lease: &RealtimeLease,
+    revision: u64,
+    event: RevisionedModelEvent,
+) {
+    if !should_apply_revisioned_event(runtime, lease, revision) {
+        return;
+    }
+    let effects = {
+        let mut model = runtime.model.write();
+        reduce_revisioned_model_event(&mut model, revision, event)
+    };
+    apply_realtime_effects(runtime, lease, effects);
+}
+
+fn apply_realtime_effects(
+    mut runtime: RealtimeSessionRuntime,
+    lease: &RealtimeLease,
+    effects: Vec<RealtimeEffect>,
+) {
+    for effect in effects {
+        match effect {
+            RealtimeEffect::SetRealtimePhase(phase) => runtime.model.write().realtime = phase,
+            RealtimeEffect::SetError(error) => runtime.model.write().error = Some(error),
+            RealtimeEffect::MarkTargetRevisionApplied(revision) => {
+                mark_target_event_revision_applied(runtime.target, revision);
+            }
+            RealtimeEffect::ResolveWaiting => resolve_waiting(runtime, lease.clone()),
+            RealtimeEffect::ReturnToLobby(notice) => {
+                return_to_lobby(runtime.model, runtime.target, Some(notice.to_owned()));
+                return;
+            }
+            RealtimeEffect::SyncRtcPeers => sync_rtc_peers(
+                runtime.model,
+                runtime.rtc.connection,
+                runtime.rtc.peers,
+                runtime.rtc.config,
+            ),
+            RealtimeEffect::RefreshRoomSnapshot => {
+                refresh_room_snapshot(runtime, lease.clone());
+            }
+            RealtimeEffect::RemoveRtcPeer(peer_id) => {
+                let preserve_peer = runtime.rtc.peers.read().get(&peer_id).is_some_and(|peer| {
+                    peer.data_channel_ready() || peer.resumable_transfer_active()
+                });
+                if !preserve_peer {
+                    remove_rtc_peer(runtime.model, runtime.rtc.peers, &peer_id);
+                }
+            }
+            RealtimeEffect::SuppressRealtimeConnection => {
+                suppress_realtime_connection(runtime, lease.clone());
+                return;
+            }
+            RealtimeEffect::ReconnectSocket => {
+                runtime.model.write().realtime = RealtimePhase::Reconnecting;
                 defer_realtime_socket_clear(
-                    connection,
-                    realtime_target,
-                    rtc.connection,
+                    runtime.connection,
+                    runtime.target,
+                    runtime.rtc.connection,
                     lease.clone(),
                 );
-                schedule_reconnect(connection, realtime_target, model, lease);
+                schedule_reconnect(
+                    runtime.connection,
+                    runtime.target,
+                    runtime.model,
+                    lease.clone(),
+                );
             }
+            RealtimeEffect::AcceptRtcSignal {
+                from_peer_id,
+                signal,
+            } => accept_rtc_signal(
+                runtime.model,
+                runtime.rtc.connection,
+                runtime.rtc.peers,
+                runtime.rtc.config,
+                from_peer_id,
+                signal,
+            ),
         }
     }
 }
@@ -644,12 +562,9 @@ fn refresh_room_snapshot(runtime: RealtimeSessionRuntime, lease: RealtimeLease) 
         }
         match result {
             Ok(snapshot) => {
-                let waiting_missing = match &model.read().screen {
-                    Screen::Waiting { request_id, .. } => !snapshot
-                        .pending_join_requests
-                        .iter()
-                        .any(|request| &request.request_id == request_id),
-                    _ => false,
+                let waiting_missing = {
+                    let state = model.read();
+                    waiting_request_missing(&state, &snapshot)
                 };
                 let Some(entering) = apply_authoritative_snapshot(runtime, &lease, snapshot) else {
                     return;
@@ -668,49 +583,7 @@ pub(super) fn apply_snapshot(
     model: &mut AppModel,
     next: RoomBootstrapResponse,
 ) -> Option<Vec<String>> {
-    let Screen::Room { role, snapshot, .. } = &mut model.screen else {
-        if let Screen::Waiting { revision, .. } = &mut model.screen {
-            if next.revision < *revision {
-                return None;
-            }
-            *revision = next.revision;
-        }
-        return Some(Vec::new());
-    };
-    if next.revision < snapshot.revision {
-        return None;
-    }
-    let previous_online = snapshot
-        .participants
-        .iter()
-        .filter(|participant| {
-            participant.role == ParticipantRoleWire::Receiver && participant.online
-        })
-        .map(|participant| participant.session_id.clone())
-        .collect::<Vec<_>>();
-    if *snapshot == next {
-        return Some(Vec::new());
-    }
-    let entering = if *role == RoomRole::Owner {
-        next.participants
-            .iter()
-            .filter(|participant| {
-                participant.role == ParticipantRoleWire::Receiver
-                    && participant.online
-                    && !previous_online.contains(&participant.session_id)
-            })
-            .map(|participant| participant.session_id.clone())
-            .collect()
-    } else {
-        Vec::new()
-    };
-    *snapshot = next;
-    for session_id in &entering {
-        if !model.entering_receivers.contains(session_id) {
-            model.entering_receivers.push(session_id.clone());
-        }
-    }
-    Some(entering)
+    reduce_authoritative_snapshot(model, next)
 }
 
 pub(super) fn schedule_avatar_cleanup(mut model: Signal<AppModel>, session_ids: Vec<String>) {
@@ -722,40 +595,5 @@ pub(super) fn schedule_avatar_cleanup(mut model: Signal<AppModel>, session_ids: 
                 .entering_receivers
                 .retain(|current| current != &session_id);
         });
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn revision_steps_are_monotonic_and_detect_gaps() {
-        assert_eq!(revision_step(7, 6), RevisionStep::Ignore);
-        assert_eq!(revision_step(7, 7), RevisionStep::Ignore);
-        assert_eq!(revision_step(7, 8), RevisionStep::Apply);
-        assert_eq!(revision_step(7, 9), RevisionStep::RefreshSnapshot);
-        assert_eq!(revision_step(u64::MAX, u64::MAX), RevisionStep::Ignore);
-    }
-
-    #[test]
-    fn attached_gate_waits_only_when_local_revision_differs() {
-        assert_eq!(attached_step(7, 7), AttachedStep::Ready);
-        assert_eq!(attached_step(7, 8), AttachedStep::AwaitSnapshot);
-        assert_eq!(attached_step(8, 7), AttachedStep::AwaitSnapshot);
-    }
-
-    #[test]
-    fn snapshot_must_not_trail_local_or_observed_revision() {
-        assert!(snapshot_revision_allowed(7, 8, 8));
-        assert!(!snapshot_revision_allowed(8, 8, 7));
-        assert!(!snapshot_revision_allowed(7, 9, 8));
-    }
-
-    #[test]
-    fn room_expiration_accepts_equal_or_newer_terminal_revision() {
-        assert!(!room_expired_should_apply(7, 6));
-        assert!(room_expired_should_apply(7, 7));
-        assert!(room_expired_should_apply(7, 9));
     }
 }

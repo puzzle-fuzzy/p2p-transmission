@@ -6,6 +6,7 @@ use p2p_protocol::{CreateInviteResponse, ParticipantRoleWire, RoomBootstrapRespo
 
 use crate::app_state::{AppModel, RealtimePhase, RoomRole, RtcPhase, Screen};
 use crate::browser_errors::friendly_error;
+use crate::icons::{UiIcon, UiIconKind};
 use crate::join_request::JoinRequestDialog;
 use crate::participant_presence::PeerFlow;
 use crate::realtime_session::return_to_lobby;
@@ -109,7 +110,7 @@ pub(super) fn RoomView(
                                 aria_label: "分享房间",
                                 title: "分享房间",
                                 onclick: move |_| share_open.set(true),
-                                "分享"
+                                UiIcon { kind: UiIconKind::Share2 }
                             }
                         }
                     }
@@ -131,27 +132,7 @@ pub(super) fn RoomView(
                         title: "退出房间",
                         disabled: busy,
                         onclick: move |_| submit_leave(model, realtime_target),
-                        svg {
-                            class: "leave-icon",
-                            view_box: "0 0 24 24",
-                            role: "presentation",
-                            path {
-                                d: "M13 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4",
-                                fill: "none",
-                                stroke: "currentColor",
-                                stroke_width: "1.75",
-                                stroke_linecap: "round",
-                                stroke_linejoin: "round",
-                            }
-                            path {
-                                d: "M11 8l-4 4 4 4M7 12h9",
-                                fill: "none",
-                                stroke: "currentColor",
-                                stroke_width: "1.75",
-                                stroke_linecap: "round",
-                                stroke_linejoin: "round",
-                            }
-                        }
+                        UiIcon { kind: UiIconKind::LogOut }
                     }
                 }
             }

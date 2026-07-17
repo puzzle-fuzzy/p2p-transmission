@@ -16,9 +16,8 @@ use std::{
 
 use axum::{
     Extension, Json, Router,
-    extract::OriginalUri,
     http::{HeaderName, HeaderValue, StatusCode, header},
-    response::{IntoResponse, Redirect, Response},
+    response::{IntoResponse, Response},
     routing::get,
 };
 use http_api::AppState;
@@ -32,6 +31,7 @@ use tower_http::{
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; connect-src 'self' ws: wss:; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 const APP_CSS: &str = include_str!("../../web/assets/main.css");
 const APP_SHELL_JS: &str = include_str!("../assets/app-shell.js");
+const ROOM_RESTORE_JS: &str = include_str!("../assets/room-restore.js");
 const WEB_MANIFEST: &str = include_str!("../assets/manifest.webmanifest");
 const SERVICE_WORKER: &str = include_str!("../assets/sw.js");
 
@@ -49,10 +49,13 @@ pub fn app(
 
     Ok(Router::new()
         .route("/", get(web_shell::root).layer(Extension(shell_renderer)))
-        .route("/app", get(legacy_app_redirect))
-        .route("/app/", get(legacy_app_redirect))
-        .route("/index.html", get(legacy_app_redirect))
+        // Prevent the static fallback from exposing a second HTML entrypoint.
+        .route("/index.html", get(missing_html_entry))
+        .route("/shell/app-shell.css", get(app_css))
+        // Keep the former stylesheet endpoint for one service-worker update
+        // cycle. The application shell no longer references it.
         .route("/shell/app.css", get(app_css))
+        .route("/shell/room-restore.js", get(room_restore_js))
         .route("/shell/app-shell.js", get(app_shell_js))
         .route("/manifest.webmanifest", get(web_manifest))
         .route("/sw.js", get(service_worker))
@@ -86,15 +89,8 @@ pub fn app(
         .with_state(state))
 }
 
-async fn legacy_app_redirect(OriginalUri(uri): OriginalUri) -> Response {
-    let target = uri
-        .query()
-        .map_or_else(|| "/".to_owned(), |query| format!("/?{query}"));
-    let mut response = Redirect::temporary(&target).into_response();
-    response
-        .headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    response
+async fn missing_html_entry() -> StatusCode {
+    StatusCode::NOT_FOUND
 }
 
 async fn app_css() -> Response {
@@ -107,7 +103,21 @@ async fn app_css() -> Response {
 }
 
 async fn app_shell_js() -> Response {
-    embedded_asset("text/javascript; charset=utf-8", APP_SHELL_JS)
+    let mut response = embedded_asset("text/javascript; charset=utf-8", APP_SHELL_JS);
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("no-cache, must-revalidate"),
+    );
+    response
+}
+
+async fn room_restore_js() -> Response {
+    let mut response = embedded_asset("text/javascript; charset=utf-8", ROOM_RESTORE_JS);
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("no-cache, must-revalidate"),
+    );
+    response
 }
 
 async fn web_manifest() -> Response {
@@ -256,7 +266,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn root_is_the_application_and_legacy_html_paths_redirect() {
+    async fn root_is_the_only_application_entrypoint() {
         let web_root = fixture_dir();
         let state = test_state(&web_root).await;
         let response = test_app(&web_root, state.clone())
@@ -285,26 +295,16 @@ mod tests {
         assert_eq!(body.matches("id=\"boot-fallback\"").count(), 1);
         assert_eq!(body.matches("id=\"main\"").count(), 1);
 
-        for (path, location) in [
-            ("/app", "/"),
-            ("/app/", "/"),
-            ("/index.html", "/"),
-            ("/app?intent=create", "/?intent=create"),
-            ("/app/?room=ABC234", "/?room=ABC234"),
+        for path in [
+            "/app",
+            "/app/",
+            "/app?intent=create",
+            "/app/?room=ABC234",
+            "/index.html",
+            "/unknown-route",
+            "/assets/missing.js",
+            "/appx",
         ] {
-            let redirect = test_app(&web_root, state.clone())
-                .oneshot(Request::get(path).body(Body::empty()).expect("request"))
-                .await
-                .expect("legacy application redirect");
-            assert_eq!(redirect.status(), StatusCode::TEMPORARY_REDIRECT);
-            assert_eq!(redirect.headers()[header::LOCATION], location);
-            assert_eq!(
-                redirect.headers()[header::CACHE_CONTROL],
-                HeaderValue::from_static("no-store")
-            );
-        }
-
-        for path in ["/unknown-route", "/assets/missing.js", "/appx"] {
             let missing = test_app(&web_root, state.clone())
                 .oneshot(Request::get(path).body(Body::empty()).expect("request"))
                 .await
@@ -363,6 +363,7 @@ mod tests {
         );
 
         let service_worker = router
+            .clone()
             .oneshot(Request::get("/sw.js").body(Body::empty()).expect("request"))
             .await
             .expect("service worker response");
@@ -385,11 +386,57 @@ mod tests {
             String::from_utf8(service_worker.to_vec()).expect("service worker utf-8");
         assert!(service_worker.contains(release_version()));
         assert!(!service_worker.contains("__P2P_RELEASE__"));
-        assert!(!service_worker.contains("\n  '/app',"));
+        assert!(service_worker.contains("'/shell/app-shell.css'"));
+        assert!(service_worker.contains("networkFirstAsset(request)"));
+        assert!(!service_worker.contains("url.pathname === '/app'"));
 
-        let app_css = test_app(&web_root, state.clone())
+        let room_restore = router
+            .clone()
             .oneshot(
-                Request::get("/shell/app.css")
+                Request::get("/shell/room-restore.js")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("room restore hint response");
+        assert_eq!(room_restore.status(), StatusCode::OK);
+        assert_eq!(
+            room_restore.headers()[header::CONTENT_TYPE],
+            HeaderValue::from_static("text/javascript; charset=utf-8")
+        );
+        assert_eq!(
+            room_restore.headers()[header::CACHE_CONTROL],
+            HeaderValue::from_static("no-cache, must-revalidate")
+        );
+        let room_restore = room_restore
+            .into_body()
+            .collect()
+            .await
+            .expect("collect room restore hint")
+            .to_bytes();
+        let room_restore =
+            String::from_utf8(room_restore.to_vec()).expect("room restore hint utf-8");
+        assert!(room_restore.contains("p2p_room_session"));
+        assert!(room_restore.contains("data-p2p-room-restore"));
+
+        let app_shell = router
+            .clone()
+            .oneshot(
+                Request::get("/shell/app-shell.js")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("application bootstrap response");
+        assert_eq!(app_shell.status(), StatusCode::OK);
+        assert_eq!(
+            app_shell.headers()[header::CACHE_CONTROL],
+            HeaderValue::from_static("no-cache, must-revalidate")
+        );
+
+        let app_css = router
+            .oneshot(
+                Request::get("/shell/app-shell.css")
                     .body(Body::empty())
                     .expect("request"),
             )

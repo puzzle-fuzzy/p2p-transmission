@@ -1,6 +1,13 @@
 use dioxus::prelude::*;
 use p2p_protocol::ParticipantSnapshot;
 
+const MAX_VISIBLE_RECEIVER_AVATARS: usize = 3;
+
+fn receiver_stack_counts(receiver_count: usize) -> (usize, usize) {
+    let visible_count = receiver_count.min(MAX_VISIBLE_RECEIVER_AVATARS);
+    (visible_count, receiver_count - visible_count)
+}
+
 #[component]
 pub(super) fn PeerFlow(
     sender: Option<ParticipantSnapshot>,
@@ -8,6 +15,7 @@ pub(super) fn PeerFlow(
     entering_receivers: Vec<String>,
     peer_connected: bool,
 ) -> Element {
+    let (visible_receiver_count, hidden_receiver_count) = receiver_stack_counts(receivers.len());
     let accessible = if receivers.is_empty() {
         "暂无接收者，正在等待连接".to_owned()
     } else {
@@ -35,13 +43,24 @@ pub(super) fn PeerFlow(
                     }
                 }
                 span { class: "peer-side receiver-side", aria_hidden: "true",
-                    for (index, receiver) in receivers.iter().take(5).enumerate() {
+                    for (index, receiver) in receivers
+                        .iter()
+                        .take(visible_receiver_count)
+                        .enumerate()
+                    {
                         Avatar {
                             seed: receiver.session_id.clone(),
                             label: receiver.display_name.clone(),
                             entering: entering_receivers.contains(&receiver.session_id),
                             highlighted: false,
                             overlap: index > 0,
+                        }
+                    }
+                    if hidden_receiver_count > 0 {
+                        span {
+                            class: "avatar avatar-overflow avatar-overlap",
+                            title: "另有 {hidden_receiver_count} 位接收者",
+                            "+{hidden_receiver_count}"
                         }
                     }
                 }
@@ -137,6 +156,19 @@ mod tests {
             for column in 0..5 {
                 assert_eq!(cells[row * 5 + column], cells[row * 5 + (4 - column)]);
             }
+        }
+    }
+
+    #[test]
+    fn receiver_stack_shows_three_avatars_before_overflowing() {
+        for (receiver_count, expected_counts) in [
+            (0, (0, 0)),
+            (1, (1, 0)),
+            (3, (3, 0)),
+            (4, (3, 1)),
+            (7, (3, 4)),
+        ] {
+            assert_eq!(receiver_stack_counts(receiver_count), expected_counts);
         }
     }
 }
