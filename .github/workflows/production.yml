@@ -50,8 +50,9 @@ jobs:
       - run: cargo install cargo-audit --version 0.22.2 --locked
       - run: cargo audit --deny warnings
       - run: cargo fmt --all -- --check
+      - run: python -X utf8 scripts/check_web_architecture.py
       - run: python -X utf8 -m unittest discover -s deploy/scripts -p "test_*.py"
-      - run: cargo clippy --locked -p p2p-domain -p p2p-protocol -p p2p-transfer -p p2p-server --all-targets -- -D warnings
+      - run: cargo clippy --locked -p p2p-domain -p p2p-protocol -p p2p-transfer -p p2p-server -p p2p-ui-shell --all-targets -- -D warnings
       - run: cargo test --locked
       - run: cargo test --locked -p p2p-browser-platform -p p2p-web
       - run: cargo build --locked -p p2p-server --release

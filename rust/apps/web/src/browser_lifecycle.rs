@@ -2,33 +2,22 @@ use dioxus::prelude::*;
 use p2p_browser_platform::{
     BrowserLifecycleEvent, SLEEP_RESUME_GAP_MS, bootstrap_room, connect_browser_lifecycle,
 };
+use p2p_protocol::RoomBootstrapResponse;
 
+use crate::app_state::{AppModel, RealtimePhase, RtcPhase, Screen};
+use crate::browser_errors::friendly_error;
 use crate::realtime_connection::{
-    RealtimeTargetScope, current_realtime_lease, current_realtime_target_scope,
+    RealtimeLease, current_realtime_lease, current_realtime_target_scope,
     invalidate_realtime_lease, realtime_lease_is_current, realtime_target_is_suppressed,
     schedule_reconnect,
 };
-use crate::realtime_session::{
-    RealtimeSessionRuntime, apply_authoritative_snapshot, schedule_avatar_cleanup,
+use crate::realtime_runtime::{
+    LifecycleRecovery, LifecycleState, RealtimeSessionRuntime, RtcRuntime,
 };
+use crate::realtime_target::RealtimeTargetScope;
 use crate::rtc_orchestration::{mark_streamed_transfers_waiting, refresh_aggregate_rtc};
 
-use super::{AppModel, RealtimePhase, RtcPhase, RtcRuntime, Screen, friendly_error};
-
 const BACKGROUND_CONTROL_RECOVERY_MS: u64 = 15_000;
-
-#[derive(Clone, Debug)]
-struct LifecycleRecovery {
-    target: RealtimeTargetScope,
-    rebuild_resumable_peers_after_attach: bool,
-}
-
-#[derive(Clone, Debug, Default)]
-pub(super) struct LifecycleState {
-    hidden: bool,
-    network_recovery_pending: bool,
-    recovery: Option<LifecycleRecovery>,
-}
 
 impl LifecycleState {
     fn sync_target(&mut self, target: Option<&RealtimeTargetScope>) {
@@ -70,11 +59,14 @@ enum LifecycleRecoveryAction {
     RebuildResumablePeers,
 }
 
-pub(super) fn use_browser_lifecycle(runtime: RealtimeSessionRuntime) {
+pub(super) fn use_browser_lifecycle(
+    runtime: RealtimeSessionRuntime,
+    apply_snapshot: Callback<(RealtimeLease, RoomBootstrapResponse)>,
+) {
     let mut model = runtime.model;
     use_hook(move || {
         let on_event = Callback::new(move |event| {
-            handle_browser_lifecycle_event(runtime, event);
+            handle_browser_lifecycle_event(runtime, event, apply_snapshot);
         });
         match connect_browser_lifecycle(on_event.into_closure()) {
             Ok(active) => Some(active),
@@ -120,7 +112,11 @@ fn lifecycle_recovery_action(
     }
 }
 
-fn handle_browser_lifecycle_event(runtime: RealtimeSessionRuntime, event: BrowserLifecycleEvent) {
+fn handle_browser_lifecycle_event(
+    runtime: RealtimeSessionRuntime,
+    event: BrowserLifecycleEvent,
+    apply_snapshot: Callback<(RealtimeLease, RoomBootstrapResponse)>,
+) {
     let RealtimeSessionRuntime {
         mut model,
         target: realtime_target,
@@ -175,7 +171,7 @@ fn handle_browser_lifecycle_event(runtime: RealtimeSessionRuntime, event: Browse
             });
         }
         if let Some(lease) = current_realtime_lease(realtime_connection, realtime_target) {
-            schedule_reconnect(runtime, lease);
+            schedule_reconnect(realtime_connection, realtime_target, model, lease);
         }
         return;
     }
@@ -205,7 +201,7 @@ fn handle_browser_lifecycle_event(runtime: RealtimeSessionRuntime, event: Browse
     rtc.connection.set(None);
     let lease = current_realtime_lease(realtime_connection, realtime_target);
     if let Some(lease) = lease.clone() {
-        schedule_reconnect(runtime, lease);
+        schedule_reconnect(realtime_connection, realtime_target, model, lease);
     }
 
     let room_code = match &model.read().screen {
@@ -222,12 +218,7 @@ fn handle_browser_lifecycle_event(runtime: RealtimeSessionRuntime, event: Browse
                 return;
             }
             match result {
-                Ok(snapshot) => {
-                    let entering = apply_authoritative_snapshot(runtime, lease, snapshot);
-                    if let Some(entering) = entering {
-                        schedule_avatar_cleanup(model, entering);
-                    }
-                }
+                Ok(snapshot) => apply_snapshot.call((lease.clone(), snapshot)),
                 Err(error) => model.write().error = Some(friendly_error(&error)),
             }
         });
@@ -342,12 +333,12 @@ mod tests {
 
     #[test]
     fn lifecycle_recovery_is_consumed_only_by_the_same_target_instance() {
-        let old_target = RealtimeTargetScope::new(crate::realtime_session::member_target(
+        let old_target = RealtimeTargetScope::new(crate::realtime_target::member_target(
             "ABC234".to_owned(),
             1,
             "peer-owner".to_owned(),
         ));
-        let reentered_target = RealtimeTargetScope::new(crate::realtime_session::member_target(
+        let reentered_target = RealtimeTargetScope::new(crate::realtime_target::member_target(
             "ABC234".to_owned(),
             1,
             "peer-owner".to_owned(),
@@ -361,12 +352,12 @@ mod tests {
 
     #[test]
     fn join_watch_recovery_is_consumed_without_leaking_peer_rebuild() {
-        let target = RealtimeTargetScope::new(crate::realtime_session::join_watch_target(
+        let target = RealtimeTargetScope::new(crate::realtime_target::join_watch_target(
             "ABC234".to_owned(),
             "request-1".to_owned(),
             1,
         ));
-        let next_member = RealtimeTargetScope::new(crate::realtime_session::member_target(
+        let next_member = RealtimeTargetScope::new(crate::realtime_target::member_target(
             "ABC234".to_owned(),
             1,
             "peer-receiver".to_owned(),

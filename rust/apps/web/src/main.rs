@@ -1,241 +1,69 @@
-use std::{collections::BTreeMap, fmt::Write as _};
+use std::collections::BTreeMap;
 
 use dioxus::prelude::*;
 use p2p_browser_platform::{
-    BrowserPlatformError, BrowserStorageErrorKind, LaunchIntent, NativeShareOutcome,
-    RealtimeConnection, RtcPeer, TransferDirection, TransferFile, activate_app_mount,
-    bootstrap_room, build_invite_url, clear_room_session, close_modal_dialog, copy_text,
-    create_invite, create_room, create_session, decide_join, fetch_rtc_config, join_request_status,
-    leave_room, load_room_session, mark_app_interactive, native_share_supported, new_client_id,
-    prime_notification_permission, request_join, save_room_session, share_url, show_modal_dialog,
-    take_launch_intent,
+    BrowserPlatformError, LaunchIntent, RealtimeConnection, RealtimeEvent, RtcPeer,
+    activate_app_mount, bootstrap_room, clear_room_session, copy_text, create_invite, create_room,
+    create_session, decide_join, fetch_rtc_config, join_request_status, leave_room,
+    mark_app_interactive, new_client_id, prime_notification_permission, request_join,
+    show_modal_dialog, take_launch_intent,
 };
 use p2p_protocol::{
-    CancelReason, CreateInviteResponse, JoinDecisionRequest, JoinRequestSnapshot,
-    JoinRequestStateWire, ParticipantRoleWire, ParticipantSnapshot, RoomBootstrapResponse,
-    RtcConfigResponse, SessionResponse, Signal as ProtocolSignal, StreamPauseReason, TransferMode,
+    JoinDecisionRequest, JoinRequestSnapshot, JoinRequestStateWire, ParticipantRoleWire,
+    RoomBootstrapResponse, RtcConfigResponse, SessionResponse,
 };
-use serde::{Deserialize, Serialize};
+use p2p_ui_shell::{
+    CREATE_ROOM_LABEL, JOIN_REQUEST_LABEL, LobbyFeedback, LobbyShell, ROOM_CODE_LENGTH,
+};
 
+mod about;
+mod app_state;
+mod browser_errors;
 mod browser_lifecycle;
+mod participant_presence;
 mod realtime_connection;
+mod realtime_runtime;
 mod realtime_session;
+mod realtime_target;
 mod room_code_input;
+mod room_session;
 mod rtc_orchestration;
 mod rtc_session;
 mod rtc_transfer_events;
+mod share_dialog;
 mod transfer_actions;
 mod transfer_panel;
 mod transfer_presentation;
 
-use browser_lifecycle::{LifecycleState, complete_lifecycle_recovery, use_browser_lifecycle};
+use about::{AboutDialog, FooterLinks};
+use app_state::{
+    AppModel, RealtimePhase, RoomRole, RtcPhase, Screen, StoredRoomSession, TransferState,
+};
+use browser_errors::friendly_error;
+use browser_lifecycle::{sync_lifecycle_recovery_target, use_browser_lifecycle};
+use participant_presence::{Avatar, PeerFlow};
 use realtime_connection::{
-    RealtimeConnectionRuntime, RealtimeConnectionState, RealtimeTargetScope,
-    current_realtime_target_scope, realtime_target_is_suppressed, realtime_target_scope_is_current,
-    use_realtime_connection,
+    RealtimeLease, current_realtime_target_scope, realtime_target_is_suppressed,
+    realtime_target_scope_is_current, use_realtime_connection,
+};
+use realtime_runtime::{
+    LifecycleState, RealtimeConnectionRuntime, RealtimeConnectionState, RealtimeSessionRuntime,
+    RtcRuntime,
 };
 use realtime_session::{
-    RealtimeSessionRuntime, RealtimeTarget, apply_snapshot, enter_receiver_room, join_watch_target,
-    member_target, return_to_lobby, schedule_avatar_cleanup,
+    apply_authoritative_snapshot, apply_snapshot, enter_receiver_room, handle_realtime_event,
+    return_to_lobby, schedule_avatar_cleanup,
 };
+use realtime_target::{RealtimeTarget, RealtimeTargetScope, join_watch_target, member_target};
 use room_code_input::RoomCodeInput;
+use room_session::{persist_room_session, restored_room_session};
 use rtc_session::{accept_rtc_signal, reset_all_rtc_peers, sync_rtc_peers};
+use share_dialog::ShareDialog;
 use transfer_panel::TransferPanel;
-
-const QR_QUIET_ZONE_MODULES: usize = 4;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct InviteQrCode {
-    view_box: String,
-    path: String,
-}
-
-fn invite_qr_code(url: &str) -> Option<InviteQrCode> {
-    let code = qrcode::QrCode::new(url.as_bytes()).ok()?;
-    let width = code.width();
-    let mut path = String::new();
-
-    for (index, color) in code.into_colors().into_iter().enumerate() {
-        if color == qrcode::Color::Dark {
-            let x = index % width + QR_QUIET_ZONE_MODULES;
-            let y = index / width + QR_QUIET_ZONE_MODULES;
-            write!(&mut path, "M{x} {y}h1v1h-1z").ok()?;
-        }
-    }
-
-    let size = width + QR_QUIET_ZONE_MODULES * 2;
-    Some(InviteQrCode {
-        view_box: format!("0 0 {size} {size}"),
-        path,
-    })
-}
 
 fn main() {
     console_error_panic_hook::set_once();
     dioxus::launch(App);
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum RoomRole {
-    Owner,
-    Receiver,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-struct StoredRoomSession {
-    room_code: String,
-    role: RoomRole,
-    join_request_id: Option<String>,
-    invite_request_id: Option<String>,
-    peer_id: String,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum RealtimePhase {
-    Disconnected,
-    Connecting,
-    Connected,
-    Reconnecting,
-    Superseded,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum RtcPhase {
-    Inactive,
-    WaitingPeer,
-    Connecting,
-    Ready,
-    Disconnected,
-    Failed,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum TransferLinkState {
-    Ready,
-    Waiting,
-    Paused,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-enum TransferState {
-    Idle,
-    Offering {
-        transfer_id: String,
-        file: TransferFile,
-        files: Vec<TransferFile>,
-    },
-    OutgoingRecovery {
-        transfer_id: String,
-        file: TransferFile,
-        files: Vec<TransferFile>,
-    },
-    Incoming {
-        transfer_id: String,
-        mode: TransferMode,
-        file: TransferFile,
-        files: Vec<TransferFile>,
-        recovery_available: bool,
-    },
-    Active {
-        transfer_id: String,
-        direction: TransferDirection,
-        streamed: bool,
-        file: TransferFile,
-        files: Vec<TransferFile>,
-        completed_bytes: u64,
-        awaiting_verification: bool,
-        link_state: TransferLinkState,
-        storage_pause: Option<StreamPauseReason>,
-    },
-    Rejected {
-        direction: TransferDirection,
-        file: TransferFile,
-        files: Vec<TransferFile>,
-    },
-    Completed {
-        direction: TransferDirection,
-        file: TransferFile,
-        files: Vec<TransferFile>,
-        blake3: String,
-        download_url: Option<String>,
-    },
-    Cancelled {
-        file: Option<TransferFile>,
-        reason: CancelReason,
-    },
-    Failed {
-        file: Option<TransferFile>,
-        message: String,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-enum Screen {
-    Booting,
-    Lobby {
-        room_code: String,
-        invite_capability: Option<String>,
-    },
-    Waiting {
-        room_code: String,
-        request_id: String,
-        peer_id: String,
-        revision: u64,
-        expires_at_ms: u64,
-    },
-    Room {
-        role: RoomRole,
-        snapshot: RoomBootstrapResponse,
-        invite: Option<CreateInviteResponse>,
-        invite_request_id: Option<String>,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct AppModel {
-    session: Option<SessionResponse>,
-    screen: Screen,
-    realtime: RealtimePhase,
-    rtc: RtcPhase,
-    transfer: TransferState,
-    busy: bool,
-    error: Option<String>,
-    notice: Option<String>,
-    about_open: bool,
-    decision_request_id: Option<String>,
-    entering_receivers: Vec<String>,
-    pending_signals: Vec<(String, ProtocolSignal)>,
-    rtc_by_peer: BTreeMap<String, RtcPhase>,
-    transfers_by_peer: BTreeMap<String, TransferState>,
-}
-
-impl Default for AppModel {
-    fn default() -> Self {
-        Self {
-            session: None,
-            screen: Screen::Booting,
-            realtime: RealtimePhase::Disconnected,
-            rtc: RtcPhase::Inactive,
-            transfer: TransferState::Idle,
-            busy: false,
-            error: None,
-            notice: None,
-            about_open: false,
-            decision_request_id: None,
-            entering_receivers: Vec::new(),
-            pending_signals: Vec::new(),
-            rtc_by_peer: BTreeMap::new(),
-            transfers_by_peer: BTreeMap::new(),
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-struct RtcRuntime {
-    connection: Signal<Option<RealtimeConnection>>,
-    peers: Signal<BTreeMap<String, RtcPeer>>,
-    config: Signal<Option<RtcConfigResponse>>,
 }
 
 #[allow(non_snake_case)]
@@ -263,8 +91,28 @@ fn App() -> Element {
         lifecycle_state,
     };
 
-    use_browser_lifecycle(realtime_runtime);
-    use_realtime_connection(realtime_runtime);
+    let apply_lifecycle_snapshot = Callback::new(
+        move |(lease, snapshot): (RealtimeLease, RoomBootstrapResponse)| {
+            if let Some(entering) = apply_authoritative_snapshot(realtime_runtime, &lease, snapshot)
+            {
+                schedule_avatar_cleanup(model, entering);
+            }
+        },
+    );
+    use_browser_lifecycle(realtime_runtime, apply_lifecycle_snapshot);
+
+    let sync_lifecycle_target = Callback::new(move |scope: Option<RealtimeTargetScope>| {
+        sync_lifecycle_recovery_target(lifecycle_state, scope.as_ref());
+    });
+    let dispatch_realtime_event =
+        Callback::new(move |(lease, event): (RealtimeLease, RealtimeEvent)| {
+            handle_realtime_event(realtime_runtime, lease, event);
+        });
+    use_realtime_connection(
+        realtime_runtime,
+        dispatch_realtime_event,
+        sync_lifecycle_target,
+    );
 
     use_effect(move || initialize(model, realtime_target));
     use_effect(move || {
@@ -285,7 +133,7 @@ fn App() -> Element {
         let target = realtime_target.read().clone();
         reset_all_rtc_peers(rtc_peers);
         rtc_config.set(None);
-        let Some(RealtimeTarget::Member { .. }) = target else {
+        if !target.as_ref().is_some_and(RealtimeTarget::is_member) {
             let mut state = model.write();
             state.rtc = RtcPhase::Inactive;
             state.transfer = TransferState::Idle;
@@ -293,7 +141,7 @@ fn App() -> Element {
             state.rtc_by_peer.clear();
             state.transfers_by_peer.clear();
             return;
-        };
+        }
         let Some(target_scope) = current_realtime_target_scope(realtime_target) else {
             return;
         };
@@ -325,18 +173,26 @@ fn App() -> Element {
 
     let snapshot = model.read().clone();
     rsx! {
-        div { class: "app-shell",
-            main { class: if matches!(snapshot.screen, Screen::Room { .. }) { "workspace" } else { "lobby" },
-                match &snapshot.screen {
-                    Screen::Booting => rsx! { BootingView {} },
-                    Screen::Lobby { .. } => rsx! { LobbyView { model, realtime_target } },
-                    Screen::Waiting { .. } => rsx! { WaitingView { model, realtime_target } },
-                    Screen::Room { .. } => rsx! { RoomView { model, realtime_target, rtc_peers } },
+        match &snapshot.screen {
+            Screen::Booting => rsx! {},
+            Screen::Lobby { .. } => rsx! { LobbyView { model, realtime_target } },
+            Screen::Waiting { .. } => rsx! {
+                div { class: "app-shell",
+                    main { class: "lobby",
+                        WaitingView { model, realtime_target }
+                    }
                 }
-            }
-            if snapshot.about_open {
-                AboutDialog { model }
-            }
+            },
+            Screen::Room { .. } => rsx! {
+                div { class: "app-shell",
+                    main { class: "workspace",
+                        RoomView { model, realtime_target, rtc_peers }
+                    }
+                }
+            },
+        }
+        if snapshot.about_open {
+            AboutDialog { model }
         }
     }
 }
@@ -481,59 +337,41 @@ async fn restore_room(
 }
 
 #[component]
-fn BootingView() -> Element {
-    rsx! {
-        section { class: "booting-view", role: "status", aria_live: "polite",
-            span { class: "service-dot", aria_hidden: "true" }
-            p { "正在准备安全会话…" }
-        }
-    }
-}
-
-#[component]
 fn LobbyView(
     mut model: Signal<AppModel>,
     mut realtime_target: Signal<Option<RealtimeTarget>>,
 ) -> Element {
     let snapshot = model.read().clone();
-    let Screen::Lobby {
-        room_code,
-        invite_capability,
-    } = snapshot.screen
-    else {
-        return rsx! {};
+    let (room_code, invite_capability) = match &snapshot.screen {
+        Screen::Lobby {
+            room_code,
+            invite_capability,
+        } => (room_code.clone(), invite_capability.clone()),
+        _ => return rsx! {},
     };
-    let can_join = room_code.len() == 6 && !snapshot.busy && snapshot.session.is_some();
+    let can_join =
+        room_code.len() == ROOM_CODE_LENGTH && !snapshot.busy && snapshot.session.is_some();
+    let feedback = snapshot
+        .error
+        .clone()
+        .map(LobbyFeedback::error)
+        .unwrap_or_default();
+    let primary_label = if snapshot.busy {
+        "申请中…"
+    } else if invite_capability.is_some() {
+        "加入房间"
+    } else {
+        JOIN_REQUEST_LABEL
+    };
+    let secondary_label = if snapshot.busy {
+        "创建中…"
+    } else {
+        CREATE_ROOM_LABEL
+    };
 
     rsx! {
-        form {
-            class: "lobby-panel",
-            aria_labelledby: "join-title",
-            onsubmit: move |event| {
-                event.prevent_default();
-                let join_ready = {
-                    let state = model.read();
-                    !state.busy
-                        && state.session.is_some()
-                        && matches!(
-                            &state.screen,
-                            Screen::Lobby { room_code, .. } if room_code.len() == 6
-                        )
-                };
-                if join_ready {
-                    let _ = prime_notification_permission();
-                    submit_join(model, realtime_target);
-                }
-            },
-            h1 { id: "join-title", "加入房间" }
-            p { class: "join-copy", "输入发送者提供的 6 位房间码，或直接打开邀请链接" }
-            if invite_capability.is_some() {
-                div { class: "invite-notice", role: "status",
-                    span { class: "invite-mark", aria_hidden: "true", "✓" }
-                    span { "已读取邀请链接，确认后加入房间" }
-                }
-            }
-            div { class: "room-code-control",
+        LobbyShell {
+            room_code: rsx! {
                 RoomCodeInput {
                     value: room_code,
                     disabled: snapshot.busy,
@@ -547,37 +385,34 @@ fn LobbyView(
                         state.error = None;
                     }
                 }
-            }
-            div { class: "form-message",
-                if let Some(error) = snapshot.error {
-                    p { id: "room-code-error", role: "alert", "{error}" }
-                }
-            }
-            button {
-                class: "primary-button",
-                r#type: "submit",
-                disabled: !can_join,
-                if snapshot.busy { "申请中…" } else if invite_capability.is_some() { "加入房间" } else { "请求加入" }
-            }
-            div { class: "divider", aria_hidden: "true",
-                span {}
-                strong { "OR" }
-                span {}
-            }
-            button {
-                class: "secondary-button",
-                r#type: "button",
-                disabled: snapshot.busy || snapshot.session.is_none(),
-                onclick: move |_| {
+            },
+            footer: rsx! { FooterLinks { model } },
+            feedback,
+            invite_ready: invite_capability.is_some(),
+            primary_label: primary_label.to_owned(),
+            primary_disabled: !can_join,
+            secondary_label: secondary_label.to_owned(),
+            secondary_disabled: snapshot.busy || snapshot.session.is_none(),
+            on_submit: move |_| {
+                let join_ready = {
+                    let state = model.read();
+                    !state.busy
+                        && state.session.is_some()
+                        && matches!(
+                            &state.screen,
+                            Screen::Lobby { room_code, .. }
+                                if room_code.len() == ROOM_CODE_LENGTH
+                        )
+                };
+                if join_ready {
                     let _ = prime_notification_permission();
-                    submit_create_room(model, realtime_target);
-                },
-                if snapshot.busy { "创建中…" } else { "创建房间" }
-            }
-            p { class: "privacy-copy",
-                "文件和文本正文通过加密的 WebRTC 通道传输，优先尝试设备直连，必要时经加密中继转发；应用服务器只协调连接，不保存传输内容。接收完成的文件会暂存在当前页面中，关闭结果或退出房间后释放。"
-            }
-            FooterLinks { model }
+                    submit_join(model, realtime_target);
+                }
+            },
+            on_create: move |_| {
+                let _ = prime_notification_permission();
+                submit_create_room(model, realtime_target);
+            },
         }
     }
 }
@@ -645,7 +480,7 @@ fn submit_join(mut model: Signal<AppModel>, mut realtime_target: Signal<Option<R
     else {
         return;
     };
-    if snapshot.busy || room_code.len() != 6 || snapshot.session.is_none() {
+    if snapshot.busy || room_code.len() != ROOM_CODE_LENGTH || snapshot.session.is_none() {
         return;
     }
     model.write().busy = true;
@@ -929,101 +764,6 @@ fn RoomView(
 }
 
 #[component]
-fn PeerFlow(
-    sender: Option<ParticipantSnapshot>,
-    receivers: Vec<ParticipantSnapshot>,
-    entering_receivers: Vec<String>,
-    peer_connected: bool,
-) -> Element {
-    let accessible = if receivers.is_empty() {
-        "暂无接收者，正在等待连接".to_owned()
-    } else {
-        format!("{} 位接收者已连接", receivers.len())
-    };
-    rsx! {
-        div {
-            class: if receivers.is_empty() { "peer-flow peer-flow-solo" } else { "peer-flow" },
-            role: "status",
-            aria_live: "polite",
-            aria_label: "{accessible}",
-            span { class: "peer-side sender-side", aria_hidden: "true",
-                if let Some(sender) = sender {
-                    Avatar { seed: sender.session_id, label: sender.display_name, entering: false, highlighted: false }
-                }
-            }
-            if !receivers.is_empty() {
-                span { class: if peer_connected { "peer-track connected" } else { "peer-track waiting" }, aria_hidden: "true",
-                    if peer_connected {
-                        span { class: "peer-line" }
-                    } else {
-                        span { class: "peer-dot" }
-                        span { class: "peer-dot" }
-                        span { class: "peer-dot" }
-                    }
-                }
-                span { class: "peer-side receiver-side", aria_hidden: "true",
-                    for (index, receiver) in receivers.iter().take(5).enumerate() {
-                        Avatar {
-                            seed: receiver.session_id.clone(),
-                            label: receiver.display_name.clone(),
-                            entering: entering_receivers.contains(&receiver.session_id),
-                            highlighted: false,
-                            overlap: index > 0,
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn Avatar(
-    seed: String,
-    label: String,
-    #[props(default = false)] entering: bool,
-    #[props(default = false)] highlighted: bool,
-    #[props(default = false)] overlap: bool,
-) -> Element {
-    let hash = hash_seed(&seed);
-    let cells = avatar_cells(hash);
-    let class = format!(
-        "avatar{}{}{}",
-        if entering { " avatar-entering" } else { "" },
-        if highlighted {
-            " avatar-highlighted"
-        } else {
-            ""
-        },
-        if overlap { " avatar-overlap" } else { "" },
-    );
-    rsx! {
-        span {
-            class: "{class}",
-            role: "img",
-            aria_label: "{label}",
-            title: "{label}",
-            for (index, active) in cells.into_iter().enumerate() {
-                if active {
-                    span {
-                        class: if (index + hash as usize).is_multiple_of(4) {
-                            "avatar-cell avatar-cell-strong"
-                        } else {
-                            "avatar-cell"
-                        },
-                        style: format!(
-                            "grid-column:{};grid-row:{}",
-                            index % 5 + 1,
-                            index / 5 + 1,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[component]
 fn JoinRequestDialog(
     mut model: Signal<AppModel>,
     realtime_target: Signal<Option<RealtimeTarget>>,
@@ -1150,163 +890,6 @@ fn submit_decision(
     });
 }
 
-#[component]
-fn ShareDialog(
-    mut model: Signal<AppModel>,
-    mut share_open: Signal<bool>,
-    room_code: String,
-    capability: String,
-) -> Element {
-    let invite_url = build_invite_url(&room_code, &capability).ok();
-    let qr_code = invite_url.as_deref().and_then(invite_qr_code);
-    let has_native_share = native_share_supported();
-    use_effect(|| {
-        let _ = show_modal_dialog("share-dialog");
-    });
-    rsx! {
-        dialog {
-            id: "share-dialog",
-            class: "share-dialog",
-            aria_labelledby: "share-title",
-            oncancel: move |event| {
-                event.prevent_default();
-                let _ = close_modal_dialog("share-dialog");
-                share_open.set(false);
-            },
-                h2 { id: "share-title", "分享房间" }
-                p { "使用手机扫描二维码，或复制邀请链接加入；房间码可用于核对。" }
-                if let Some(qr_code) = qr_code {
-                    div {
-                        class: "share-qr",
-                        role: "img",
-                        aria_label: "房间 {room_code} 的二维码",
-                        svg {
-                            class: "share-qr-code",
-                            view_box: "{qr_code.view_box}",
-                            role: "presentation",
-                            path { d: "{qr_code.path}", fill: "currentColor" }
-                        }
-                    }
-                } else {
-                    p { class: "share-qr-error", role: "status", "暂时无法生成二维码，请复制邀请链接。" }
-                }
-                div { class: "share-code",
-                    span { "房间码" }
-                    strong { "{room_code}" }
-                }
-                button {
-                    class: "primary-button",
-                    r#type: "button",
-                    onclick: move |_| {
-                        let room_code = room_code.clone();
-                        let capability = capability.clone();
-                        spawn(async move {
-                            let result = async {
-                                let url = build_invite_url(&room_code, &capability)?;
-                                match share_url(
-                                    "P2P Transmission 房间邀请",
-                                    "打开邀请链接加入临时点对点传输房间",
-                                    &url,
-                                ).await {
-                                    Ok(NativeShareOutcome::Shared) => {
-                                        Ok::<_, BrowserPlatformError>(Some("邀请链接已分享"))
-                                    }
-                                    Ok(NativeShareOutcome::Cancelled) => {
-                                        Ok::<_, BrowserPlatformError>(None)
-                                    }
-                                    Ok(NativeShareOutcome::Unsupported) | Err(_) => {
-                                        copy_text(&url).await?;
-                                        Ok(Some("邀请链接已复制"))
-                                    }
-                                }
-                            }.await;
-                            match result {
-                                Ok(Some(notice)) => {
-                                    model.write().notice = Some(notice.to_owned());
-                                    let _ = close_modal_dialog("share-dialog");
-                                    share_open.set(false);
-                                }
-                                Ok(None) => {}
-                                Err(_) => {
-                                    model.write().notice = Some(
-                                        "无法自动分享，请改用房间码加入".to_owned(),
-                                    );
-                                }
-                            }
-                        });
-                    },
-                    if has_native_share { "分享邀请链接" } else { "复制邀请链接" }
-                }
-                button {
-                    class: "dialog-close",
-                    r#type: "button",
-                    onclick: move |_| {
-                        let _ = close_modal_dialog("share-dialog");
-                        share_open.set(false);
-                    },
-                    "关闭"
-                }
-        }
-    }
-}
-
-#[component]
-fn AboutDialog(mut model: Signal<AppModel>) -> Element {
-    use_effect(|| {
-        let _ = show_modal_dialog("about-dialog");
-    });
-    rsx! {
-        dialog {
-            id: "about-dialog",
-            class: "about-dialog",
-            aria_labelledby: "about-title",
-            oncancel: move |event| {
-                event.prevent_default();
-                let _ = close_modal_dialog("about-dialog");
-                model.write().about_open = false;
-            },
-                 h2 { id: "about-title", "关于 P2P Transmission" }
-                 p { "当前版本使用 Dioxus Web、Axum 与共享 Rust crates 构建。页面样式和用户功能保持产品体验基线。" }
-                dl {
-                     div { dt { "当前阶段" } dd { "正式版" } }
-                    div { dt { "前端" } dd { "Dioxus / WebAssembly" } }
-                    div { dt { "服务端" } dd { "Axum" } }
-                    div { dt { "数据通道" } dd { "WebRTC / BLAKE3" } }
-                }
-                button {
-                    class: "close-button",
-                    r#type: "button",
-                    onclick: move |_| {
-                        let _ = close_modal_dialog("about-dialog");
-                        model.write().about_open = false;
-                    },
-                    "关闭"
-                }
-        }
-    }
-}
-
-#[component]
-fn FooterLinks(mut model: Signal<AppModel>) -> Element {
-    rsx! {
-        div { class: "footer-links",
-            button {
-                class: "text-link",
-                r#type: "button",
-                onclick: move |_| model.write().about_open = true,
-                "关于 P2P Transmission"
-            }
-            a {
-                class: "text-link",
-                href: "https://github.com/puzzle-fuzzy/p2p-transmission",
-                target: "_blank",
-                rel: "noreferrer",
-                "GitHub"
-            }
-        }
-    }
-}
-
 fn submit_leave(mut model: Signal<AppModel>, realtime_target: Signal<Option<RealtimeTarget>>) {
     let (room_code, revision) = {
         let state = model.read();
@@ -1326,189 +909,4 @@ fn submit_leave(mut model: Signal<AppModel>, realtime_target: Signal<Option<Real
         }
         return_to_lobby(model, realtime_target, Some("已退出房间".to_owned()));
     });
-}
-
-fn restored_room_session() -> Option<StoredRoomSession> {
-    let value = load_room_session().ok().flatten()?;
-    match serde_json::from_str(&value) {
-        Ok(session) => Some(session),
-        Err(_) => {
-            let _ = clear_room_session();
-            None
-        }
-    }
-}
-
-fn persist_room_session(value: &StoredRoomSession) {
-    if let Ok(value) = serde_json::to_string(value) {
-        let _ = save_room_session(&value);
-    }
-}
-
-fn friendly_error(error: &BrowserPlatformError) -> String {
-    match error {
-        BrowserPlatformError::Api { status: 401, .. } => {
-            "安全会话已失效，请刷新页面后重试".to_owned()
-        }
-        BrowserPlatformError::Api { status: 403, .. } => {
-            "邀请链接无效、已过期，或当前操作没有权限".to_owned()
-        }
-        BrowserPlatformError::Api { status: 404, .. } => {
-            "没有找到这个房间，请检查房间码".to_owned()
-        }
-        BrowserPlatformError::Api { status: 409, .. } => "房间状态刚刚发生变化，请重试".to_owned(),
-        BrowserPlatformError::Api { status: 429, .. } => "操作过于频繁，请稍后再试".to_owned(),
-        BrowserPlatformError::Request(_) => "网络连接失败，请检查网络后重试".to_owned(),
-        _ => "暂时无法完成操作，请稍后重试".to_owned(),
-    }
-}
-
-fn friendly_transfer_error(error: &BrowserPlatformError) -> String {
-    match error {
-        BrowserPlatformError::Storage {
-            kind: BrowserStorageErrorKind::QuotaExceeded,
-            ..
-        } => "磁盘空间不足，请释放空间后重试".to_owned(),
-        BrowserPlatformError::Storage {
-            kind: BrowserStorageErrorKind::PermissionDenied,
-            ..
-        } => "文件访问权限已失效，请重新授权".to_owned(),
-        BrowserPlatformError::Storage {
-            kind: BrowserStorageErrorKind::NotFound,
-            ..
-        } => "所选文件或保存位置已不可用，请重新选择".to_owned(),
-        BrowserPlatformError::Storage {
-            kind: BrowserStorageErrorKind::InvalidState,
-            ..
-        } => "文件当前无法读写，请关闭占用程序后重试".to_owned(),
-        BrowserPlatformError::Storage { .. } => {
-            "无法读写所选文件，请检查文件和保存位置后重试".to_owned()
-        }
-        BrowserPlatformError::Browser(message)
-            if message.contains("between 1 and") || message.contains("file list is empty") =>
-        {
-            "一次最多选择 10 个文件".to_owned()
-        }
-        BrowserPlatformError::Browser(message) if message.contains("files exceed") => {
-            "本次文件总大小不能超过 5 GiB".to_owned()
-        }
-        BrowserPlatformError::Browser(message)
-            if message.contains("transfer limit") || message.contains("exceeds") =>
-        {
-            "单个文件不能超过 5 GiB".to_owned()
-        }
-        BrowserPlatformError::Browser(message)
-            if message.contains("streaming file saving is unavailable") =>
-        {
-            "当前浏览器不支持大文件直接保存，请使用桌面版 Chrome 或 Edge".to_owned()
-        }
-        BrowserPlatformError::Browser(message)
-            if message.contains("streaming") || message.contains("storage") =>
-        {
-            "无法写入所选位置，请检查磁盘空间后重试".to_owned()
-        }
-        BrowserPlatformError::Browser(message) if message.contains("already active") => {
-            "已有文件正在传输，请等待完成后再试".to_owned()
-        }
-        BrowserPlatformError::Browser(message)
-            if message.contains("DataChannel") || message.contains("PeerConnection") =>
-        {
-            "点对点连接尚未就绪，请稍后再试".to_owned()
-        }
-        BrowserPlatformError::Browser(message) if message.contains("incoming transfer") => {
-            "这次文件接收申请已经失效".to_owned()
-        }
-        BrowserPlatformError::Browser(_) => "文件传输暂时失败，请重试".to_owned(),
-        BrowserPlatformError::UserCancelled => "已取消选择保存位置".to_owned(),
-        _ => friendly_error(error),
-    }
-}
-
-fn hash_seed(value: &str) -> u32 {
-    let mut hash = 2_166_136_261_u32;
-    for byte in value.bytes() {
-        hash ^= u32::from(byte);
-        hash = hash.wrapping_mul(16_777_619);
-    }
-    hash
-}
-
-fn avatar_cells(seed: u32) -> [bool; 25] {
-    let mut state = seed.max(1);
-    let mut cells = [false; 25];
-    for row in 0..5 {
-        for column in 0..3 {
-            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-            let active = state & 3 < 2;
-            cells[row * 5 + column] = active;
-            cells[row * 5 + (4 - column)] = active;
-        }
-    }
-    if !cells.iter().any(|active| *active) {
-        cells[12] = true;
-    }
-    cells
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn invite_qr_code_is_deterministic_and_keeps_a_quiet_zone() {
-        let url = "https://p2p.yxswy.com/?room=ABC234&invite=test-capability";
-        let first = invite_qr_code(url).expect("invite URL should fit in a QR code");
-        let second = invite_qr_code(url).expect("same invite URL should remain encodable");
-
-        assert_eq!(first, second);
-        assert!(first.view_box.starts_with("0 0 "));
-        assert!(first.path.starts_with("M4 4"));
-        assert!(!first.path.contains('<'));
-    }
-
-    #[test]
-    fn stored_room_session_requires_peer_identity() {
-        let missing_peer_id = serde_json::from_str::<StoredRoomSession>(
-            r#"{"room_code":"ABC234","role":"receiver","join_request_id":"join_1","invite_request_id":null}"#,
-        );
-        assert!(missing_peer_id.is_err());
-
-        let current = StoredRoomSession {
-            room_code: "ABC234".to_owned(),
-            role: RoomRole::Receiver,
-            join_request_id: Some("join_1".to_owned()),
-            invite_request_id: None,
-            peer_id: "peer_stable".to_owned(),
-        };
-        let encoded = serde_json::to_string(&current).expect("room session should serialize");
-        let restored = serde_json::from_str::<StoredRoomSession>(&encoded)
-            .expect("room session should restore");
-        assert_eq!(restored.peer_id, "peer_stable");
-    }
-
-    #[test]
-    fn storage_failures_keep_specific_recovery_copy() {
-        let storage_error = |kind| BrowserPlatformError::Storage {
-            operation: p2p_browser_platform::BrowserStorageOperation::WriteDestination,
-            kind,
-            message: "injected failure".to_owned(),
-        };
-
-        assert_eq!(
-            friendly_transfer_error(&storage_error(BrowserStorageErrorKind::QuotaExceeded)),
-            "磁盘空间不足，请释放空间后重试"
-        );
-        assert_eq!(
-            friendly_transfer_error(&storage_error(BrowserStorageErrorKind::PermissionDenied)),
-            "文件访问权限已失效，请重新授权"
-        );
-        assert_eq!(
-            friendly_transfer_error(&storage_error(BrowserStorageErrorKind::NotFound)),
-            "所选文件或保存位置已不可用，请重新选择"
-        );
-        assert_eq!(
-            friendly_transfer_error(&storage_error(BrowserStorageErrorKind::InvalidState)),
-            "文件当前无法读写，请关闭占用程序后重试"
-        );
-    }
 }

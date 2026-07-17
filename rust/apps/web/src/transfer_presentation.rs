@@ -1,6 +1,7 @@
-use super::{RoomRole, RtcPhase, TransferLinkState, TransferState};
 use p2p_browser_platform::{TransferDirection, TransferFile};
 use p2p_protocol::{CancelReason, StreamPauseReason, TransferMode};
+
+use crate::app_state::{RoomRole, RtcPhase, TransferLinkState, TransferState};
 
 pub(super) fn transfer_is_active(transfer: &TransferState) -> bool {
     matches!(

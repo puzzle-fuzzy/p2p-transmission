@@ -678,6 +678,7 @@ mod tests {
         http_api::{AppState, SESSION_COOKIE_NAME},
         services::AppServices,
         storage::Storage,
+        web_shell::TEST_WEB_SHELL_TEMPLATE,
     };
 
     type ClientSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -697,7 +698,7 @@ mod tests {
         async fn start() -> Self {
             let directory = std::env::temp_dir().join(format!("p2p-ws-{}", Uuid::new_v4()));
             std::fs::create_dir_all(&directory).expect("create test directory");
-            std::fs::write(directory.join("index.html"), "<main>test</main>")
+            std::fs::write(directory.join("index.html"), TEST_WEB_SHELL_TEMPLATE)
                 .expect("write test index");
             let config = AppConfig {
                 database_path: directory.join("control.sqlite3"),
@@ -752,7 +753,7 @@ mod tests {
                 .expect("bind test server");
             let address = listener.local_addr().expect("test server address");
             let (shutdown, shutdown_receiver) = oneshot::channel();
-            let router = app(&directory, state.clone());
+            let router = app(&directory, state.clone()).expect("assemble test web shell");
             let task = tokio::spawn(async move {
                 axum::serve(listener, router)
                     .with_graceful_shutdown(async {
@@ -1051,7 +1052,7 @@ mod tests {
             .create_or_restore_session(None, "Pending")
             .await
             .expect("create pending session");
-        let router = app(&server.directory, server.state.clone());
+        let router = app(&server.directory, server.state.clone()).expect("assemble test web shell");
         let joined = router
             .clone()
             .oneshot(

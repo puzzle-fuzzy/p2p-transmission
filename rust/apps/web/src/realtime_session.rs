@@ -1,148 +1,27 @@
-use std::{cell::Cell, rc::Rc};
-
 use dioxus::prelude::*;
 use p2p_browser_platform::{
     RealtimeEvent, bootstrap_room, clear_room_session, join_request_status, sleep_ms,
 };
 use p2p_protocol::{
-    CURRENT_PROTOCOL, ClientRealtimeMessage, JoinDecisionWire, JoinRequestStateWire,
-    ParticipantRoleWire, RoomBootstrapResponse, ServerRealtimeMessage,
+    CURRENT_PROTOCOL, JoinDecisionWire, JoinRequestStateWire, ParticipantRoleWire,
+    RoomBootstrapResponse, ServerRealtimeMessage,
 };
 
+use crate::app_state::{
+    AppModel, RealtimePhase, RoomRole, RtcPhase, Screen, StoredRoomSession, TransferState,
+};
+use crate::browser_errors::friendly_error;
+use crate::browser_lifecycle::complete_lifecycle_recovery;
 use crate::realtime_connection::{
-    RealtimeConnectionRuntime, RealtimeLease, defer_realtime_socket_clear, mark_realtime_connected,
-    realtime_lease_is_current, schedule_reconnect, suppress_realtime_connection,
+    RealtimeLease, defer_realtime_socket_clear, mark_realtime_connected, realtime_lease_is_current,
+    realtime_suppression_is_current, schedule_reconnect, suppress_realtime_lease,
 };
-use crate::rtc_session::{accept_rtc_signal, remove_rtc_peer, sync_rtc_peers};
-
-use super::{
-    AppModel, LifecycleState, RealtimePhase, RoomRole, RtcPhase, RtcRuntime, Screen,
-    StoredRoomSession, TransferState, complete_lifecycle_recovery, friendly_error,
-    persist_room_session,
-};
+use crate::realtime_runtime::{LifecycleState, RealtimeSessionRuntime, RtcRuntime};
+use crate::realtime_target::{RealtimeTarget, RealtimeTargetKind, member_target};
+use crate::room_session::persist_room_session;
+use crate::rtc_session::{accept_rtc_signal, remove_rtc_peer, reset_all_rtc_peers, sync_rtc_peers};
 
 const AVATAR_ENTRY_HOLD_MS: u32 = 700;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct RevisionCursor {
-    last_revision: u64,
-    applied_revision: u64,
-    awaiting_snapshot: bool,
-}
-
-impl RevisionCursor {
-    pub(super) fn new(revision: u64) -> Self {
-        Self {
-            last_revision: revision,
-            applied_revision: revision,
-            awaiting_snapshot: false,
-        }
-    }
-
-    fn observe(&mut self, revision: u64) {
-        self.last_revision = self.last_revision.max(revision);
-    }
-
-    fn mark_applied(&mut self, revision: u64) {
-        self.observe(revision);
-        self.applied_revision = self.applied_revision.max(revision);
-        self.awaiting_snapshot = false;
-    }
-
-    fn reconcile_applied(&mut self, revision: u64) {
-        self.observe(revision);
-        self.applied_revision = self.applied_revision.max(revision);
-    }
-
-    fn mark_snapshot_pending(&mut self, revision: u64) {
-        self.observe(revision);
-        self.awaiting_snapshot = true;
-    }
-}
-
-#[derive(Clone, Debug)]
-pub(super) enum RealtimeTarget {
-    Member {
-        room_code: String,
-        peer_id: String,
-        revision: Rc<Cell<RevisionCursor>>,
-    },
-    JoinWatch {
-        room_code: String,
-        request_id: String,
-        revision: Rc<Cell<RevisionCursor>>,
-    },
-}
-
-impl RealtimeTarget {
-    pub(super) fn initial_message(&self) -> ClientRealtimeMessage {
-        match self {
-            Self::Member {
-                room_code,
-                peer_id,
-                revision,
-            } => ClientRealtimeMessage::AttachRoom {
-                version: CURRENT_PROTOCOL,
-                room_code: room_code.clone(),
-                peer_id: peer_id.clone(),
-                last_revision: Some(revision.get().applied_revision),
-            },
-            Self::JoinWatch {
-                room_code,
-                request_id,
-                revision,
-            } => ClientRealtimeMessage::WatchJoinRequest {
-                version: CURRENT_PROTOCOL,
-                room_code: room_code.clone(),
-                request_id: request_id.clone(),
-                last_revision: Some(revision.get().applied_revision),
-            },
-        }
-    }
-
-    fn revision(&self) -> RevisionCursor {
-        match self {
-            Self::Member { revision, .. } | Self::JoinWatch { revision, .. } => revision.get(),
-        }
-    }
-
-    fn update_revision(&self, update: impl FnOnce(&mut RevisionCursor)) {
-        let mut cursor = self.revision();
-        update(&mut cursor);
-        match self {
-            Self::Member { revision, .. } | Self::JoinWatch { revision, .. } => {
-                revision.set(cursor)
-            }
-        }
-    }
-
-    pub(super) fn is_same_instance(&self, other: &Self) -> bool {
-        match (self, other) {
-            (
-                Self::Member { revision, .. },
-                Self::Member {
-                    revision: other, ..
-                },
-            )
-            | (
-                Self::JoinWatch { revision, .. },
-                Self::JoinWatch {
-                    revision: other, ..
-                },
-            ) => Rc::ptr_eq(revision, other),
-            _ => false,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct RealtimeSessionRuntime {
-    pub(super) model: Signal<AppModel>,
-    pub(super) target: Signal<Option<RealtimeTarget>>,
-    pub(super) connection: RealtimeConnectionRuntime,
-    pub(super) rtc: RtcRuntime,
-    pub(super) lifecycle_state: Signal<LifecycleState>,
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RevisionStep {
@@ -196,15 +75,6 @@ fn screen_revision(model: &AppModel) -> Option<u64> {
     }
 }
 
-fn update_target_revision(
-    target: Signal<Option<RealtimeTarget>>,
-    update: impl FnOnce(&mut RevisionCursor),
-) {
-    if let Some(target) = target.peek().as_ref() {
-        target.update_revision(update);
-    }
-}
-
 fn observe_attachment(
     model: &AppModel,
     target: Signal<Option<RealtimeTarget>>,
@@ -212,13 +82,13 @@ fn observe_attachment(
 ) -> Option<AttachedStep> {
     let local_revision = screen_revision(model)?;
     let step = attached_step(local_revision, revision);
-    update_target_revision(target, |cursor| {
-        cursor.reconcile_applied(local_revision);
+    if let Some(target) = target.peek().as_ref() {
+        target.reconcile_applied_revision(local_revision);
         match step {
-            AttachedStep::Ready => cursor.mark_applied(revision),
-            AttachedStep::AwaitSnapshot => cursor.mark_snapshot_pending(revision),
+            AttachedStep::Ready => target.mark_revision_applied(revision),
+            AttachedStep::AwaitSnapshot => target.mark_snapshot_pending(revision),
         }
-    });
+    }
     Some(step)
 }
 
@@ -229,30 +99,30 @@ fn begin_revisioned_event(
 ) -> Option<RevisionStep> {
     let current = screen_revision(model)?;
     let step = revision_step(current, revision);
-    update_target_revision(target, |cursor| {
-        cursor.reconcile_applied(current);
+    if let Some(target) = target.peek().as_ref() {
+        target.reconcile_applied_revision(current);
         match step {
-            RevisionStep::Ignore => cursor.observe(revision),
-            RevisionStep::Apply => cursor.observe(revision),
-            RevisionStep::RefreshSnapshot => cursor.mark_snapshot_pending(revision),
+            RevisionStep::Ignore | RevisionStep::Apply => target.observe_revision(revision),
+            RevisionStep::RefreshSnapshot => target.mark_snapshot_pending(revision),
         }
-    });
+    }
     Some(step)
 }
 
 fn mark_target_event_revision_applied(target: Signal<Option<RealtimeTarget>>, revision: u64) {
-    update_target_revision(target, |cursor| cursor.reconcile_applied(revision));
+    if let Some(target) = target.peek().as_ref() {
+        target.reconcile_applied_revision(revision);
+    }
 }
 
 fn mark_target_snapshot_revision_applied(target: Signal<Option<RealtimeTarget>>, revision: u64) {
-    update_target_revision(target, |cursor| cursor.mark_applied(revision));
+    if let Some(target) = target.peek().as_ref() {
+        target.mark_revision_applied(revision);
+    }
 }
 
 fn target_snapshot_floor(target: Signal<Option<RealtimeTarget>>) -> Option<u64> {
-    target
-        .peek()
-        .as_ref()
-        .map(|target| target.revision().last_revision)
+    target.peek().as_ref().map(RealtimeTarget::last_revision)
 }
 
 #[derive(Clone, Copy)]
@@ -262,14 +132,14 @@ enum PendingAttachment {
 }
 
 fn pending_attachment(target: Signal<Option<RealtimeTarget>>) -> Option<PendingAttachment> {
-    match target.peek().as_ref() {
-        Some(RealtimeTarget::Member { revision, .. }) if revision.get().awaiting_snapshot => {
-            Some(PendingAttachment::Member)
-        }
-        Some(RealtimeTarget::JoinWatch { revision, .. }) if revision.get().awaiting_snapshot => {
-            Some(PendingAttachment::JoinWatch)
-        }
-        _ => None,
+    let target = target.peek();
+    let target = target.as_ref()?;
+    if !target.awaiting_snapshot() {
+        return None;
+    }
+    match target.kind() {
+        RealtimeTargetKind::Member => Some(PendingAttachment::Member),
+        RealtimeTargetKind::JoinWatch => Some(PendingAttachment::JoinWatch),
     }
 }
 
@@ -645,11 +515,40 @@ pub(super) fn handle_realtime_event(
                 suppress_realtime_connection(runtime, lease);
             } else if realtime_target.peek().is_some() {
                 model.write().realtime = RealtimePhase::Reconnecting;
-                defer_realtime_socket_clear(runtime, lease.clone());
-                schedule_reconnect(runtime, lease);
+                defer_realtime_socket_clear(
+                    connection,
+                    realtime_target,
+                    rtc.connection,
+                    lease.clone(),
+                );
+                schedule_reconnect(connection, realtime_target, model, lease);
             }
         }
     }
+}
+
+fn suppress_realtime_connection(mut runtime: RealtimeSessionRuntime, lease: RealtimeLease) {
+    if !suppress_realtime_lease(runtime.connection, &lease) {
+        return;
+    }
+    reset_all_rtc_peers(runtime.rtc.peers);
+    runtime.rtc.config.set(None);
+    {
+        let mut model = runtime.model.write();
+        model.realtime = RealtimePhase::Superseded;
+        model.rtc = RtcPhase::Inactive;
+        model.notice = Some("此房间已在另一个标签页中打开，本页面已停止重连".to_owned());
+        model.error = None;
+    }
+
+    // Dropping the connection synchronously from its own callback would also drop
+    // the Closure currently executing. Defer disposal until the callback unwinds.
+    spawn(async move {
+        sleep_ms(0).await;
+        if realtime_suppression_is_current(runtime.connection, &lease) {
+            runtime.rtc.connection.set(None);
+        }
+    });
 }
 
 fn resolve_waiting(runtime: RealtimeSessionRuntime, lease: RealtimeLease) {
@@ -826,30 +725,6 @@ pub(super) fn schedule_avatar_cleanup(mut model: Signal<AppModel>, session_ids: 
     }
 }
 
-pub(super) fn member_target(
-    room_code: String,
-    last_revision: u64,
-    peer_id: String,
-) -> RealtimeTarget {
-    RealtimeTarget::Member {
-        room_code,
-        peer_id,
-        revision: Rc::new(Cell::new(RevisionCursor::new(last_revision))),
-    }
-}
-
-pub(super) fn join_watch_target(
-    room_code: String,
-    request_id: String,
-    last_revision: u64,
-) -> RealtimeTarget {
-    RealtimeTarget::JoinWatch {
-        room_code,
-        request_id,
-        revision: Rc::new(Cell::new(RevisionCursor::new(last_revision))),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -861,29 +736,6 @@ mod tests {
         assert_eq!(revision_step(7, 8), RevisionStep::Apply);
         assert_eq!(revision_step(7, 9), RevisionStep::RefreshSnapshot);
         assert_eq!(revision_step(u64::MAX, u64::MAX), RevisionStep::Ignore);
-    }
-
-    #[test]
-    fn revision_cursor_never_moves_backwards_and_reconnects_from_applied_state() {
-        let target = member_target("ABC234".to_owned(), 5, "peer_owner".to_owned());
-        target.update_revision(|cursor| cursor.mark_snapshot_pending(8));
-        target.update_revision(|cursor| cursor.reconcile_applied(6));
-        assert_eq!(target.revision().last_revision, 8);
-        assert_eq!(target.revision().applied_revision, 6);
-        assert!(target.revision().awaiting_snapshot);
-        assert!(matches!(
-            target.initial_message(),
-            ClientRealtimeMessage::AttachRoom {
-                last_revision: Some(6),
-                ..
-            }
-        ));
-
-        target.update_revision(|cursor| cursor.mark_applied(8));
-        target.update_revision(|cursor| cursor.observe(6));
-        assert_eq!(target.revision().last_revision, 8);
-        assert_eq!(target.revision().applied_revision, 8);
-        assert!(!target.revision().awaiting_snapshot);
     }
 
     #[test]

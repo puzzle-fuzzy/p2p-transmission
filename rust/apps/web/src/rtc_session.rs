@@ -9,16 +9,13 @@ use p2p_protocol::{
     Signal as ProtocolSignal,
 };
 
+use crate::app_state::{AppModel, RoomRole, RtcPhase, Screen, TransferLinkState, TransferState};
+use crate::browser_errors::{friendly_error, friendly_transfer_error};
 use crate::rtc_orchestration::{
     refresh_aggregate_rtc, schedule_passive_recovery_timeout, set_peer_transfer_link_state,
     start_rtc_offer,
 };
 use crate::rtc_transfer_events::handle_transfer_event;
-
-use super::{
-    AppModel, RoomRole, RtcPhase, Screen, TransferLinkState, TransferState, friendly_error,
-    friendly_transfer_error,
-};
 
 pub(super) fn reset_all_rtc_peers(mut rtc_peers: Signal<BTreeMap<String, RtcPeer>>) {
     let peers = std::mem::take(&mut *rtc_peers.write());

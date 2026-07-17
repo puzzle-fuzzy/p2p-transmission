@@ -8,6 +8,7 @@ use p2p_browser_platform::{
 };
 use p2p_protocol::{ParticipantSnapshot, StreamPauseReason, TransferMode};
 
+use crate::app_state::{AppModel, RoomRole, RtcPhase, TransferLinkState, TransferState};
 use crate::transfer_actions::TransferActions;
 use crate::transfer_presentation::{
     completed_transfer_hash, format_bytes, owner_transfer_file_progress, owner_transfer_panel_copy,
@@ -16,7 +17,7 @@ use crate::transfer_presentation::{
     transfer_progress, transfer_progress_value_text,
 };
 
-use super::{AppModel, Avatar, RoomRole, RtcPhase, TransferLinkState, TransferState};
+use crate::participant_presence::Avatar;
 
 #[component]
 pub(super) fn TransferPanel(

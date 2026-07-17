@@ -7,6 +7,7 @@ pub mod rate_limit;
 pub mod realtime;
 pub mod services;
 pub mod storage;
+pub mod web_shell;
 
 use std::{
     path::{Path, PathBuf},
@@ -14,7 +15,7 @@ use std::{
 };
 
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     extract::OriginalUri,
     http::{HeaderName, HeaderValue, StatusCode, header},
     response::{IntoResponse, Redirect, Response},
@@ -24,9 +25,7 @@ use http_api::AppState;
 use p2p_domain::PRODUCT_NAME;
 use p2p_protocol::{API_MAJOR_VERSION, BuildInfo};
 use tower_http::{
-    services::{ServeDir, ServeFile},
-    set_header::SetResponseHeaderLayer,
-    timeout::TimeoutLayer,
+    services::ServeDir, set_header::SetResponseHeaderLayer, timeout::TimeoutLayer,
     trace::TraceLayer,
 };
 
@@ -40,13 +39,16 @@ pub fn release_version() -> &'static str {
     option_env!("P2P_RELEASE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
 }
 
-pub fn app(web_root: impl Into<PathBuf>, state: AppState) -> Router {
+pub fn app(
+    web_root: impl Into<PathBuf>,
+    state: AppState,
+) -> Result<Router, web_shell::WebShellError> {
     let web_root = web_root.into();
-    let index = web_root.join("index.html");
+    let shell_renderer = web_shell::WebShellRenderer::from_web_root(&web_root)?;
     let static_files = ServeDir::new(web_root);
 
-    Router::new()
-        .route_service("/", ServeFile::new(index))
+    Ok(Router::new()
+        .route("/", get(web_shell::root).layer(Extension(shell_renderer)))
         .route("/app", get(legacy_app_redirect))
         .route("/app/", get(legacy_app_redirect))
         .route("/index.html", get(legacy_app_redirect))
@@ -81,7 +83,7 @@ pub fn app(web_root: impl Into<PathBuf>, state: AppState) -> Router {
             Duration::from_secs(30),
         ))
         .layer(TraceLayer::new_for_http())
-        .with_state(state)
+        .with_state(state))
 }
 
 async fn legacy_app_redirect(OriginalUri(uri): OriginalUri) -> Response {
@@ -192,16 +194,20 @@ mod tests {
             .as_nanos();
         let path = std::env::temp_dir().join(format!("p2p-server-{nonce}"));
         fs::create_dir_all(&path).expect("create static fixture directory");
-        fs::write(path.join("index.html"), "<main>shell fixture</main>")
+        fs::write(path.join("index.html"), web_shell::TEST_WEB_SHELL_TEMPLATE)
             .expect("write static fixture");
         path
+    }
+
+    fn test_app(web_root: &Path, state: AppState) -> Router {
+        app(web_root, state).expect("assemble test web shell")
     }
 
     #[tokio::test]
     async fn health_and_build_metadata_are_available() {
         let web_root = fixture_dir();
         let state = test_state(&web_root).await;
-        let router = app(&web_root, state.clone());
+        let router = test_app(&web_root, state.clone());
 
         let health = router
             .clone()
@@ -253,12 +259,20 @@ mod tests {
     async fn root_is_the_application_and_legacy_html_paths_redirect() {
         let web_root = fixture_dir();
         let state = test_state(&web_root).await;
-        let response = app(&web_root, state.clone())
+        let response = test_app(&web_root, state.clone())
             .oneshot(Request::get("/").body(Body::empty()).expect("request"))
             .await
             .expect("application response");
 
         assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            HeaderValue::from_static("text/html; charset=utf-8")
+        );
+        assert_eq!(
+            response.headers()[header::CACHE_CONTROL],
+            HeaderValue::from_static("no-cache, must-revalidate")
+        );
         let body = response
             .into_body()
             .collect()
@@ -266,7 +280,10 @@ mod tests {
             .expect("collect application body")
             .to_bytes();
         let body = String::from_utf8(body.to_vec()).expect("application utf-8");
-        assert!(body.contains("shell fixture"));
+        assert!(body.contains(p2p_ui_shell::LOBBY_TITLE));
+        assert!(!body.contains("build fallback"));
+        assert_eq!(body.matches("id=\"boot-fallback\"").count(), 1);
+        assert_eq!(body.matches("id=\"main\"").count(), 1);
 
         for (path, location) in [
             ("/app", "/"),
@@ -275,7 +292,7 @@ mod tests {
             ("/app?intent=create", "/?intent=create"),
             ("/app/?room=ABC234", "/?room=ABC234"),
         ] {
-            let redirect = app(&web_root, state.clone())
+            let redirect = test_app(&web_root, state.clone())
                 .oneshot(Request::get(path).body(Body::empty()).expect("request"))
                 .await
                 .expect("legacy application redirect");
@@ -288,7 +305,7 @@ mod tests {
         }
 
         for path in ["/unknown-route", "/assets/missing.js", "/appx"] {
-            let missing = app(&web_root, state.clone())
+            let missing = test_app(&web_root, state.clone())
                 .oneshot(Request::get(path).body(Body::empty()).expect("request"))
                 .await
                 .expect("missing static response");
@@ -300,10 +317,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn invalid_web_shell_fails_during_router_construction() {
+        let web_root = fixture_dir();
+        fs::write(
+            web_root.join("index.html"),
+            "<div id=\"main\" hidden></div>",
+        )
+        .expect("write invalid web shell fixture");
+        let state = test_state(&web_root).await;
+
+        let result = app(&web_root, state.clone());
+        assert!(matches!(
+            result,
+            Err(web_shell::WebShellError::Template(
+                web_shell::WebShellTemplateError::MarkerCount {
+                    marker: web_shell::SSR_LOBBY_START,
+                    actual: 0,
+                }
+            ))
+        ));
+
+        state.services.storage.close().await;
+        fs::remove_dir_all(web_root).expect("remove static fixture directory");
+    }
+
+    #[tokio::test]
     async fn installable_shell_assets_have_safe_cache_boundaries() {
         let web_root = fixture_dir();
         let state = test_state(&web_root).await;
-        let router = app(&web_root, state.clone());
+        let router = test_app(&web_root, state.clone());
 
         let manifest = router
             .clone()
@@ -345,7 +387,7 @@ mod tests {
         assert!(!service_worker.contains("__P2P_RELEASE__"));
         assert!(!service_worker.contains("\n  '/app',"));
 
-        let app_css = app(&web_root, state.clone())
+        let app_css = test_app(&web_root, state.clone())
             .oneshot(
                 Request::get("/shell/app.css")
                     .body(Body::empty())

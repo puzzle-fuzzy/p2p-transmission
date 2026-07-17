@@ -687,7 +687,10 @@ mod tests {
 
     use super::*;
 
-    use crate::{app, config::AppConfig, services::AppServices, storage::Storage};
+    use crate::{
+        app, config::AppConfig, services::AppServices, storage::Storage,
+        web_shell::TEST_WEB_SHELL_TEMPLATE,
+    };
 
     struct TestApp {
         router: Router,
@@ -699,7 +702,7 @@ mod tests {
         async fn create(secure_cookies: bool) -> Self {
             let directory = std::env::temp_dir().join(format!("p2p-http-{}", Uuid::new_v4()));
             std::fs::create_dir_all(&directory).expect("create test directory");
-            std::fs::write(directory.join("index.html"), "<main>test</main>")
+            std::fs::write(directory.join("index.html"), TEST_WEB_SHELL_TEMPLATE)
                 .expect("write test index");
             let config = AppConfig {
                 database_path: directory.join("control.sqlite3"),
@@ -710,7 +713,7 @@ mod tests {
                 .await
                 .expect("connect test storage");
             let state = AppState::new(AppServices::new(storage, config));
-            let router = app(&directory, state.clone());
+            let router = app(&directory, state.clone()).expect("assemble test web shell");
             Self {
                 router,
                 state,

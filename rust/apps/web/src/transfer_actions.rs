@@ -7,10 +7,10 @@ use p2p_browser_platform::{
 };
 use p2p_protocol::CancelReason;
 
+use crate::app_state::{AppModel, RoomRole, TransferLinkState, TransferState};
+use crate::browser_errors::friendly_transfer_error;
 use crate::rtc_orchestration::reconnect_paused_transfer;
 use crate::transfer_presentation::transfer_is_active;
-
-use super::{AppModel, RoomRole, TransferLinkState, TransferState, friendly_transfer_error};
 
 #[derive(Clone, Copy)]
 pub(super) struct TransferActions {

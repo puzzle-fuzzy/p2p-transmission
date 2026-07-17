@@ -7,7 +7,6 @@
   --focus-ring: #bd9cff;
   --surface: #2d2d2d;
   --surface-elevated: #373737;
-  --surface-active: rgba(255, 255, 255, 0.1);
   --ink: rgba(255, 255, 255, 0.8);
   --ink-strong: rgba(255, 248, 231, 0.9);
   --ink-on-accent: rgba(255, 255, 255, 0.9);
@@ -111,12 +110,24 @@ h1 {
   line-height: 1.65;
 }
 
+.lobby-guidance {
+  position: relative;
+  display: flow-root;
+  min-height: 26px;
+}
+
+.invite-copy-spacer {
+  visibility: hidden;
+}
+
 .invite-notice {
+  position: absolute;
+  inset: 6px 0 auto;
   display: flex;
-  min-height: 44px;
+  min-height: 34px;
   align-items: center;
-  margin-top: 16px;
-  padding: 10px 14px;
+  margin: 0;
+  padding: 7px 12px;
   border-radius: 8px;
   background: var(--surface-hover);
   color: var(--ink);
@@ -126,6 +137,7 @@ h1 {
 }
 
 .invite-mark {
+  flex: 0 0 auto;
   color: var(--accent);
   font-size: 0.9rem;
 }
@@ -297,18 +309,6 @@ h1 {
 .text-link:hover {
   color: var(--ink);
   text-decoration-color: var(--ink-muted);
-}
-
-.booting-view {
-  display: flex;
-  align-items: center;
-  color: var(--ink-muted);
-  gap: 10px;
-  font-size: 0.8rem;
-}
-
-.booting-view p {
-  margin: 0;
 }
 
 .boot-room-code-cell {

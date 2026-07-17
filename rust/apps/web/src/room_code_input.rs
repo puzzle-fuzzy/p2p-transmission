@@ -1,12 +1,12 @@
 use dioxus::prelude::*;
 use p2p_browser_platform::focus_text_input;
+use p2p_ui_shell::ROOM_CODE_LENGTH;
 
 #[cfg(target_arch = "wasm32")]
 use dioxus::web::WebEventExt;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
 
-const ROOM_CODE_LENGTH: usize = 6;
 type RoomCodeCells = [Option<char>; ROOM_CODE_LENGTH];
 
 #[component]

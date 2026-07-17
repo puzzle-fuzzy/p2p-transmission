@@ -135,7 +135,7 @@ test('the root keeps a useful anonymous lobby when WebAssembly is blocked', { ta
   expect(blockedWasmRequest).toBe(true)
   const shell = page.locator('#boot-fallback')
   await expect(shell).toBeVisible()
-  await expect(shell).toHaveAttribute('aria-busy', 'true')
+  expect(await shell.getAttribute('aria-busy')).toBeNull()
   await expect(shell.getByRole('heading', { name: '加入房间' })).toBeVisible()
   await expect(shell.locator('.boot-room-code-cell')).toHaveCount(6)
   await expect(shell.getByRole('status')).toContainText('正在初始化安全会话')

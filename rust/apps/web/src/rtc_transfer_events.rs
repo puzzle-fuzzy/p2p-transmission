@@ -2,9 +2,8 @@ use dioxus::prelude::*;
 use p2p_browser_platform::{RtcEvent, TransferDirection, send_notification};
 use p2p_protocol::TransferMode;
 
+use crate::app_state::{AppModel, RoomRole, Screen, TransferLinkState, TransferState};
 use crate::transfer_presentation::{transfer_file, transfer_is_streamed};
-
-use super::{AppModel, RoomRole, Screen, TransferLinkState, TransferState};
 
 fn set_peer_transfer(model: &mut AppModel, peer_id: String, transfer: TransferState) {
     model.transfers_by_peer.insert(peer_id, transfer.clone());

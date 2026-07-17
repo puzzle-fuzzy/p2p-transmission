@@ -1,0 +1,142 @@
+use dioxus::prelude::*;
+use p2p_protocol::ParticipantSnapshot;
+
+#[component]
+pub(super) fn PeerFlow(
+    sender: Option<ParticipantSnapshot>,
+    receivers: Vec<ParticipantSnapshot>,
+    entering_receivers: Vec<String>,
+    peer_connected: bool,
+) -> Element {
+    let accessible = if receivers.is_empty() {
+        "暂无接收者，正在等待连接".to_owned()
+    } else {
+        format!("{} 位接收者已连接", receivers.len())
+    };
+    rsx! {
+        div {
+            class: if receivers.is_empty() { "peer-flow peer-flow-solo" } else { "peer-flow" },
+            role: "status",
+            aria_live: "polite",
+            aria_label: "{accessible}",
+            span { class: "peer-side sender-side", aria_hidden: "true",
+                if let Some(sender) = sender {
+                    Avatar { seed: sender.session_id, label: sender.display_name, entering: false, highlighted: false }
+                }
+            }
+            if !receivers.is_empty() {
+                span { class: if peer_connected { "peer-track connected" } else { "peer-track waiting" }, aria_hidden: "true",
+                    if peer_connected {
+                        span { class: "peer-line" }
+                    } else {
+                        span { class: "peer-dot" }
+                        span { class: "peer-dot" }
+                        span { class: "peer-dot" }
+                    }
+                }
+                span { class: "peer-side receiver-side", aria_hidden: "true",
+                    for (index, receiver) in receivers.iter().take(5).enumerate() {
+                        Avatar {
+                            seed: receiver.session_id.clone(),
+                            label: receiver.display_name.clone(),
+                            entering: entering_receivers.contains(&receiver.session_id),
+                            highlighted: false,
+                            overlap: index > 0,
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+pub(super) fn Avatar(
+    seed: String,
+    label: String,
+    #[props(default = false)] entering: bool,
+    #[props(default = false)] highlighted: bool,
+    #[props(default = false)] overlap: bool,
+) -> Element {
+    let hash = hash_seed(&seed);
+    let cells = avatar_cells(hash);
+    let class = format!(
+        "avatar{}{}{}",
+        if entering { " avatar-entering" } else { "" },
+        if highlighted {
+            " avatar-highlighted"
+        } else {
+            ""
+        },
+        if overlap { " avatar-overlap" } else { "" },
+    );
+    rsx! {
+        span {
+            class: "{class}",
+            role: "img",
+            aria_label: "{label}",
+            title: "{label}",
+            for (index, active) in cells.into_iter().enumerate() {
+                if active {
+                    span {
+                        class: if (index + hash as usize).is_multiple_of(4) {
+                            "avatar-cell avatar-cell-strong"
+                        } else {
+                            "avatar-cell"
+                        },
+                        style: format!(
+                            "grid-column:{};grid-row:{}",
+                            index % 5 + 1,
+                            index / 5 + 1,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn hash_seed(value: &str) -> u32 {
+    let mut hash = 2_166_136_261_u32;
+    for byte in value.bytes() {
+        hash ^= u32::from(byte);
+        hash = hash.wrapping_mul(16_777_619);
+    }
+    hash
+}
+
+fn avatar_cells(seed: u32) -> [bool; 25] {
+    let mut state = seed.max(1);
+    let mut cells = [false; 25];
+    for row in 0..5 {
+        for column in 0..3 {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let active = state & 3 < 2;
+            cells[row * 5 + column] = active;
+            cells[row * 5 + (4 - column)] = active;
+        }
+    }
+    if !cells.iter().any(|active| *active) {
+        cells[12] = true;
+    }
+    cells
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn avatar_cells_are_deterministic_non_empty_and_mirrored() {
+        let seed = hash_seed("participant-1");
+        let cells = avatar_cells(seed);
+
+        assert_eq!(cells, avatar_cells(seed));
+        assert!(cells.iter().any(|active| *active));
+        for row in 0..5 {
+            for column in 0..5 {
+                assert_eq!(cells[row * 5 + column], cells[row * 5 + (4 - column)]);
+            }
+        }
+    }
+}

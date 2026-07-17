@@ -7,9 +7,10 @@ license.workspace = true
 
 [dependencies]
 console_error_panic_hook.workspace = true
-dioxus.workspace = true
+dioxus = { workspace = true, features = ["minimal", "web"] }
 p2p-browser-platform = { path = "../../crates/browser-platform" }
 p2p-protocol = { path = "../../crates/protocol" }
+p2p-ui-shell = { path = "../../crates/ui-shell" }
 qrcode.workspace = true
 serde.workspace = true
 serde_json.workspace = true

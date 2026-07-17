@@ -13,6 +13,7 @@ NATIVE_PACKAGES = (
     "p2p-protocol",
     "p2p-transfer",
     "p2p-server",
+    "p2p-ui-shell",
 )
 
 
@@ -27,6 +28,7 @@ def package_args(packages: tuple[str, ...]) -> list[str]:
 
 def main() -> None:
     run(["cargo", "fmt", "--all", "--", "--check"])
+    run(["python", "-X", "utf8", "scripts/check_web_architecture.py"])
     run([
         "cargo",
         "clippy",

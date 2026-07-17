@@ -11,11 +11,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DIST = ROOT / "target" / "dx" / "p2p-web" / "release" / "web" / "public"
 APP_STYLESHEET = ROOT / "rust" / "apps" / "web" / "assets" / "main.css"
-HTML_GZIP_BUDGET = 8 * 1024
+# The native web-shell test caps the fully injected source response at 6 KiB.
+# Keeping Dioxus' generated template under 2 KiB makes the final response stay
+# below 8 KiB raw even after release asset tags are added; this is stricter than
+# the historical 8 KiB gzip ceiling.
+HTML_TEMPLATE_RAW_BUDGET = 2 * 1024
+HTML_TEMPLATE_GZIP_BUDGET = 8 * 1024
 WASM_GZIP_BUDGET = 480 * 1024
 JAVASCRIPT_GZIP_BUDGET = 18 * 1024
 CSS_GZIP_BUDGET = 6 * 1024
 ENTRYPOINT_GZIP_BUDGET = 500 * 1024
+SSR_LOBBY_START = "<!-- P2P_SSR_LOBBY_START -->"
+SSR_LOBBY_END = "<!-- P2P_SSR_LOBBY_END -->"
+ISLAND_MOUNT = '<div id="main" hidden inert aria-hidden="true"></div>'
+BOOT_FALLBACK = 'id="boot-fallback"'
 
 
 def gzip_size(path: Path) -> int:
@@ -29,6 +38,26 @@ def format_kib(size: int) -> str:
 def assets_with_suffix(dist: Path, suffix: str) -> list[Path]:
     assets = dist / "assets"
     return sorted(path for path in assets.rglob(f"*{suffix}") if path.is_file())
+
+
+def shell_contract_failures(index_html: Path) -> list[str]:
+    template = index_html.read_text(encoding="utf-8")
+    failures: list[str] = []
+    if template.count(SSR_LOBBY_START) != 1:
+        failures.append("built HTML must contain exactly one SSR lobby start marker")
+    if template.count(SSR_LOBBY_END) != 1:
+        failures.append("built HTML must contain exactly one SSR lobby end marker")
+    if template.count(ISLAND_MOUNT) != 1:
+        failures.append("built HTML must contain one hidden inert #main island mount")
+    if BOOT_FALLBACK in template:
+        failures.append("built HTML still contains the deleted handwritten lobby fallback")
+    if not failures and not (
+        template.index(SSR_LOBBY_START)
+        < template.index(SSR_LOBBY_END)
+        < template.index(ISLAND_MOUNT)
+    ):
+        failures.append("SSR lobby markers must precede the #main island mount")
+    return failures
 
 
 def main() -> None:
@@ -46,23 +75,35 @@ def main() -> None:
         )
 
     html_gzip = gzip_size(index_html)
+    html_raw = index_html.stat().st_size
     wasm_gzip = sum(gzip_size(path) for path in wasm_files)
     javascript_gzip = sum(gzip_size(path) for path in javascript_files)
     css_gzip = gzip_size(APP_STYLESHEET)
     entrypoint_gzip = wasm_gzip + javascript_gzip + css_gzip
 
     rows = (
-        ("HTML shell", html_gzip, HTML_GZIP_BUDGET),
-        ("WebAssembly", wasm_gzip, WASM_GZIP_BUDGET),
-        ("JavaScript", javascript_gzip, JAVASCRIPT_GZIP_BUDGET),
-        ("CSS", css_gzip, CSS_GZIP_BUDGET),
-        ("Browser entrypoint", entrypoint_gzip, ENTRYPOINT_GZIP_BUDGET),
+        ("HTML template", html_raw, HTML_TEMPLATE_RAW_BUDGET, "raw"),
+        ("HTML template", html_gzip, HTML_TEMPLATE_GZIP_BUDGET, "gzip"),
+        ("WebAssembly", wasm_gzip, WASM_GZIP_BUDGET, "gzip"),
+        ("JavaScript", javascript_gzip, JAVASCRIPT_GZIP_BUDGET, "gzip"),
+        ("CSS", css_gzip, CSS_GZIP_BUDGET, "gzip"),
+        ("Browser entrypoint", entrypoint_gzip, ENTRYPOINT_GZIP_BUDGET, "gzip"),
     )
-    failures: list[str] = []
-    for label, actual, budget in rows:
-        print(f"{label}: {format_kib(actual)} gzip / {format_kib(budget)} budget")
+    failures = shell_contract_failures(index_html)
+    if failures:
+        print("SSR shell contract: failed")
+    else:
+        print("SSR shell contract: passed")
+    for label, actual, budget, encoding in rows:
+        print(
+            f"{label}: {format_kib(actual)} {encoding} / "
+            f"{format_kib(budget)} budget"
+        )
         if actual > budget:
-            failures.append(f"{label} exceeds its gzip budget by {format_kib(actual - budget)}")
+            failures.append(
+                f"{label} exceeds its {encoding} budget by "
+                f"{format_kib(actual - budget)}"
+            )
 
     if failures:
         raise SystemExit("; ".join(failures))

@@ -1,40 +1,18 @@
 use std::rc::Rc;
 
 use dioxus::prelude::*;
-use p2p_browser_platform::{connect_realtime, sleep_ms};
+use p2p_browser_platform::{RealtimeConnection, RealtimeEvent, connect_realtime, sleep_ms};
 
-use crate::realtime_session::{RealtimeSessionRuntime, RealtimeTarget, handle_realtime_event};
-use crate::{RealtimePhase, RtcPhase, friendly_error};
-
-#[derive(Clone, Debug)]
-struct SuppressedTarget {
-    generation: Rc<()>,
-    target: RealtimeTarget,
-}
-
-#[derive(Clone, Debug)]
-pub(super) struct RealtimeConnectionState {
-    generation: Rc<()>,
-    backoff_attempt: u32,
-    retry_token: Rc<()>,
-    active_target: Option<RealtimeTarget>,
-    suppressed_for_target: Option<SuppressedTarget>,
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct RealtimeConnectionRuntime {
-    pub(super) trigger: Signal<u64>,
-    pub(super) state: Signal<RealtimeConnectionState>,
-}
+use crate::app_state::{AppModel, RealtimePhase};
+use crate::browser_errors::friendly_error;
+use crate::realtime_runtime::{
+    RealtimeConnectionRuntime, RealtimeConnectionState, RealtimeSessionRuntime, SuppressedTarget,
+};
+use crate::realtime_target::{RealtimeTarget, RealtimeTargetScope, same_optional_target_instance};
 
 #[derive(Clone, Debug)]
 pub(super) struct RealtimeLease {
     generation: Rc<()>,
-    target: RealtimeTarget,
-}
-
-#[derive(Clone, Debug)]
-pub(super) struct RealtimeTargetScope {
     target: RealtimeTarget,
 }
 
@@ -50,18 +28,6 @@ struct RetryTicket {
     retry_token: Rc<()>,
     attempt: u32,
     target: RealtimeTarget,
-}
-
-impl Default for RealtimeConnectionState {
-    fn default() -> Self {
-        Self {
-            generation: Rc::new(()),
-            backoff_attempt: 0,
-            retry_token: Rc::new(()),
-            active_target: None,
-            suppressed_for_target: None,
-        }
-    }
 }
 
 impl RealtimeConnectionState {
@@ -192,23 +158,7 @@ impl RealtimeLease {
     }
 
     pub(super) fn target_scope(&self) -> RealtimeTargetScope {
-        RealtimeTargetScope {
-            target: self.target.clone(),
-        }
-    }
-}
-
-impl RealtimeTargetScope {
-    pub(super) fn new(target: RealtimeTarget) -> Self {
-        Self { target }
-    }
-
-    pub(super) fn is_same_instance(&self, other: &Self) -> bool {
-        self.target.is_same_instance(&other.target)
-    }
-
-    fn is_current(&self, target: Option<&RealtimeTarget>) -> bool {
-        target.is_some_and(|target| self.target.is_same_instance(target))
+        RealtimeTargetScope::new(self.target.clone())
     }
 }
 
@@ -222,18 +172,11 @@ fn next_trigger(current: u64) -> u64 {
     current.wrapping_add(1)
 }
 
-fn same_optional_target_instance(
-    left: Option<&RealtimeTarget>,
-    right: Option<&RealtimeTarget>,
-) -> bool {
-    match (left, right) {
-        (Some(left), Some(right)) => left.is_same_instance(right),
-        (None, None) => true,
-        _ => false,
-    }
-}
-
-pub(super) fn use_realtime_connection(runtime: RealtimeSessionRuntime) {
+pub(super) fn use_realtime_connection(
+    runtime: RealtimeSessionRuntime,
+    handle_event: Callback<(RealtimeLease, RealtimeEvent)>,
+    target_changed: Callback<Option<RealtimeTargetScope>>,
+) {
     let target = runtime.target;
     let trigger = runtime.connection.trigger;
     let mut socket = runtime.rtc.connection;
@@ -243,10 +186,7 @@ pub(super) fn use_realtime_connection(runtime: RealtimeSessionRuntime) {
         let target = target.read().clone();
         let _trigger = *trigger.read();
         let target_scope = target.clone().map(RealtimeTargetScope::new);
-        crate::browser_lifecycle::sync_lifecycle_recovery_target(
-            runtime.lifecycle_state,
-            target_scope.as_ref(),
-        );
+        target_changed.call(target_scope);
         let begin = begin_realtime_connection(runtime.connection, target);
 
         // Generation must advance before the old socket (and its callbacks) is released.
@@ -272,7 +212,7 @@ pub(super) fn use_realtime_connection(runtime: RealtimeSessionRuntime) {
         let initial = lease.initial_message();
         let event_lease = lease.clone();
         let on_event = Callback::new(move |event| {
-            handle_realtime_event(runtime, event_lease.clone(), event);
+            handle_event.call((event_lease.clone(), event));
         });
         match connect_realtime(initial, on_event.into_closure()) {
             Ok(active) => {
@@ -289,7 +229,7 @@ pub(super) fn use_realtime_connection(runtime: RealtimeSessionRuntime) {
                     state.realtime = RealtimePhase::Reconnecting;
                     state.error = Some(friendly_error(&error));
                 }
-                schedule_reconnect(runtime, lease);
+                schedule_reconnect(runtime.connection, runtime.target, runtime.model, lease);
             }
         }
     });
@@ -357,92 +297,74 @@ pub(super) fn mark_realtime_connected(
     runtime.state.write().mark_connected(lease)
 }
 
-pub(super) fn schedule_reconnect(mut runtime: RealtimeSessionRuntime, lease: RealtimeLease) {
-    let Some(ticket) = runtime.connection.state.peek().retry_ticket(&lease) else {
+pub(super) fn schedule_reconnect(
+    mut runtime: RealtimeConnectionRuntime,
+    target: Signal<Option<RealtimeTarget>>,
+    model: Signal<AppModel>,
+    lease: RealtimeLease,
+) {
+    let Some(ticket) = runtime.state.peek().retry_ticket(&lease) else {
         return;
     };
     spawn(async move {
         sleep_ms(ticket.delay_ms()).await;
-        if !runtime
-            .target
+        if !target
             .peek()
             .as_ref()
             .is_some_and(|target| target.is_same_instance(&ticket.target))
         {
             return;
         }
-        let phase = runtime.model.peek().realtime;
-        if !runtime
-            .connection
-            .state
-            .write()
-            .claim_reconnect_timer(&ticket, phase)
-        {
+        let phase = model.peek().realtime;
+        if !runtime.state.write().claim_reconnect_timer(&ticket, phase) {
             return;
         }
 
-        let current = *runtime.connection.trigger.peek();
-        runtime.connection.trigger.set(next_trigger(current));
+        let current = *runtime.trigger.peek();
+        runtime.trigger.set(next_trigger(current));
     });
 }
 
 pub(super) fn defer_realtime_socket_clear(
-    mut runtime: RealtimeSessionRuntime,
+    runtime: RealtimeConnectionRuntime,
+    target: Signal<Option<RealtimeTarget>>,
+    mut socket: Signal<Option<RealtimeConnection>>,
     lease: RealtimeLease,
 ) {
     spawn(async move {
         sleep_ms(0).await;
-        if realtime_lease_is_current(&lease, runtime.connection, runtime.target) {
-            runtime.rtc.connection.set(None);
+        if realtime_lease_is_current(&lease, runtime, target) {
+            socket.set(None);
         }
     });
 }
 
-pub(super) fn suppress_realtime_connection(
-    mut runtime: RealtimeSessionRuntime,
-    lease: RealtimeLease,
-) {
-    if !runtime.connection.state.write().suppress(&lease) {
-        return;
+pub(super) fn suppress_realtime_lease(
+    mut runtime: RealtimeConnectionRuntime,
+    lease: &RealtimeLease,
+) -> bool {
+    if !runtime.state.write().suppress(lease) {
+        return false;
     }
-    crate::rtc_session::reset_all_rtc_peers(runtime.rtc.peers);
-    runtime.rtc.config.set(None);
-    {
-        let mut model = runtime.model.write();
-        model.realtime = RealtimePhase::Superseded;
-        model.rtc = RtcPhase::Inactive;
-        model.notice = Some("此房间已在另一个标签页中打开，本页面已停止重连".to_owned());
-        model.error = None;
-    }
+    true
+}
 
-    // Dropping the connection synchronously from its own callback would also drop
-    // the Closure currently executing. Defer disposal until the callback unwinds.
-    spawn(async move {
-        sleep_ms(0).await;
-        if runtime
-            .connection
-            .state
-            .peek()
-            .suppression_is_current(&lease)
-        {
-            runtime.rtc.connection.set(None);
-        }
-    });
+pub(super) fn realtime_suppression_is_current(
+    runtime: RealtimeConnectionRuntime,
+    lease: &RealtimeLease,
+) -> bool {
+    runtime.state.peek().suppression_is_current(lease)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, rc::Rc};
+    use std::rc::Rc;
 
     use super::*;
-    use crate::realtime_session::RevisionCursor;
+    use crate::realtime_target::member_target;
 
     fn target(room: &str) -> RealtimeTarget {
-        RealtimeTarget::Member {
-            room_code: room.to_owned(),
-            peer_id: format!("peer-{room}"),
-            revision: Rc::new(Cell::new(RevisionCursor::new(0))),
-        }
+        member_target(room.to_owned(), 0, format!("peer-{room}"))
     }
 
     fn connect(state: &mut RealtimeConnectionState, target: RealtimeTarget) -> RealtimeLease {

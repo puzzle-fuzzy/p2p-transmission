@@ -3,10 +3,10 @@
 P2P Transmission 是一个无需注册的临时点对点文本与文件传输工具。正式地址：
 [https://p2p.yxswy.com](https://p2p.yxswy.com)。
 
-当前生产版本使用 Rust：Axum 在唯一主入口 `/` 提供 Dioxus 应用壳层，浏览器加载
-WebAssembly 工作台并通过 WebRTC DataChannel 传输正文。Axum 只处理临时会话、房间、
-加入审批、WebSocket 信令和短期 TURN 凭据，不接收或保存文本与文件正文。旧 `/app`
-链接会保留查询参数并归一到根路径。
+当前生产版本使用 Rust：Axum 在唯一主入口 `/` 服务端渲染匿名大厅，浏览器随后接管独立的
+Dioxus WebAssembly 交互岛，并通过 WebRTC DataChannel 传输正文。服务端首屏不读取房间、
+Cookie 或浏览器会话状态；Axum 只处理临时会话、房间、加入审批、WebSocket 信令和短期
+TURN 凭据，不接收或保存文本与文件正文。旧 `/app` 链接会保留查询参数并归一到根路径。
 
 页面支持安装为 PWA，并缓存根应用壳层与当前版本浏览器资源；房间、信令和实际传输仍要求联网。
 浏览器支持时可使用系统分享邀请链接，并在收到文件请求或完成校验时显示可选系统通知。
@@ -54,6 +54,7 @@ rust/crates/browser-platform  浏览器、WebRTC 与流式文件系统适配
 rust/crates/domain            房间与会话领域模型
 rust/crates/protocol          HTTP、信令和 DataChannel 协议
 rust/crates/transfer          分段、校验、背压与恢复状态机
+rust/crates/ui-shell          Axum SSR 与 Dioxus Web 共用的匿名大厅组件
 e2e                           当前 Rust Web 的 Playwright 浏览器验收
 deploy/production             生产容器与 Nginx 配置
 deploy/scripts                原子发布、SQLite 备份与回滚脚本

@@ -30,11 +30,9 @@ async fn main() -> Result<()> {
         .await
         .context("initialize SQLite database")?;
     let state = AppState::new(AppServices::new(storage.clone(), config));
+    let router =
+        app(&web_root, state.clone()).context("assemble server-rendered application shell")?;
     let maintenance = tokio::spawn(p2p_server::maintenance::run(state.clone()));
-
-    if !web_root.join("index.html").is_file() {
-        warn!(path = %web_root.display(), "Dioxus web build is missing; application routes will return 404");
-    }
 
     let listener = tokio::net::TcpListener::bind(address)
         .await
@@ -48,7 +46,7 @@ async fn main() -> Result<()> {
 
     axum::serve(
         listener,
-        app(web_root, state).into_make_service_with_connect_info::<SocketAddr>(),
+        router.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(shutdown_signal())
     .await

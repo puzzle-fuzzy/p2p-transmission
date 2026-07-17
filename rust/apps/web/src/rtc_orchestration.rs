@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use dioxus::prelude::*;
 use p2p_browser_platform::{RtcPeer, sleep_ms};
 
-use super::{AppModel, RoomRole, RtcPhase, Screen, TransferLinkState, TransferState};
+use crate::app_state::{AppModel, RoomRole, RtcPhase, Screen, TransferLinkState, TransferState};
 
 const RTC_NEGOTIATION_TIMEOUT_MS: u32 = 3_000;
 const RTC_PASSIVE_RECOVERY_TIMEOUT_MS: u32 = 30_000;
