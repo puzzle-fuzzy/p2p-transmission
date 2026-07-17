@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import hashlib
 import json
 import os
 import re
@@ -19,7 +20,7 @@ import tempfile
 import time
 import urllib.request
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Optional
@@ -29,7 +30,17 @@ APP_DIR = Path('/opt/p2p-transmission')
 SOURCE_ARCHIVE_RE = re.compile(r'^p2p-transmission-[0-9a-f]{40}\.tar\.gz$')
 IMAGE_ARCHIVE_RE = re.compile(r'^p2p-transmission-image-[0-9a-f]{40}\.tar\.gz$')
 RETIRED_FILES_RE = re.compile(r'^p2p-transmission-retired-[0-9a-f]{40}\.json$')
+LEGACY_OPERATION_RE = re.compile(
+    r'^p2p-transmission-legacy-([0-9a-f]{40})-status\.json$'
+)
+LEGACY_COMPOSE_RE = re.compile(
+    r'^p2p-transmission-legacy-([0-9a-f]{40})-compose\.yml$'
+)
+LEGACY_NGINX_RE = re.compile(
+    r'^p2p-transmission-legacy-([0-9a-f]{40})-nginx\.conf$'
+)
 VERSION_RE = re.compile(r'^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$')
+SHA256_RE = re.compile(r'^[0-9a-f]{64}$')
 ENV_KEY_RE = re.compile(r'^[A-Z][A-Z0-9_]*$')
 
 PRODUCTION_ENV = APP_DIR / 'deploy/production/.env'
@@ -44,7 +55,7 @@ SOURCE_MANIFEST = APP_DIR / 'deploy/production/source-files.json'
 NGINX_SOURCE = APP_DIR / 'deploy/production/nginx/p2p.yxswy.com.conf'
 NGINX_TARGET = Path('/etc/nginx/conf.d/p2p.yxswy.com.conf')
 PENDING_RELEASE = PRODUCTION_ROLLBACK / 'pending.json'
-PENDING_RELEASE_SCHEMA = 1
+PENDING_RELEASE_SCHEMA = 2
 PENDING_RELEASE_MAX_BYTES = 64 * 1024
 NGINX_SNAPSHOT_PREFIX = 'p2p-transmission-nginx-'
 COMPOSE_SNAPSHOT_PREFIX = 'p2p-transmission-compose-'
@@ -83,6 +94,38 @@ def image_exists(image: str) -> bool:
         ['docker', 'image', 'inspect', image],
         capture_output=True,
     ).returncode == 0
+
+
+def image_id(image: str) -> Optional[str]:
+    result = subprocess.run(
+        ['docker', 'image', 'inspect', '--format', '{{.Id}}', image],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    identifier = result.stdout.strip()
+    return identifier or None
+
+
+def running_production_image_id() -> Optional[str]:
+    container = subprocess.run(
+        compose_production('ps', '--quiet', 'app'),
+        capture_output=True,
+        text=True,
+    )
+    container_id = container.stdout.strip() if container.returncode == 0 else ''
+    if not container_id or '\n' in container_id:
+        return None
+    inspected = subprocess.run(
+        ['docker', 'container', 'inspect', '--format', '{{.Image}}', container_id],
+        capture_output=True,
+        text=True,
+    )
+    if inspected.returncode != 0:
+        return None
+    identifier = inspected.stdout.strip()
+    return identifier or None
 
 
 def validate_tmp_file(path: Path, pattern: re.Pattern[str], label: str) -> Path:
@@ -138,8 +181,11 @@ def atomic_write_bytes(target: Path, payload: bytes, mode: int) -> None:
         with os.fdopen(descriptor, 'wb') as destination:
             descriptor = None
             destination.write(payload)
+            destination.flush()
+            os.fsync(destination.fileno())
         os.chmod(temporary, mode)
         os.replace(temporary, target)
+        fsync_directory(target.parent)
     finally:
         if descriptor is not None:
             try:
@@ -417,16 +463,178 @@ def restore_production_environment(previous: bytes) -> None:
     atomic_write_bytes(PRODUCTION_ENV, previous, 0o600)
 
 
+def production_database_runtime_files() -> tuple[Path, Path, Path]:
+    return (
+        PRODUCTION_DATABASE,
+        Path(f'{PRODUCTION_DATABASE}-wal'),
+        Path(f'{PRODUCTION_DATABASE}-shm'),
+    )
+
+
+def validate_production_database_restore_target() -> Optional[tuple[Path, Path, Path]]:
+    deploy_root = APP_DIR / 'deploy'
+    production_root = deploy_root / 'production'
+    expected_data = production_root / 'data'
+    expected_database = expected_data / 'control.sqlite3'
+    if PRODUCTION_DATA != expected_data or PRODUCTION_DATABASE != expected_database:
+        print('production database rollback path does not match the deployment layout', flush=True)
+        return None
+    for directory in (APP_DIR, deploy_root, production_root, expected_data):
+        if path_is_linklike(directory) or not directory.is_dir():
+            print(f'production database rollback directory is unsafe: {directory}', flush=True)
+            return None
+    runtime_files = production_database_runtime_files()
+    for path in runtime_files:
+        if path_is_linklike(path):
+            print(f'production database rollback target is unsafe: {path}', flush=True)
+            return None
+        if path.exists() and not path.is_file():
+            print(f'production database rollback target is not a regular file: {path}', flush=True)
+            return None
+    return runtime_files
+
+
+def remove_production_database_files(paths: tuple[Path, ...]) -> bool:
+    try:
+        for path in paths:
+            path.unlink(missing_ok=True)
+        if paths:
+            fsync_directory(paths[0].parent)
+    except OSError as error:
+        print(f'production database file removal failed: {error}', flush=True)
+        return False
+    return True
+
+
+def fsync_file(path: Path) -> None:
+    # Windows requires a writable descriptor for FlushFileBuffers; production
+    # Linux accepts this mode as well, and these are root-owned restore files.
+    with path.open('r+b') as source:
+        os.fsync(source.fileno())
+
+
+def fsync_directory(path: Path) -> None:
+    if os.name == 'nt':
+        return
+    flags = os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def database_restore_recovery_artifacts(database: Path) -> list[Path]:
+    patterns = (
+        f'.{database.name}.restore-*',
+        f'.{database.name}.rollback-*',
+    )
+    return [path for pattern in patterns for path in database.parent.glob(pattern)]
+
+
+def install_prepared_database(backup: Path, runtime_files: tuple[Path, Path, Path]) -> bool:
+    database, _, _ = runtime_files
+    recovery_artifacts = database_restore_recovery_artifacts(database)
+    if recovery_artifacts:
+        print(
+            'production database recovery artifacts require manual reconciliation: '
+            + ', '.join(str(path) for path in recovery_artifacts),
+            flush=True,
+        )
+        return False
+
+    token = secrets.token_hex(16)
+    prepared = database.parent / f'.{database.name}.restore-{token}'
+    quarantines = {
+        path: database.parent / f'.{database.name}.rollback-{token}-{suffix}'
+        for path, suffix in zip(runtime_files, ('main', 'wal', 'shm'))
+    }
+    try:
+        # Fully materialize, quick-check and sync the previous database before
+        # changing any current main/WAL/SHM file.
+        copy_sqlite_database(backup, prepared)
+        verify_sqlite_database(prepared)
+        fsync_file(prepared)
+        fsync_directory(database.parent)
+    except (OSError, SystemExit) as error:
+        prepared.unlink(missing_ok=True)
+        print(f'production database restore preparation failed: {error}', flush=True)
+        return False
+
+    moved: list[tuple[Path, Path]] = []
+    installed = False
+    try:
+        for current, quarantine in quarantines.items():
+            if current.exists():
+                os.replace(current, quarantine)
+                moved.append((current, quarantine))
+        os.replace(prepared, database)
+        installed = True
+        fsync_directory(database.parent)
+        verify_sqlite_database(database)
+        fsync_file(database)
+    except (OSError, SystemExit) as error:
+        restored = True
+        try:
+            moved_sources = {current for current, _ in moved}
+            if installed:
+                for current in runtime_files:
+                    if current not in moved_sources:
+                        current.unlink(missing_ok=True)
+            for current, quarantine in reversed(moved):
+                os.replace(quarantine, current)
+            fsync_directory(database.parent)
+        except OSError as restore_error:
+            restored = False
+            print(
+                f'production database quarantine restore failed: {restore_error}',
+                flush=True,
+            )
+        prepared.unlink(missing_ok=True)
+        state = 'original files restored' if restored else 'manual recovery required'
+        print(f'production database install failed ({state}): {error}', flush=True)
+        return False
+
+    try:
+        for quarantine in quarantines.values():
+            quarantine.unlink(missing_ok=True)
+        fsync_directory(database.parent)
+    except OSError as error:
+        print(
+            'production database was restored but quarantine cleanup failed; '
+            f'manual recovery is required: {error}',
+            flush=True,
+        )
+        return False
+    return True
+
+
 def restore_production_database(backup: Optional[Path]) -> bool:
+    runtime_files = validate_production_database_restore_target()
+    if runtime_files is None:
+        return False
+    database, _, _ = runtime_files
+    recovery_artifacts = database_restore_recovery_artifacts(database)
+    if recovery_artifacts:
+        print(
+            'production database recovery artifacts require manual reconciliation: '
+            + ', '.join(str(path) for path in recovery_artifacts),
+            flush=True,
+        )
+        return False
     if backup is None:
+        # A missing backup is an explicit record that the database did not
+        # exist before this release.  The staged application may have created
+        # one (including WAL sidecars) during readiness checks, so rollback
+        # must restore the same absence instead of leaving target state behind.
+        if not remove_production_database_files(runtime_files):
+            return False
+        print('production database absence restored', flush=True)
         return True
     if path_is_linklike(backup) or not backup.is_file():
         print(f'production database rollback backup is missing or unsafe: {backup}', flush=True)
         return False
-    try:
-        copy_sqlite_database(backup, PRODUCTION_DATABASE, overwrite=True)
-    except SystemExit as error:
-        print(f'production database restore failed: {error}', flush=True)
+    if not install_prepared_database(backup, runtime_files):
         return False
     print(f'production database restored from {backup}', flush=True)
     return True
@@ -446,7 +654,14 @@ def preserve_rollback_image(image: str) -> None:
 
 
 def ensure_rollback_directory() -> Path:
-    expected_parent = (APP_DIR / 'deploy/production').resolve()
+    deploy_root = APP_DIR / 'deploy'
+    production_root = deploy_root / 'production'
+    expected_rollback = production_root / 'rollback'
+    if PRODUCTION_ROLLBACK != expected_rollback:
+        raise SystemExit('production rollback directory does not match the deployment layout')
+    for directory in (APP_DIR, deploy_root, production_root):
+        if path_is_linklike(directory) or not directory.is_dir():
+            raise SystemExit(f'production rollback ancestor is unsafe: {directory}')
     if path_is_linklike(PRODUCTION_ROLLBACK):
         raise SystemExit('production rollback directory must not be a symbolic link')
     try:
@@ -454,7 +669,7 @@ def ensure_rollback_directory() -> Path:
         rollback_root = PRODUCTION_ROLLBACK.resolve()
     except OSError as error:
         raise SystemExit(f'cannot prepare the production rollback directory: {error}') from error
-    if rollback_root.parent != expected_parent:
+    if rollback_root.parent != production_root:
         raise SystemExit('production rollback directory escapes the deployment directory')
     os.chmod(rollback_root, 0o700)
     return rollback_root
@@ -469,7 +684,10 @@ def snapshot_runtime_file(source: Path, prefix: str) -> Path:
     try:
         with source.open('rb') as source_file, os.fdopen(descriptor, 'wb') as destination:
             shutil.copyfileobj(source_file, destination)
+            destination.flush()
+            os.fsync(destination.fileno())
         os.chmod(snapshot, 0o600)
+        fsync_directory(rollback_root)
     except BaseException:
         try:
             os.close(descriptor)
@@ -518,19 +736,37 @@ def snapshot_compose() -> Path:
 
 def backup_production_database(version: str) -> Optional[Path]:
     """Create and verify a consistent SQLite backup before changing the runtime."""
+    if validate_production_database_restore_target() is None:
+        raise SystemExit('production database layout is unsafe for backup')
+    recovery_artifacts = database_restore_recovery_artifacts(PRODUCTION_DATABASE)
+    if recovery_artifacts:
+        raise SystemExit(
+            'production database recovery artifacts require manual reconciliation: '
+            + ', '.join(str(path) for path in recovery_artifacts)
+        )
     if not PRODUCTION_DATABASE.is_file():
         print('production database is not present; backup is not required', flush=True)
         return None
 
-    backup_root = PRODUCTION_BACKUPS.resolve()
-    expected_parent = (APP_DIR / 'deploy/production').resolve()
-    if backup_root.parent != expected_parent:
-        raise SystemExit('database backup directory escapes the deployment directory')
+    backup_root = PRODUCTION_BACKUPS
+    expected_root = APP_DIR / 'deploy/production/backups'
+    if backup_root != expected_root or path_is_linklike(backup_root):
+        raise SystemExit('database backup directory is unsafe')
     backup_root.mkdir(parents=True, exist_ok=True)
+    if path_is_linklike(backup_root) or not backup_root.is_dir():
+        raise SystemExit('database backup directory is unsafe')
     os.chmod(backup_root, 0o700)
+    existing_backups = sorted(backup_root.glob('control-*.sqlite3'), reverse=True)
+    if any(
+        path_is_linklike(backup) or not backup.is_file()
+        for backup in existing_backups
+    ):
+        raise SystemExit('database backup cleanup encountered an unsafe path')
 
     timestamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
     destination = backup_root / f'control-{timestamp}-{version}.sqlite3'
+    if path_is_linklike(destination) or destination.exists():
+        raise SystemExit('database backup destination already exists or is unsafe')
     try:
         source_uri = f'{PRODUCTION_DATABASE.resolve().as_uri()}?mode=ro'
         with closing(sqlite3.connect(source_uri, uri=True, timeout=30.0)) as source:
@@ -540,15 +776,16 @@ def backup_production_database(version: str) -> Optional[Path]:
                 if result != ('ok',):
                     raise sqlite3.DatabaseError(f'backup quick_check failed: {result!r}')
         os.chmod(destination, 0o600)
+        fsync_file(destination)
+        fsync_directory(backup_root)
     except (OSError, sqlite3.Error) as error:
         destination.unlink(missing_ok=True)
         raise SystemExit(f'production database backup failed: {error}') from error
 
-    backups = sorted(backup_root.glob('control-*.sqlite3'), reverse=True)
+    backups = sorted((*existing_backups, destination), reverse=True)
     for old_backup in backups[DATABASE_BACKUP_LIMIT:]:
-        if old_backup.resolve().parent != backup_root:
-            raise SystemExit('database backup cleanup encountered an unsafe path')
         old_backup.unlink()
+    fsync_directory(backup_root)
 
     print(f'production database backup ready: {destination}', flush=True)
     return destination
@@ -608,6 +845,66 @@ def wait_for_production_ready(expected_release: str) -> None:
     raise SystemExit('production readiness check failed')
 
 
+def current_production_release() -> Optional[str]:
+    url = 'http://127.0.0.1:3410/health/ready'
+    try:
+        with urllib.request.urlopen(url, timeout=3) as response:
+            payload = json.loads(response.read().decode('utf-8'))
+    except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
+        return None
+    if (
+        response.status != 200
+        or not isinstance(payload, dict)
+        or payload.get('status') != 'ready'
+        or payload.get('service') != 'p2p-server'
+    ):
+        return None
+    release = payload.get('release')
+    return release if isinstance(release, str) and VERSION_RE.fullmatch(release) else None
+
+
+def production_runtime_matches(version: str) -> bool:
+    if not running_production_release_matches(version):
+        return False
+    try:
+        values = parse_env_text(PRODUCTION_ENV.read_text(encoding='utf-8'))
+    except (OSError, UnicodeDecodeError):
+        return False
+    return values.get('P2P_IMAGE_TAG') == version
+
+
+def running_production_release_matches(version: str) -> bool:
+    if not VERSION_RE.fullmatch(version) or current_production_release() != version:
+        return False
+    expected_image_id = image_id(f'p2p-transmission:{version}')
+    return expected_image_id is not None and running_production_image_id() == expected_image_id
+
+
+def require_sha256(value: str, label: str) -> str:
+    if not SHA256_RE.fullmatch(value):
+        raise SystemExit(f'{label} SHA-256 is invalid')
+    return value
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    try:
+        with path.open('rb') as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b''):
+                digest.update(chunk)
+    except OSError as error:
+        raise SystemExit(f'cannot hash production runtime file {path}: {error}') from error
+    return digest.hexdigest()
+
+
+def require_runtime_file_hash(path: Path, expected: str, label: str) -> None:
+    expected = require_sha256(expected, label)
+    if path_is_linklike(path) or not path.is_file():
+        raise SystemExit(f'legacy {label} runtime file is missing or unsafe')
+    if file_sha256(path) != expected:
+        raise SystemExit(f'legacy {label} runtime file changed across the helper migration')
+
+
 def cleanup_snapshot_paths(*snapshots: Path) -> bool:
     cleaned = True
     for snapshot in snapshots:
@@ -627,6 +924,8 @@ class ProductionPreflight:
     nginx_snapshot: Path
     compose_snapshot: Path
     expected_image: str
+    database_may_have_changed: bool = False
+    rollback_database_restored: bool = False
 
     def cleanup_snapshots(self) -> bool:
         return cleanup_snapshot_paths(self.nginx_snapshot, self.compose_snapshot)
@@ -667,19 +966,27 @@ def pending_database_backup_path(raw_path: object) -> Optional[Path]:
     try:
         backup_root = PRODUCTION_BACKUPS.resolve(strict=True)
         resolved = candidate.resolve(strict=True)
+        metadata = resolved.stat()
     except OSError as error:
         raise SystemExit(f'pending release database backup is unavailable: {error}') from error
     if (
         resolved.parent != backup_root
         or path_is_linklike(candidate)
         or not resolved.is_file()
+        or (os.name != 'nt' and stat.S_IMODE(metadata.st_mode) & 0o077)
     ):
         raise SystemExit('pending release database backup is missing or unsafe')
     return resolved
 
 
-def write_pending_release(preflight: ProductionPreflight, version: str) -> None:
-    ensure_no_pending_release()
+def persist_pending_release(
+    preflight: ProductionPreflight,
+    version: str,
+    *,
+    require_absent: bool,
+) -> None:
+    if require_absent:
+        ensure_no_pending_release()
     ensure_rollback_directory()
     payload = {
         'schema': PENDING_RELEASE_SCHEMA,
@@ -691,10 +998,205 @@ def write_pending_release(preflight: ProductionPreflight, version: str) -> None:
         ),
         'nginx_snapshot': str(preflight.nginx_snapshot),
         'compose_snapshot': str(preflight.compose_snapshot),
+        'database_may_have_changed': preflight.database_may_have_changed,
+        'rollback_database_restored': preflight.rollback_database_restored,
     }
     rendered = (json.dumps(payload, sort_keys=True) + '\n').encode('utf-8')
     atomic_write_bytes(PENDING_RELEASE, rendered, 0o600)
+
+
+def write_pending_release(preflight: ProductionPreflight, version: str) -> None:
+    persist_pending_release(preflight, version, require_absent=True)
     print(f'production release {version} is staged pending public verification', flush=True)
+
+
+def mark_pending_database_may_have_changed(version: str) -> ProductionPreflight:
+    preflight = load_pending_release(version)
+    if preflight.database_may_have_changed:
+        return preflight
+    updated = replace(preflight, database_may_have_changed=True)
+    persist_pending_release(updated, version, require_absent=False)
+    print(f'production release {version} entered the runtime switch phase', flush=True)
+    return updated
+
+
+def mark_pending_rollback_database_restored(version: str) -> ProductionPreflight:
+    preflight = load_pending_release(version)
+    if not preflight.database_may_have_changed:
+        raise SystemExit('cannot mark a database restore before the runtime switch phase')
+    if preflight.rollback_database_restored:
+        return preflight
+    updated = replace(preflight, rollback_database_restored=True)
+    persist_pending_release(updated, version, require_absent=False)
+    print(f'production release {version} recorded its database rollback', flush=True)
+    return updated
+
+
+def legacy_operation_database_backup(payload: dict[str, object], version: str) -> Optional[Path]:
+    backup_not_required = payload.get('database_backup_not_required')
+    raw_backup = payload.get('database_backup')
+    if backup_not_required is True:
+        if raw_backup is not None:
+            raise SystemExit('legacy operation database backup state is contradictory')
+        return None
+    if backup_not_required is not False or not isinstance(raw_backup, str):
+        raise SystemExit('legacy operation did not record its database backup')
+    candidate = Path(raw_backup)
+    try:
+        backup_root = PRODUCTION_BACKUPS.resolve(strict=True)
+        resolved = candidate.resolve(strict=True)
+        metadata = resolved.stat()
+    except OSError as error:
+        raise SystemExit(f'legacy production database backup is unavailable: {error}') from error
+    expected_parent = (APP_DIR / 'deploy/production').resolve()
+    if (
+        backup_root.parent != expected_parent
+        or resolved.parent != backup_root
+        or path_is_linklike(PRODUCTION_BACKUPS)
+        or path_is_linklike(candidate)
+        or not resolved.is_file()
+        or not resolved.name.endswith(f'-{version}.sqlite3')
+        or (os.name != 'nt' and stat.S_IMODE(metadata.st_mode) & 0o077)
+    ):
+        raise SystemExit('legacy production database backup is missing or unsafe')
+    verify_sqlite_database(resolved)
+    return resolved
+
+
+def load_legacy_operation(path: Path, version: str) -> dict[str, object]:
+    operation = validate_tmp_file(path, LEGACY_OPERATION_RE, 'legacy operation state')
+    operation_match = LEGACY_OPERATION_RE.fullmatch(operation.name)
+    if operation_match is None:
+        raise SystemExit('legacy operation state name is invalid')
+    try:
+        metadata = operation.stat()
+        payload = json.loads(operation.read_text(encoding='utf-8'))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise SystemExit(f'cannot read legacy operation state: {error}') from error
+    exit_code = payload.get('exit_code') if isinstance(payload, dict) else None
+    if (
+        (os.name != 'nt' and stat.S_IMODE(metadata.st_mode) & 0o077)
+        or metadata.st_size > PENDING_RELEASE_MAX_BYTES
+        or not isinstance(payload, dict)
+        or payload.get('schema') != 1
+        or payload.get('operation_id') != operation_match.group(1)
+        or payload.get('version') != version
+        or payload.get('mode') != 'legacy'
+        or isinstance(exit_code, bool)
+        or not isinstance(exit_code, int)
+        or not 0 <= exit_code <= 255
+        or payload.get('finished') is not True
+    ):
+        raise SystemExit('legacy operation state is incomplete or unsafe')
+    return payload
+
+
+def protect_legacy_runtime_snapshot(
+    path: Path,
+    pattern: re.Pattern[str],
+    expected_sha256: str,
+    prefix: str,
+    label: str,
+) -> Path:
+    source = validate_tmp_file(path, pattern, f'legacy {label} snapshot')
+    metadata = source.stat()
+    if os.name != 'nt' and stat.S_IMODE(metadata.st_mode) & 0o077:
+        raise SystemExit(f'legacy {label} snapshot permissions are unsafe')
+    require_runtime_file_hash(source, expected_sha256, label)
+    protected = snapshot_runtime_file(source, prefix)
+    try:
+        require_runtime_file_hash(protected, expected_sha256, label)
+    except BaseException:
+        protected.unlink(missing_ok=True)
+        raise
+    return protected
+
+
+def adopt_legacy_pending_release(
+    version: str,
+    previous_version: str,
+    operation_state: Path,
+    compose_snapshot_source: Path,
+    nginx_snapshot_source: Path,
+    compose_sha256: str,
+    nginx_sha256: str,
+) -> None:
+    if not VERSION_RE.fullmatch(version) or not VERSION_RE.fullmatch(previous_version):
+        raise SystemExit('release version contains unsupported characters')
+    if version == previous_version:
+        raise SystemExit('legacy deployment must identify a different previous version')
+    operation_match = LEGACY_OPERATION_RE.fullmatch(operation_state.name)
+    compose_match = LEGACY_COMPOSE_RE.fullmatch(compose_snapshot_source.name)
+    nginx_match = LEGACY_NGINX_RE.fullmatch(nginx_snapshot_source.name)
+    operation_ids = {
+        match.group(1)
+        for match in (operation_match, compose_match, nginx_match)
+        if match is not None
+    }
+    if (
+        operation_match is None
+        or compose_match is None
+        or nginx_match is None
+        or len(operation_ids) != 1
+    ):
+        raise SystemExit('legacy migration artifacts do not share one operation id')
+    ensure_no_pending_release()
+    operation = load_legacy_operation(operation_state, version)
+    if not production_runtime_matches(version):
+        raise SystemExit('legacy production runtime does not consistently run the target version')
+    previous_image = require_rollback_image(previous_version)
+    previous_image_id = image_id(previous_image)
+    if previous_image_id is None or image_id('p2p-transmission:previous') != previous_image_id:
+        raise SystemExit('legacy rollback image does not match the previous production image')
+
+    try:
+        current_env = PRODUCTION_ENV.read_bytes()
+        current_values = parse_env_text(current_env.decode('utf-8'))
+    except (OSError, UnicodeDecodeError) as error:
+        raise SystemExit(f'cannot read the legacy production environment: {error}') from error
+    if current_values.get('P2P_IMAGE_TAG') != version:
+        raise SystemExit('legacy production environment does not match the deployed version')
+    try:
+        previous_env = format_env(
+            build_production_env(current_values, previous_version)
+        ).encode('utf-8')
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+
+    database_backup = legacy_operation_database_backup(operation, version)
+    nginx_snapshot: Optional[Path] = None
+    compose_snapshot: Optional[Path] = None
+    try:
+        nginx_snapshot = protect_legacy_runtime_snapshot(
+            nginx_snapshot_source,
+            LEGACY_NGINX_RE,
+            nginx_sha256,
+            NGINX_SNAPSHOT_PREFIX,
+            'Nginx',
+        )
+        compose_snapshot = protect_legacy_runtime_snapshot(
+            compose_snapshot_source,
+            LEGACY_COMPOSE_RE,
+            compose_sha256,
+            COMPOSE_SNAPSHOT_PREFIX,
+            'Compose',
+        )
+        preflight = ProductionPreflight(
+            previous_env=previous_env,
+            previous_tag=previous_version,
+            database_backup=database_backup,
+            nginx_snapshot=nginx_snapshot,
+            compose_snapshot=compose_snapshot,
+            expected_image=f'p2p-transmission:{version}',
+            database_may_have_changed=True,
+        )
+        write_pending_release(preflight, version)
+    except BaseException:
+        cleanup_snapshot_paths(
+            *(snapshot for snapshot in (nginx_snapshot, compose_snapshot) if snapshot is not None)
+        )
+        raise
+    print(f'legacy production release adopted for public verification: {version}', flush=True)
 
 
 def load_pending_release(expected_version: str) -> ProductionPreflight:
@@ -736,6 +1238,15 @@ def load_pending_release(expected_version: str) -> ProductionPreflight:
         raise SystemExit('pending production release environment is invalid') from error
     if previous_values.get('P2P_IMAGE_TAG') != previous_tag:
         raise SystemExit('pending production release environment tag does not match its metadata')
+    database_may_have_changed = payload.get('database_may_have_changed')
+    if not isinstance(database_may_have_changed, bool):
+        raise SystemExit('pending production release runtime phase is invalid')
+    rollback_database_restored = payload.get('rollback_database_restored')
+    if (
+        not isinstance(rollback_database_restored, bool)
+        or (rollback_database_restored and not database_may_have_changed)
+    ):
+        raise SystemExit('pending production release rollback phase is invalid')
 
     return ProductionPreflight(
         previous_env=previous_env,
@@ -748,6 +1259,8 @@ def load_pending_release(expected_version: str) -> ProductionPreflight:
             payload.get('compose_snapshot'), COMPOSE_SNAPSHOT_PREFIX, 'Compose'
         ),
         expected_image=f'p2p-transmission:{expected_version}',
+        database_may_have_changed=database_may_have_changed,
+        rollback_database_restored=rollback_database_restored,
     )
 
 
@@ -766,14 +1279,61 @@ def finalize_pending_release(version: str) -> None:
     print(f'production release finalized: {preflight.expected_image}', flush=True)
 
 
-def rollback_pending_release(version: str) -> None:
+def rollback_pending_release(
+    version: str,
+    *,
+    bootstrap_previous_version: Optional[str] = None,
+    bootstrap_operation_state: Optional[Path] = None,
+    bootstrap_compose_snapshot: Optional[Path] = None,
+    bootstrap_nginx_snapshot: Optional[Path] = None,
+    bootstrap_compose_sha256: Optional[str] = None,
+    bootstrap_nginx_sha256: Optional[str] = None,
+) -> None:
     if not PENDING_RELEASE.exists():
         if path_is_linklike(PENDING_RELEASE):
             raise SystemExit('pending production release state is missing or unsafe')
-        print(f'no pending production release to roll back for {version}', flush=True)
-        return
+        bootstrap_values = (
+            bootstrap_previous_version,
+            bootstrap_operation_state,
+            bootstrap_compose_snapshot,
+            bootstrap_nginx_snapshot,
+            bootstrap_compose_sha256,
+            bootstrap_nginx_sha256,
+        )
+        if any(value is not None for value in bootstrap_values):
+            if not all(value is not None for value in bootstrap_values):
+                raise SystemExit('legacy rollback context is incomplete')
+            assert bootstrap_previous_version is not None
+            assert bootstrap_operation_state is not None
+            assert bootstrap_compose_snapshot is not None
+            assert bootstrap_nginx_snapshot is not None
+            assert bootstrap_compose_sha256 is not None
+            assert bootstrap_nginx_sha256 is not None
+            load_legacy_operation(bootstrap_operation_state, version)
+            if production_runtime_matches(bootstrap_previous_version):
+                print(
+                    f'legacy production release already runs {bootstrap_previous_version}',
+                    flush=True,
+                )
+                return
+            if not production_runtime_matches(version):
+                raise SystemExit(
+                    'cannot reconcile a mixed or unavailable legacy production runtime'
+                )
+            adopt_legacy_pending_release(
+                version,
+                bootstrap_previous_version,
+                bootstrap_operation_state,
+                bootstrap_compose_snapshot,
+                bootstrap_nginx_snapshot,
+                bootstrap_compose_sha256,
+                bootstrap_nginx_sha256,
+            )
+        else:
+            print(f'no pending production release to roll back for {version}', flush=True)
+            return
     preflight = load_pending_release(version)
-    rollback_runtime(preflight)
+    rollback_recorded_release(preflight)
     close_pending_release(preflight)
     print(f'production release rolled back from {preflight.expected_image}', flush=True)
 
@@ -823,6 +1383,16 @@ def preflight_production(image_archive: Path, version: str) -> ProductionPreflig
     )
 
 
+def preflight_release_version(preflight: ProductionPreflight) -> str:
+    prefix = 'p2p-transmission:'
+    if not preflight.expected_image.startswith(prefix):
+        raise SystemExit('pending production release image is invalid')
+    version = preflight.expected_image[len(prefix) :]
+    if not VERSION_RE.fullmatch(version):
+        raise SystemExit('pending production release version is invalid')
+    return version
+
+
 def rollback_runtime(preflight: ProductionPreflight) -> None:
     environment_restored = True
     try:
@@ -835,11 +1405,18 @@ def rollback_runtime(preflight: ProductionPreflight) -> None:
     nginx_restored = restore_nginx(preflight.nginx_snapshot)
     stopped = False
     removed = False
-    database_restored = False
+    database_restored = preflight.rollback_database_restored
     if environment_restored and compose_restored and nginx_restored:
         stopped = best_effort(compose_production('stop', 'app'))
         removed = stopped and best_effort(compose_production('rm', '--force', 'app'))
-        database_restored = removed and restore_production_database(preflight.database_backup)
+        if removed and not database_restored:
+            database_restored = restore_production_database(preflight.database_backup)
+            if database_restored:
+                # Persist this boundary before the old container can accept
+                # writes. A retry must never replay the backup after this bit.
+                mark_pending_rollback_database_restored(
+                    preflight_release_version(preflight)
+                )
 
     prerequisites_restored = all(
         (
@@ -861,6 +1438,49 @@ def rollback_runtime(preflight: ProductionPreflight) -> None:
         raise SystemExit('automatic production rollback failed; manual intervention is required')
 
 
+def restore_pre_runtime_state(preflight: ProductionPreflight) -> None:
+    """Abort before a target container could touch the production database."""
+
+    environment_restored = True
+    try:
+        restore_production_environment(preflight.previous_env)
+    except OSError as error:
+        print(f'production environment restore failed: {error}', flush=True)
+        environment_restored = False
+    compose_restored = restore_compose(preflight.compose_snapshot)
+    nginx_restored = restore_nginx(preflight.nginx_snapshot)
+    runtime_unchanged = (
+        environment_restored
+        and compose_restored
+        and nginx_restored
+        and production_runtime_matches(preflight.previous_tag)
+    )
+    if not runtime_unchanged:
+        raise SystemExit(
+            'pre-runtime production abort could not prove the previous runtime unchanged; '
+            'manual intervention is required'
+        )
+    print(
+        'production release aborted before the database could be changed; '
+        'the running container was left untouched',
+        flush=True,
+    )
+
+
+def rollback_recorded_release(preflight: ProductionPreflight) -> None:
+    # The phase marker is persisted immediately before `docker compose up`.
+    # Even after that marker, a failed `up` may have left the verified previous
+    # container running.  In that case a full database restore would discard
+    # writes made after the preflight backup, so only restore runtime files.
+    if (
+        not preflight.database_may_have_changed
+        or running_production_release_matches(preflight.previous_tag)
+    ):
+        restore_pre_runtime_state(preflight)
+        return
+    rollback_runtime(preflight)
+
+
 def deploy_production(preflight: ProductionPreflight, version: str) -> None:
     try:
         # Record rollback state before changing the environment, container, or Nginx.
@@ -869,23 +1489,26 @@ def deploy_production(preflight: ProductionPreflight, version: str) -> None:
         write_pending_release(preflight, version)
         prepare_production_environment(version, preflight.previous_env)
         run(compose_production('config', '--quiet'))
+        # Persist the conservative database boundary immediately before the
+        # first command that may recreate the application container.
+        mark_pending_database_may_have_changed(version)
         run(compose_production('up', '-d', '--no-build', '--no-deps', 'app'))
         wait_for_production_ready(version)
         install_production_nginx()
     except BaseException as release_error:
-        print('production release failed; restoring the previous production runtime', flush=True)
+        print('production release failed; reconciling the recorded production phase', flush=True)
         try:
-            rollback_runtime(preflight)
+            if PENDING_RELEASE.exists() or path_is_linklike(PENDING_RELEASE):
+                recorded = load_pending_release(version)
+                rollback_recorded_release(recorded)
+                close_pending_release(recorded)
+            else:
+                # Source extraction has already replaced the Compose source,
+                # but a failed marker write proves no runtime command began.
+                restore_pre_runtime_state(preflight)
+                preflight.cleanup_snapshots()
         except BaseException as rollback_error:
             raise SystemExit(f'production release and rollback failed: {rollback_error}') from release_error
-        try:
-            PENDING_RELEASE.unlink(missing_ok=True)
-        except OSError as cleanup_error:
-            print(
-                f'pending production release cleanup failed: {cleanup_error}',
-                flush=True,
-            )
-        preflight.cleanup_snapshots()
         raise
 
 
@@ -926,6 +1549,7 @@ def deploy(
 def main() -> int:
     parser = argparse.ArgumentParser()
     actions = parser.add_subparsers(dest='action', required=True)
+    actions.add_parser('protocol-version', help='print the deployment helper protocol')
     stage = actions.add_parser('stage', help='switch production and retain rollback state')
     stage.add_argument('--archive', required=True, type=Path)
     stage.add_argument('--version', required=True)
@@ -933,15 +1557,52 @@ def main() -> int:
     stage.add_argument('--retired-files', required=True, type=Path)
     finalize = actions.add_parser('finalize', help='accept a publicly verified release')
     finalize.add_argument('--version', required=True)
+    adopt = actions.add_parser(
+        'adopt-legacy',
+        help='retain rollback state after the one-time legacy helper migration',
+    )
+    adopt.add_argument('--version', required=True)
+    adopt.add_argument('--previous-version', required=True)
+    adopt.add_argument('--operation-state', required=True, type=Path)
+    adopt.add_argument('--compose-snapshot', required=True, type=Path)
+    adopt.add_argument('--nginx-snapshot', required=True, type=Path)
+    adopt.add_argument('--compose-sha256', required=True)
+    adopt.add_argument('--nginx-sha256', required=True)
     rollback = actions.add_parser('rollback', help='restore the release staged previously')
     rollback.add_argument('--version', required=True)
+    rollback.add_argument('--bootstrap-previous-version')
+    rollback.add_argument('--bootstrap-operation-state', type=Path)
+    rollback.add_argument('--bootstrap-compose-snapshot', type=Path)
+    rollback.add_argument('--bootstrap-nginx-snapshot', type=Path)
+    rollback.add_argument('--bootstrap-compose-sha256')
+    rollback.add_argument('--bootstrap-nginx-sha256')
     args = parser.parse_args()
-    if args.action == 'stage':
+    if args.action == 'protocol-version':
+        print('2', flush=True)
+    elif args.action == 'stage':
         deploy(args.archive, args.version, args.image_archive, args.retired_files)
     elif args.action == 'finalize':
         finalize_pending_release(args.version)
+    elif args.action == 'adopt-legacy':
+        adopt_legacy_pending_release(
+            args.version,
+            args.previous_version,
+            args.operation_state,
+            args.compose_snapshot,
+            args.nginx_snapshot,
+            args.compose_sha256,
+            args.nginx_sha256,
+        )
     else:
-        rollback_pending_release(args.version)
+        rollback_pending_release(
+            args.version,
+            bootstrap_previous_version=args.bootstrap_previous_version,
+            bootstrap_operation_state=args.bootstrap_operation_state,
+            bootstrap_compose_snapshot=args.bootstrap_compose_snapshot,
+            bootstrap_nginx_snapshot=args.bootstrap_nginx_snapshot,
+            bootstrap_compose_sha256=args.bootstrap_compose_sha256,
+            bootstrap_nginx_sha256=args.bootstrap_nginx_sha256,
+        )
     return 0
 
 

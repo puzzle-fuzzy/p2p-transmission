@@ -36,7 +36,9 @@ chmod 600 deploy/production/.env
 
 正式环境使用 [`p2p.yxswy.com.conf`](../../deploy/production/nginx/p2p.yxswy.com.conf) 配置 HTTPS/WSS 反向代理。文件正文使用 WebRTC，不需要放大 HTTP 请求体限制；控制 WebSocket 需要保留 Upgrade 头和长连接超时。
 
-`main` 分支的生产 workflow 会在 GitHub Runner 构建带提交标识的不可变镜像，只允许仍指向当前 `main` 的 workflow 进入部署，并使用 production environment 的 SSH 密钥上传。受限服务器脚本会按已部署源码清单清理退役文件（生产 `.env`、SQLite、备份、回滚状态和 TURN 私密配置不在清理范围），再完成 SQLite 发布前备份、精确 release ready 检查和 Nginx 原子切换。新版本先处于 pending；GitHub Runner 实际请求公网 CSS、启动脚本、Service Worker、哈希 JS 与 WASM，并确认退役 HTML 入口直接返回 404。全部通过后才 finalize 并释放回滚快照；任一步失败都会恢复上一 Rust 镜像、数据库和入口配置。
+`main` 分支的生产 workflow 会在 GitHub Runner 构建带提交标识的不可变镜像，只允许仍指向当前 `main` 的 workflow 进入部署，并使用 production environment 的 SSH 密钥上传。受限服务器脚本会按已部署源码清单清理退役文件（生产 `.env`、SQLite、备份、回滚状态和 TURN 私密配置不在清理范围），再完成 SQLite 发布前备份、精确 release ready 检查和 Nginx 原子切换。新版本先处于 pending；GitHub Runner 实际请求公网 CSS、启动脚本、Service Worker、哈希 JS 与 WASM，并确认退役 HTML 入口直接返回 404。全部通过后才 finalize 并释放回滚快照。
+
+stage 通过绑定 operation ID、版本和 helper 协议的后台 supervisor 调用固定 sudo wrapper，SSH 断线后仍可重连等待，全局锁冲突不会进入并发回滚。pending 会分别记录“容器可能已切换”和“数据库已恢复”阶段：容器切换前失败不停止旧容器、不回放数据库；完整回滚先在同盘预制并校验 SQLite，再隔离主库与 WAL/SHM 后替换，重试不会重复覆盖恢复后的新写入。首次迁移旧单阶段 helper 时还会校验线上提交与宿主机文件、保存真实 Compose/Nginx pre-image，并绑定该次操作的精确数据库备份路径。未知、混合或锁冲突状态按失败关闭，工件只在 finalize 或明确回滚成功后清理。
 
 ## 构建、启动与验收
 
