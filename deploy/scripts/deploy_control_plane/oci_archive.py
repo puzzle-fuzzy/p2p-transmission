@@ -144,8 +144,8 @@ def validate_oci_image_layout(
     config_digest: str,
     config_size: int,
     repositories_target: str,
-) -> None:
-    """Require Docker and OCI metadata to describe the same one tagged image."""
+) -> str:
+    """Require matching Docker/OCI metadata and return the OCI manifest digest."""
 
     if set(docker_image) != {"Config", "RepoTags", "Layers", "LayerSources"}:
         raise SystemExit("Docker image archive manifest entry is ambiguous")
@@ -270,3 +270,5 @@ def validate_oci_image_layout(
         raise SystemExit("Docker image archive LayerSources contains an unexpected layer")
     if repositories_target != _blob_digest(docker_layers[-1], "top Docker layer"):
         raise SystemExit("Docker repositories metadata does not match the top image layer")
+
+    return f"sha256:{manifest_digest}"

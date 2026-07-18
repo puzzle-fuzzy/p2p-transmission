@@ -167,6 +167,30 @@ def modern_entries(
     return entries
 
 
+def default_manifest_id() -> str:
+    entries = modern_entries()
+    index_payload = next(
+        payload for member, payload in entries if member.name == "index.json"
+    )
+    assert index_payload is not None
+    index = json.loads(index_payload)
+    return index["manifests"][0]["digest"]
+
+
+EXPECTED_MANIFEST_ID = default_manifest_id()
+
+
+def default_index_id() -> str:
+    index_payload = next(
+        payload for member, payload in modern_entries() if member.name == "index.json"
+    )
+    assert index_payload is not None
+    return f"sha256:{hashlib.sha256(index_payload).hexdigest()}"
+
+
+UNACCEPTED_INDEX_ID = default_index_id()
+
+
 def replace_payload(
     entries: list[tuple[tarfile.TarInfo, bytes | None]],
     name: str,
@@ -177,24 +201,36 @@ def replace_payload(
 
 
 class DockerImageArchiveTests(unittest.TestCase):
-    def test_accepts_current_docker_save_layout_and_binds_load_to_config_digest(self) -> None:
+    def test_accepts_current_docker_save_layout_and_binds_load_to_verified_identities(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / "image.tar.gz"
             write_archive(archive, modern_entries())
 
             self.assertEqual(
                 docker_archive.inspect_docker_image_archive(archive, EXPECTED_IMAGE),
-                EXPECTED_IMAGE_ID,
+                docker_archive.DockerImageIdentities(
+                    config_id=EXPECTED_IMAGE_ID,
+                    manifest_id=EXPECTED_MANIFEST_ID,
+                ),
             )
-            with (
-                patch.object(docker_archive, "run") as run,
-                patch.object(docker_archive, "image_id", return_value=EXPECTED_IMAGE_ID),
-            ):
-                self.assertEqual(
-                    docker_archive.load_verified_docker_image_archive(archive, EXPECTED_IMAGE),
-                    EXPECTED_IMAGE_ID,
-                )
-            run.assert_called_once_with(["docker", "load", "--input", str(archive)])
+            for backend, actual_image_id in {
+                "classic": EXPECTED_IMAGE_ID,
+                "containerd": EXPECTED_MANIFEST_ID,
+            }.items():
+                with (
+                    self.subTest(backend=backend),
+                    patch.object(docker_archive, "run") as run,
+                    patch.object(docker_archive, "image_id", return_value=actual_image_id),
+                ):
+                    self.assertEqual(
+                        docker_archive.load_verified_docker_image_archive(
+                            archive, EXPECTED_IMAGE
+                        ),
+                        actual_image_id,
+                    )
+                    run.assert_called_once_with(
+                        ["docker", "load", "--input", str(archive)]
+                    )
 
     def test_rejects_incomplete_or_ambiguous_metadata_before_load(self) -> None:
         cases: dict[str, list[tuple[tarfile.TarInfo, bytes | None]]] = {}
@@ -316,18 +352,33 @@ class DockerImageArchiveTests(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     docker_archive.inspect_docker_image_archive(archive, EXPECTED_IMAGE)
 
-    def test_preexisting_tag_cannot_hide_a_failed_or_wrong_load(self) -> None:
+    def test_rejects_every_unverified_identity_after_load(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / "image.tar.gz"
             write_archive(archive, modern_entries())
-            preexisting_image_id = f'sha256:{"f" * 64}'
-            with (
-                patch.object(docker_archive, "run") as run,
-                patch.object(docker_archive, "image_id", return_value=preexisting_image_id),
-                self.assertRaisesRegex(SystemExit, "identity mismatch"),
-            ):
-                docker_archive.load_verified_docker_image_archive(archive, EXPECTED_IMAGE)
-            run.assert_called_once()
+            for label, actual_image_id in {
+                "OCI index": UNACCEPTED_INDEX_ID,
+                "unrelated image": f'sha256:{"f" * 64}',
+                "missing image": None,
+            }.items():
+                with (
+                    self.subTest(label=label),
+                    patch.object(docker_archive, "run") as run,
+                    patch.object(
+                        docker_archive,
+                        "image_id",
+                        return_value=actual_image_id,
+                    ),
+                    self.assertRaisesRegex(
+                        SystemExit,
+                        rf"expected config {EXPECTED_IMAGE_ID} or manifest {EXPECTED_MANIFEST_ID}",
+                    ),
+                ):
+                    docker_archive.load_verified_docker_image_archive(
+                        archive,
+                        EXPECTED_IMAGE,
+                    )
+                run.assert_called_once()
 
 
 if __name__ == "__main__":

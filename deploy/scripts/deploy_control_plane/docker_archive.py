@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import tarfile
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from .common import image_id, run
@@ -15,6 +16,18 @@ MAX_DOCKER_ARCHIVE_MEMBERS = 4096
 MAX_DOCKER_MANIFEST_BYTES = 1024 * 1024
 MAX_DOCKER_CONFIG_BYTES = 16 * 1024 * 1024
 MAX_DOCKER_REPOSITORIES_BYTES = 1024 * 1024
+
+
+@dataclass(frozen=True, slots=True)
+class DockerImageIdentities:
+    """Immutable image IDs accepted from Docker's classic and containerd stores."""
+
+    config_id: str
+    manifest_id: str
+
+    @property
+    def accepted_ids(self) -> tuple[str, str]:
+        return (self.config_id, self.manifest_id)
 
 
 def normalize_docker_archive_member_name(member: tarfile.TarInfo) -> str:
@@ -131,8 +144,11 @@ def validate_docker_repositories_metadata(
     return repositories[repository][tag]
 
 
-def inspect_docker_image_archive(image_archive: Path, expected_image: str) -> str:
-    """Validate a Docker save archive and return its immutable image ID."""
+def inspect_docker_image_archive(
+    image_archive: Path,
+    expected_image: str,
+) -> DockerImageIdentities:
+    """Validate a Docker save archive and return both verified immutable image IDs."""
 
     members: dict[str, tarfile.TarInfo] = {}
     try:
@@ -214,7 +230,7 @@ def inspect_docker_image_archive(image_archive: Path, expected_image: str) -> st
                 members['repositories'],
                 expected_image,
             )
-            validate_oci_image_layout(
+            manifest_id = validate_oci_image_layout(
                 archive,
                 members,
                 expected_image,
@@ -229,16 +245,22 @@ def inspect_docker_image_archive(image_archive: Path, expected_image: str) -> st
     except (OSError, tarfile.TarError, EOFError) as error:
         raise SystemExit(f'cannot inspect Docker image archive: {error}') from error
 
-    return f'sha256:{config_digest}'
+    return DockerImageIdentities(
+        config_id=f'sha256:{config_digest}',
+        manifest_id=manifest_id,
+    )
 
 
 def load_verified_docker_image_archive(image_archive: Path, expected_image: str) -> str:
-    expected_image_id = inspect_docker_image_archive(image_archive, expected_image)
+    expected_identities = inspect_docker_image_archive(image_archive, expected_image)
     run(['docker', 'load', '--input', str(image_archive)])
     actual_image_id = image_id(expected_image)
-    if actual_image_id != expected_image_id:
+    if actual_image_id not in expected_identities.accepted_ids:
         raise SystemExit(
             f'loaded Docker image identity mismatch for {expected_image}: '
-            f'expected {expected_image_id}, got {actual_image_id or "missing"}'
+            f'expected config {expected_identities.config_id} or '
+            f'manifest {expected_identities.manifest_id}, '
+            f'got {actual_image_id or "missing"}'
         )
-    return expected_image_id
+    assert actual_image_id is not None
+    return actual_image_id
