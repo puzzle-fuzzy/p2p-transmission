@@ -6,9 +6,9 @@ import hashlib
 import json
 import tarfile
 from pathlib import Path, PurePosixPath
-from typing import Optional
 
 from .common import image_id, run
+from .oci_archive import validate_oci_image_layout
 
 
 MAX_DOCKER_ARCHIVE_MEMBERS = 4096
@@ -36,7 +36,11 @@ def normalize_docker_archive_member_name(member: tarfile.TarInfo) -> str:
         or path.as_posix() != name
     ):
         raise SystemExit(f'Docker image archive member name is unsafe: {raw_name!r}')
-    if not (member.isfile() or member.isdir()) or getattr(member, 'sparse', None):
+    if (
+        not (member.isfile() or member.isdir())
+        or (member.isdir() and member.size != 0)
+        or getattr(member, 'sparse', None)
+    ):
         raise SystemExit(f'Docker image archive member is not a regular file or directory: {name}')
     return name
 
@@ -71,11 +75,16 @@ def docker_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
+def reject_docker_json_constant(value: str) -> object:
+    raise ValueError(f'non-finite JSON number: {value}')
+
+
 def parse_docker_archive_json(payload: bytes, label: str) -> object:
     try:
         return json.loads(
             payload.decode('utf-8'),
             object_pairs_hook=docker_json_object,
+            parse_constant=reject_docker_json_constant,
         )
     except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as error:
         raise SystemExit(f'Docker image archive {label} is invalid JSON: {error}') from error
@@ -83,11 +92,7 @@ def parse_docker_archive_json(payload: bytes, label: str) -> object:
 
 def docker_config_digest(config_name: str) -> str:
     parts = PurePosixPath(config_name).parts
-    digest: Optional[str] = None
-    if len(parts) == 1 and parts[0].endswith('.json'):
-        digest = parts[0][:-5]
-    elif len(parts) == 3 and parts[:2] == ('blobs', 'sha256'):
-        digest = parts[2]
+    digest = parts[2] if len(parts) == 3 and parts[:2] == ('blobs', 'sha256') else None
     if (
         digest is None
         or len(digest) != 64
@@ -101,7 +106,7 @@ def validate_docker_repositories_metadata(
     archive: tarfile.TarFile,
     member: tarfile.TarInfo,
     expected_image: str,
-) -> None:
+) -> str:
     payload = read_docker_archive_member(
         archive,
         member,
@@ -123,6 +128,7 @@ def validate_docker_repositories_metadata(
         raise SystemExit(
             'Docker image archive repositories metadata contains an unexpected image or tag'
         )
+    return repositories[repository][tag]
 
 
 def inspect_docker_image_archive(image_archive: Path, expected_image: str) -> str:
@@ -142,9 +148,10 @@ def inspect_docker_image_archive(image_archive: Path, expected_image: str) -> st
             manifest_member = members.get('manifest.json')
             if manifest_member is None:
                 raise SystemExit('Docker image archive manifest.json is missing')
-            if 'index.json' in members or 'oci-layout' in members:
+            required_metadata = {'manifest.json', 'repositories', 'index.json', 'oci-layout'}
+            if not required_metadata.issubset(members):
                 raise SystemExit(
-                    'Docker image archive must not mix Docker and OCI image indexes'
+                    'Docker image archive must use the complete modern Docker and OCI layout'
                 )
             manifest_payload = read_docker_archive_member(
                 archive,
@@ -188,6 +195,7 @@ def inspect_docker_image_archive(image_archive: Path, expected_image: str) -> st
             actual_config_digest = hashlib.sha256(config_payload).hexdigest()
             if actual_config_digest != config_digest:
                 raise SystemExit('Docker image archive Config digest does not match its filename')
+            config = parse_docker_archive_json(config_payload, 'Config')
 
             layers = image.get('Layers')
             if (
@@ -201,13 +209,21 @@ def inspect_docker_image_archive(image_archive: Path, expected_image: str) -> st
                 if layer_member is None or not layer_member.isfile():
                     raise SystemExit(f'Docker image archive layer is missing or unsafe: {layer!r}')
 
-            repositories_member = members.get('repositories')
-            if repositories_member is not None:
-                validate_docker_repositories_metadata(
-                    archive,
-                    repositories_member,
-                    expected_image,
-                )
+            repositories_target = validate_docker_repositories_metadata(
+                archive,
+                members['repositories'],
+                expected_image,
+            )
+            validate_oci_image_layout(
+                archive,
+                members,
+                expected_image,
+                image,
+                config,
+                config_digest,
+                len(config_payload),
+                repositories_target,
+            )
     except SystemExit:
         raise
     except (OSError, tarfile.TarError, EOFError) as error:

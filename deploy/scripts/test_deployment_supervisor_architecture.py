@@ -10,6 +10,7 @@ PACKAGE_ROOT = SCRIPTS_ROOT / 'deployment_supervisor'
 MODULE_LIMITS = {
     '__init__.py': 20,
     'cli.py': 150,
+    'diagnostics.py': 150,
     'monitor.py': 250,
     # This boundary intentionally keeps owned-file I/O and POSIX flock checks together.
     'security.py': 400,
@@ -22,12 +23,14 @@ ALLOWED_INTERNAL_IMPORTS = {
     'security.py': {'state'},
     'worker.py': {'security', 'state'},
     'monitor.py': {'security', 'state'},
-    'cli.py': {'monitor', 'state', 'worker'},
+    'cli.py': {'diagnostics', 'monitor', 'state', 'worker'},
+    'diagnostics.py': {'security', 'state'},
 }
 SPLIT_TEST_FILES = {
     'test_deployment_supervisor_architecture.py',
     'test_deployment_supervisor_bundle.py',
     'test_deployment_supervisor_cli.py',
+    'test_deployment_supervisor_diagnostics.py',
     'test_deployment_supervisor_monitor.py',
     'test_deployment_supervisor_security.py',
     'test_deployment_supervisor_state.py',

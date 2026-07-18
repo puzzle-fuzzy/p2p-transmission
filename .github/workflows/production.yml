@@ -398,6 +398,18 @@ jobs:
             echo "deployment state is not safely recoverable: $SUPERVISOR_STATUS" >&2
             exit 1
           fi
+          if [[ "$SUPERVISOR_STATUS" == "23" ]]; then
+            set +e
+            ssh -o BatchMode=yes -o ConnectTimeout=10 \
+              -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
+              "$DEPLOY_USER@$DEPLOY_HOST" \
+              "/usr/bin/python3 -I -B -X utf8 /tmp/$SUPERVISOR failure-log --operation-id ${{ github.sha }} --version $RELEASE_VERSION --expected-control-plane-sha256 $EXPECTED_CONTROL_PLANE_SHA256"
+            DIAGNOSTIC_STATUS=$?
+            set -e
+            if [[ "$DIAGNOSTIC_STATUS" != "0" ]]; then
+              echo "::warning title=Stage diagnostics unavailable::The sanitized worker log could not be reported (status $DIAGNOSTIC_STATUS); rollback will continue"
+            fi
+          fi
           # The supervisor has proved the stage worker ended; the fixed helper
           # can now reconcile its durable pending state without racing it.
           # shellcheck disable=SC2029

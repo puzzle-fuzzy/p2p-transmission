@@ -18,6 +18,7 @@ PACKAGE_ROOT = SCRIPTS_ROOT / 'deployment_supervisor'
 MANAGED_MODULES = {
     '__init__.py',
     'cli.py',
+    'diagnostics.py',
     'monitor.py',
     'security.py',
     'state.py',

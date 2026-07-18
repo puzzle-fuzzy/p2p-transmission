@@ -126,6 +126,13 @@ class ControlPlaneWorkflowContractTests(unittest.TestCase):
         self.assertIn('p2p-transmission-deploy-$GITHUB_SHA-operation.json', cleanup_block)
 
         rollback_block = workflow[rollback:cleanup]
+        diagnostic_start = rollback_block.index(
+            'if [[ "$SUPERVISOR_STATUS" == "23" ]]'
+        )
+        diagnostic_end = rollback_block.index(
+            '# The supervisor has proved the stage worker ended'
+        )
+        diagnostic_block = rollback_block[diagnostic_start:diagnostic_end]
         self.assertIn('--expected-control-plane-sha256', rollback_block)
         self.assertIn('[[ "$SUPERVISOR_STATUS" == "25" ]]', rollback_block)
         self.assertIn(
@@ -134,8 +141,21 @@ class ControlPlaneWorkflowContractTests(unittest.TestCase):
         )
         self.assertLess(
             rollback_block.index('wait --operation-id'),
+            rollback_block.index('failure-log --operation-id'),
+        )
+        self.assertLess(
+            rollback_block.index('failure-log --operation-id'),
             rollback_block.index('p2p-transmission-deploy rollback --version'),
         )
+        self.assertIn('[[ "$SUPERVISOR_STATUS" == "23" ]]', rollback_block)
+        self.assertIn('set +e', diagnostic_block)
+        self.assertIn('DIAGNOSTIC_STATUS=$?', diagnostic_block)
+        self.assertIn('set -e', diagnostic_block)
+        self.assertIn('Stage diagnostics unavailable', diagnostic_block)
+        self.assertIn('rollback will continue', diagnostic_block)
+        self.assertNotIn('exit ', diagnostic_block)
+        self.assertEqual(workflow.count('failure-log --operation-id'), 1)
+        self.assertNotIn('id: stage_diagnostics', workflow)
         for marker in (
             '"/usr/bin/python3 -I -B -X utf8 /tmp/$SUPERVISOR start --operation-id',
             '"/usr/bin/sudo -n /usr/local/sbin/p2p-transmission-deploy finalize',

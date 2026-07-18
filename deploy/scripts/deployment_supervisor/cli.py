@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from . import monitor, state, worker
+from . import diagnostics, monitor, state, worker
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -25,6 +25,11 @@ def build_parser() -> argparse.ArgumentParser:
     wait_parser.add_argument('--expected-control-plane-sha256', required=True)
     wait_parser.add_argument('--timeout', type=float, default=900.0)
     wait_parser.add_argument('--poll-interval', type=float, default=1.0)
+
+    failure_log_parser = subparsers.add_parser('failure-log')
+    failure_log_parser.add_argument('--operation-id', required=True)
+    failure_log_parser.add_argument('--version', required=True)
+    failure_log_parser.add_argument('--expected-control-plane-sha256', required=True)
 
     cleanup_parser = subparsers.add_parser('cleanup')
     cleanup_parser.add_argument('--operation-id', required=True)
@@ -74,6 +79,12 @@ def main(
                 arguments.expected_control_plane_sha256,
                 timeout=arguments.timeout,
                 poll_interval=arguments.poll_interval,
+            )
+        if action == 'failure-log':
+            return diagnostics.report_failure_log(
+                arguments.operation_id,
+                arguments.version,
+                arguments.expected_control_plane_sha256,
             )
         if action == 'cleanup':
             return monitor.cleanup_operation(

@@ -30,6 +30,7 @@ class ControlPlaneArchitectureTests(unittest.TestCase):
             'database.py': 400,
             'docker_archive.py': 300,
             'manifest.py': 300,
+            'oci_archive.py': 300,
             'release_state.py': 550,
             'runtime.py': 500,
         }

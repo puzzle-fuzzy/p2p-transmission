@@ -32,7 +32,7 @@ class DeploymentSupervisorBundleTests(unittest.TestCase):
                 timeout=10,
             )
             self.assertEqual(completed.returncode, 0, completed.stderr)
-            self.assertIn('{start,wait,cleanup}', completed.stdout)
+            self.assertIn('{start,wait,failure-log,cleanup}', completed.stdout)
 
 
 if __name__ == '__main__':

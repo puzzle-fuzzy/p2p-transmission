@@ -113,6 +113,7 @@ readonly -a CONTROL_PLANE_MODULES=(
   'database.py'
   'docker_archive.py'
   'manifest.py'
+  'oci_archive.py'
   'release_state.py'
   'runtime.py'
 )

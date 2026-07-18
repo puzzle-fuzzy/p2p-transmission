@@ -48,6 +48,11 @@ class DeploymentSupervisorCliTests(unittest.TestCase):
             self.assertEqual(cli.main(arguments), 17)
         run.assert_called_once_with(OPERATION_ID, VERSION, CONTROL_PLANE_SHA256, 91)
 
+    def test_failure_log_dispatch_preserves_the_report_result(self) -> None:
+        with patch.object(cli.diagnostics, 'report_failure_log', return_value=0) as report:
+            self.assertEqual(cli.main(action_arguments('failure-log')), 0)
+        report.assert_called_once_with(OPERATION_ID, VERSION, CONTROL_PLANE_SHA256)
+
     def test_supervisor_errors_are_reported_as_cli_failure(self) -> None:
         with (
             patch.object(

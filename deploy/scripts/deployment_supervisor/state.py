@@ -20,6 +20,8 @@ SHA256_RE = re.compile(r'^[0-9a-f]{64}$')
 BACKUP_READY_PREFIX = 'production database backup ready: '
 BACKUP_NOT_REQUIRED_LINE = 'production database is not present; backup is not required'
 MAX_JSON_BYTES = 64 * 1024
+MAX_WORKER_LOG_BYTES = 1024 * 1024
+MAX_DIAGNOSTIC_LOG_BYTES = 64 * 1024
 
 # Public wait classifications.  These deliberately do not overlap ordinary
 # argparse failures and do not reuse the wrapper's own exit status.
