@@ -1161,7 +1161,7 @@ html[data-p2p-room-restore="pending"] #boot-fallback .boot-room-restore {
 
 .request-file-summary span {
   margin-top: 5px;
-  color: var(--ink-muted);
+  color: var(--ink-muted-elevated);
   font-size: 0.75rem;
 }
 
