@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 from pathlib import Path
+import subprocess
 import unittest
+from unittest.mock import patch
 
 from scripts import check_coturn_config
 
@@ -47,6 +50,37 @@ def valid_compose_model() -> dict[str, object]:
 
 
 class ComposePolicyTests(unittest.TestCase):
+    def test_loader_requests_non_normalized_compose_output(self) -> None:
+        compose_file = ROOT / "deploy" / "coturn" / "compose.yml"
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps(valid_compose_model()),
+            stderr="",
+        )
+
+        with patch.object(
+            check_coturn_config.subprocess,
+            "run",
+            return_value=completed,
+        ) as run:
+            model = check_coturn_config.load_compose_model(compose_file)
+
+        self.assertEqual(model, valid_compose_model())
+        self.assertEqual(
+            run.call_args.args[0],
+            [
+                "docker",
+                "compose",
+                "-f",
+                str(compose_file),
+                "config",
+                "--no-normalize",
+                "--format",
+                "json",
+            ],
+        )
+
     def test_expected_compose_model_passes(self) -> None:
         self.assertEqual(
             check_coturn_config.validate_compose_model(valid_compose_model()),
@@ -65,13 +99,24 @@ class ComposePolicyTests(unittest.TestCase):
         self.assertTrue(any("read-only" in error for error in errors))
 
     def test_bind_mount_must_not_create_missing_secret_paths(self) -> None:
-        model = deepcopy(valid_compose_model())
-        service = model["services"]["coturn"]  # type: ignore[index]
-        service["volumes"][1]["bind"]["create_host_path"] = True  # type: ignore[index]
+        valid_model = valid_compose_model()
+        service = valid_model["services"]["coturn"]  # type: ignore[index]
 
-        errors = check_coturn_config.validate_compose_model(model)
+        for index, volume in enumerate(service["volumes"]):  # type: ignore[index]
+            with self.subTest(target=volume["target"]):
+                model = deepcopy(valid_model)
+                coturn = model["services"]["coturn"]  # type: ignore[index]
+                coturn["volumes"][index]["bind"]["create_host_path"] = True  # type: ignore[index]
 
-        self.assertTrue(any("automatic host-path" in error for error in errors))
+                errors = check_coturn_config.validate_compose_model(model)
+
+                self.assertTrue(
+                    any(
+                        volume["target"] in error
+                        and "automatic host-path" in error
+                        for error in errors
+                    )
+                )
 
 
 class TurnPolicyTests(unittest.TestCase):

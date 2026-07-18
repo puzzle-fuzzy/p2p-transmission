@@ -452,16 +452,7 @@ fn apply_realtime_effects(
                 signal,
             } => {
                 let target_scope = lease.target_scope();
-                accept_rtc_signal(
-                    runtime.model,
-                    runtime.rtc.connection,
-                    runtime.rtc.peers,
-                    runtime.rtc.config,
-                    &target_scope,
-                    from_peer_id,
-                    negotiation_id,
-                    signal,
-                );
+                accept_rtc_signal(runtime, &target_scope, from_peer_id, negotiation_id, signal);
             }
         }
     }

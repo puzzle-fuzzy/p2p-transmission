@@ -117,10 +117,7 @@ fn replay_pending_signals(mut runtime: RealtimeSessionRuntime, target_scope: &Re
     let pending = std::mem::take(&mut runtime.model.write().pending_signals);
     for pending_signal in pending {
         accept_rtc_signal(
-            runtime.model,
-            runtime.rtc.connection,
-            runtime.rtc.peers,
-            runtime.rtc.config,
+            runtime,
             target_scope,
             pending_signal.from_peer_id,
             pending_signal.negotiation_id,

@@ -196,6 +196,8 @@ class ControlPlaneRuntimeTests(unittest.TestCase):
             compose_snapshot = rollback_root / 'p2p-transmission-compose-test'
             nginx_snapshot.write_text('old nginx', encoding='utf-8')
             compose_snapshot.write_text('old compose', encoding='utf-8')
+            nginx_snapshot.chmod(0o600)
+            compose_snapshot.chmod(0o600)
             preflight = release_state.ProductionPreflight(
                 previous_env=b'P2P_IMAGE_TAG=2.0.1-old\n',
                 previous_tag='2.0.1-old',
@@ -233,8 +235,9 @@ class ControlPlaneRuntimeTests(unittest.TestCase):
             rollback_root.mkdir(parents=True)
             nginx_snapshot = rollback_root / 'p2p-transmission-nginx-test'
             compose_snapshot = rollback_root / 'p2p-transmission-compose-test'
-            nginx_snapshot.touch()
-            compose_snapshot.touch()
+            for snapshot in (nginx_snapshot, compose_snapshot):
+                snapshot.touch()
+                snapshot.chmod(0o600)
             preflight = release_state.ProductionPreflight(
                 previous_env=b'P2P_IMAGE_TAG=2.0.1-old\n',
                 previous_tag='2.0.1-old',

@@ -80,7 +80,7 @@ test('a file is transferred over the DataChannel and verified before download', 
     })).toMatchObject({
       borderBottomWidth: '0px',
       borderTopWidth: '0px',
-      progressBackground: 'rgba(94, 17, 209, 0.15)',
+      progressBackground: 'rgba(94, 17, 209, 0.22)',
     })
     await expect.poll(() => ownerFileProgress.evaluate(element => (
       getComputedStyle(element).transform

@@ -78,6 +78,7 @@ def load_compose_model(compose_file: Path) -> dict[str, object]:
         "-f",
         str(compose_file),
         "config",
+        "--no-normalize",
         "--format",
         "json",
     ]

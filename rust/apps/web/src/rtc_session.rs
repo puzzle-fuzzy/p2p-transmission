@@ -14,7 +14,7 @@ use crate::app_state::{
     TransferState,
 };
 use crate::browser_errors::{friendly_error, friendly_transfer_error};
-use crate::realtime_runtime::ScopedRtcConfig;
+use crate::realtime_runtime::{RealtimeSessionRuntime, ScopedRtcConfig};
 use crate::realtime_target::RealtimeTargetScope;
 use crate::rtc_orchestration::{
     schedule_disconnected_recovery, schedule_passive_recovery_timeout, start_rtc_offer,
@@ -230,15 +230,16 @@ pub(super) fn remove_rtc_peer(
 }
 
 pub(super) fn accept_rtc_signal(
-    mut model: Signal<AppModel>,
-    connection: Signal<Option<RealtimeConnection>>,
-    rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
-    rtc_config: Signal<Option<ScopedRtcConfig>>,
+    runtime: RealtimeSessionRuntime,
     target_scope: &RealtimeTargetScope,
     from_peer_id: String,
     negotiation_id: String,
     signal: ProtocolSignal,
 ) {
+    let mut model = runtime.model;
+    let connection = runtime.rtc.connection;
+    let rtc_peers = runtime.rtc.peers;
+    let rtc_config = runtime.rtc.config;
     let config = {
         let scoped_config = rtc_config.read();
         scoped_config
