@@ -229,6 +229,10 @@ class ControlPlaneDatabaseTests(unittest.TestCase):
             try:
                 database_ops.PRODUCTION_DATABASE.parent.mkdir(parents=True)
                 with closing(sqlite3.connect(database_ops.PRODUCTION_DATABASE)) as database:
+                    self.assertEqual(
+                        database.execute('PRAGMA journal_mode=WAL').fetchone(),
+                        ('wal',),
+                    )
                     database.execute('CREATE TABLE rooms (code TEXT PRIMARY KEY)')
                     database.execute('INSERT INTO rooms VALUES (?)', ('ABC123',))
                     database.commit()
@@ -253,6 +257,10 @@ class ControlPlaneDatabaseTests(unittest.TestCase):
                 self.assertEqual(Path(published), backup)
                 with closing(sqlite3.connect(backup)) as database:
                     self.assertEqual(
+                        database.execute('PRAGMA journal_mode').fetchone(),
+                        ('delete',),
+                    )
+                    self.assertEqual(
                         database.execute('SELECT code FROM rooms').fetchall(),
                         [('ABC123',)],
                     )
@@ -261,8 +269,10 @@ class ControlPlaneDatabaseTests(unittest.TestCase):
                     common.DATABASE_BACKUP_LIMIT,
                 )
                 self.assertFalse(
-                    list(database_ops.PRODUCTION_BACKUPS.glob('.control-*.backup-*.tmp'))
+                    list(database_ops.PRODUCTION_BACKUPS.glob('.control-*.backup-*.tmp*'))
                 )
+                self.assertFalse(Path(f'{backup}-wal').exists())
+                self.assertFalse(Path(f'{backup}-shm').exists())
             finally:
                 (
                     database_ops.APP_DIR,
@@ -363,12 +373,24 @@ class ControlPlaneDatabaseTests(unittest.TestCase):
             root = Path(directory)
             source = root / 'source.sqlite3'
             destination = root / 'restored/control.sqlite3'
+            prepared = destination.parent / '.control.sqlite3.restore-test'
             with closing(sqlite3.connect(source)) as database:
+                self.assertEqual(
+                    database.execute('PRAGMA journal_mode=WAL').fetchone(),
+                    ('wal',),
+                )
                 database.execute('CREATE TABLE rooms (code TEXT PRIMARY KEY)')
                 database.execute('INSERT INTO rooms VALUES (?)', ('RESTORED',))
                 database.commit()
 
-            database_ops.copy_sqlite_database(source, destination)
+            database_ops.copy_sqlite_database(source, prepared)
+            database_ops.verify_sqlite_database(prepared)
+            with closing(sqlite3.connect(prepared)) as database:
+                self.assertEqual(
+                    database.execute('PRAGMA journal_mode').fetchone(),
+                    ('delete',),
+                )
+            os.replace(prepared, destination)
 
             with closing(sqlite3.connect(destination)) as database:
                 self.assertEqual(
@@ -376,6 +398,7 @@ class ControlPlaneDatabaseTests(unittest.TestCase):
                     ('RESTORED',),
                 )
             database_ops.verify_sqlite_database(destination)
+            self.assertFalse(database_ops.database_restore_recovery_artifacts(destination))
 
     def test_refuses_to_overwrite_database_outside_explicit_rollback(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

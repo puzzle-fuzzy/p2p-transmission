@@ -41,6 +41,22 @@ def verify_sqlite_database(path: Path) -> None:
     if result != ('ok',):
         raise SystemExit(f'SQLite quick_check failed for {path}: {result!r}')
 
+def materialize_sqlite_snapshot(database: sqlite3.Connection) -> None:
+    """Make an online backup self-contained before publishing its main file."""
+
+    journal_mode = database.execute('PRAGMA journal_mode=DELETE').fetchone()
+    if journal_mode != ('delete',):
+        raise sqlite3.DatabaseError(
+            f'failed to materialize SQLite snapshot journal mode: {journal_mode!r}'
+        )
+    result = database.execute('PRAGMA quick_check').fetchone()
+    if result != ('ok',):
+        raise sqlite3.DatabaseError(f'quick_check failed: {result!r}')
+
+def remove_sqlite_sidecars(database: Path) -> None:
+    for suffix in ('-wal', '-shm'):
+        Path(f'{database}{suffix}').unlink(missing_ok=True)
+
 def copy_sqlite_database(source: Path, destination: Path, *, overwrite: bool = False) -> None:
     """Copy a consistent SQLite snapshot into an atomically replaced file."""
 
@@ -57,14 +73,13 @@ def copy_sqlite_database(source: Path, destination: Path, *, overwrite: bool = F
         with closing(sqlite3.connect(source_uri, uri=True, timeout=30.0)) as source_db:
             with closing(sqlite3.connect(temporary, timeout=30.0)) as target_db:
                 source_db.backup(target_db)
-                result = target_db.execute('PRAGMA quick_check').fetchone()
-                if result != ('ok',):
-                    raise sqlite3.DatabaseError(f'quick_check failed: {result!r}')
+                materialize_sqlite_snapshot(target_db)
         os.chmod(temporary, 0o600)
         set_data_owner(temporary)
         os.replace(temporary, destination)
     except (OSError, sqlite3.Error) as error:
         temporary.unlink(missing_ok=True)
+        remove_sqlite_sidecars(temporary)
         raise SystemExit(f'SQLite copy failed from {source} to {destination}: {error}') from error
 
 def production_database_runtime_files() -> tuple[Path, Path, Path]:
@@ -268,9 +283,7 @@ def backup_production_database(version: str) -> Optional[Path]:
         with closing(sqlite3.connect(source_uri, uri=True, timeout=30.0)) as source:
             with closing(sqlite3.connect(temporary, timeout=30.0)) as target:
                 source.backup(target)
-                result = target.execute('PRAGMA quick_check').fetchone()
-                if result != ('ok',):
-                    raise sqlite3.DatabaseError(f'backup quick_check failed: {result!r}')
+                materialize_sqlite_snapshot(target)
         os.chmod(temporary, 0o600)
         fsync_file(temporary)
         os.replace(temporary, destination)
@@ -284,6 +297,7 @@ def backup_production_database(version: str) -> Optional[Path]:
                 pass
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+            remove_sqlite_sidecars(temporary)
         destination.unlink(missing_ok=True)
         raise SystemExit(f'production database backup failed: {error}') from error
 
