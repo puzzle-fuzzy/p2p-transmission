@@ -10,6 +10,7 @@ import { Buffer } from 'node:buffer'
 import { readFile } from 'node:fs/promises'
 
 import { connectSingleReceiverRoom } from './room.helper'
+import { useFileInputFallback } from './transfer.helper'
 
 interface RelayStateSummary {
   candidateTypes: string[]
@@ -171,7 +172,10 @@ async function verifyPublicTransfer({
 
   try {
     try {
-      await connectSingleReceiverRoom(owner, receiver, { readyTimeout: 30_000 })
+      await connectSingleReceiverRoom(owner, receiver, {
+        beforeOwnerNavigation: useFileInputFallback,
+        readyTimeout: 30_000,
+      })
     } catch (error) {
       if (relayOnly) {
         await testInfo.attach('relay-state.json', {
