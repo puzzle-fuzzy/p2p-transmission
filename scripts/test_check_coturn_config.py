@@ -50,7 +50,7 @@ def valid_compose_model() -> dict[str, object]:
 
 
 class ComposePolicyTests(unittest.TestCase):
-    def test_loader_requests_non_normalized_compose_output(self) -> None:
+    def test_loader_requests_compose_json_output(self) -> None:
         compose_file = ROOT / "deploy" / "coturn" / "compose.yml"
         completed = subprocess.CompletedProcess(
             args=[],
@@ -75,7 +75,6 @@ class ComposePolicyTests(unittest.TestCase):
                 "-f",
                 str(compose_file),
                 "config",
-                "--no-normalize",
                 "--format",
                 "json",
             ],
@@ -85,6 +84,41 @@ class ComposePolicyTests(unittest.TestCase):
         self.assertEqual(
             check_coturn_config.validate_compose_model(valid_compose_model()),
             [],
+        )
+
+    def test_compose_model_may_omit_false_bind_default(self) -> None:
+        model = valid_compose_model()
+        service = model["services"]["coturn"]  # type: ignore[index]
+        for volume in service["volumes"]:  # type: ignore[index]
+            volume.pop("bind")
+
+        self.assertEqual(check_coturn_config.validate_compose_model(model), [])
+
+    def test_checked_in_source_requires_explicit_false_bind_policy(self) -> None:
+        source = (ROOT / "deploy" / "coturn" / "compose.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(check_coturn_config.validate_compose_source(source), [])
+
+        for replacement in ("create_host_path: true", "create_host_paths: false"):
+            with self.subTest(replacement=replacement):
+                invalid = source.replace("create_host_path: false", replacement, 1)
+                errors = check_coturn_config.validate_compose_source(invalid)
+                self.assertTrue(
+                    any(
+                        check_coturn_config.TURN_CONFIG_TARGET in error
+                        for error in errors
+                    )
+                )
+
+        wrong_target = source.replace(
+            f"target: {check_coturn_config.TURN_CONFIG_TARGET}",
+            "target: /etc/coturn/wrong.conf",
+            1,
+        )
+        errors = check_coturn_config.validate_compose_source(wrong_target)
+        self.assertTrue(
+            any(check_coturn_config.TURN_CONFIG_TARGET in error for error in errors)
         )
 
     def test_mutable_image_and_writable_secret_mount_fail(self) -> None:

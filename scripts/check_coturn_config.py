@@ -78,7 +78,6 @@ def load_compose_model(compose_file: Path) -> dict[str, object]:
         "-f",
         str(compose_file),
         "config",
-        "--no-normalize",
         "--format",
         "json",
     ]
@@ -102,6 +101,117 @@ def load_compose_model(compose_file: Path) -> dict[str, object]:
     if not isinstance(model, dict):
         raise ConfigurationError("docker compose config must return a JSON object")
     return model
+
+
+def _named_yaml_block(
+    lines: list[tuple[int, str]],
+    start: int,
+    end: int,
+    name: str,
+) -> tuple[int, int] | None:
+    """Locate a direct mapping child in the small, checked-in Compose subset."""
+    if start >= end:
+        return None
+    direct_indent = min(indent for indent, _ in lines[start:end])
+    matches = [
+        index
+        for index in range(start, end)
+        if lines[index] == (direct_indent, f"{name}:")
+    ]
+    if len(matches) != 1:
+        return None
+    key_index = matches[0]
+    block_end = next(
+        (
+            index
+            for index in range(key_index + 1, end)
+            if lines[index][0] <= direct_indent
+        ),
+        end,
+    )
+    return key_index + 1, block_end
+
+
+def validate_compose_source(text: str) -> list[str]:
+    """Require fail-closed bind options from source YAML.
+
+    Some Compose releases omit an explicit boolean ``false`` while serializing
+    the config model. Compose still validates the full model; this narrow source
+    pass independently proves that each protected coturn mount opts out of
+    automatic host-path creation.
+    """
+    if "\t" in text:
+        return ["Compose source must use spaces for indentation"]
+    lines = []
+    for raw_line in text.splitlines():
+        content = raw_line.split("#", 1)[0].rstrip()
+        if not content.strip():
+            continue
+        lines.append((len(content) - len(content.lstrip(" ")), content.strip()))
+
+    block: tuple[int, int] | None = (0, len(lines))
+    for name in ("services", "coturn", "volumes"):
+        if block is None:
+            break
+        block = _named_yaml_block(lines, *block, name)
+    if block is None:
+        return ["Compose source must define services.coturn.volumes as a mapping list"]
+
+    start, end = block
+    if start >= end:
+        return ["Compose source coturn volumes list is empty"]
+    item_indent = min(indent for indent, _ in lines[start:end])
+    item_starts = [
+        index
+        for index in range(start, end)
+        if lines[index][0] == item_indent and lines[index][1].startswith("- ")
+    ]
+    policies: dict[str, list[bool]] = {}
+    for position, item_start in enumerate(item_starts):
+        item_end = item_starts[position + 1] if position + 1 < len(item_starts) else end
+        first = lines[item_start][1][2:].strip()
+        if first != "type: bind":
+            continue
+        body = lines[item_start + 1 : item_end]
+        if not body:
+            continue
+        property_indent = min(indent for indent, _ in body)
+        target_values = [
+            content.removeprefix("target:").strip()
+            for indent, content in body
+            if indent == property_indent and content.startswith("target:")
+        ]
+        bind_indices = [
+            index
+            for index in range(item_start + 1, item_end)
+            if lines[index] == (property_indent, "bind:")
+        ]
+        if len(target_values) != 1:
+            continue
+        create_values: list[str] = []
+        if len(bind_indices) == 1:
+            bind_index = bind_indices[0]
+            bind_end = next(
+                (
+                    index
+                    for index in range(bind_index + 1, item_end)
+                    if lines[index][0] <= property_indent
+                ),
+                item_end,
+            )
+            create_values = [
+                content.removeprefix("create_host_path:").strip()
+                for indent, content in lines[bind_index + 1 : bind_end]
+                if indent > property_indent
+                and content.startswith("create_host_path:")
+            ]
+        policies.setdefault(target_values[0], []).append(create_values == ["false"])
+
+    return [
+        f"{target} must explicitly set bind.create_host_path to false in Compose source"
+        for target in REQUIRED_VOLUME_SOURCES
+        if policies.get(target) != [True]
+    ]
 
 
 def validate_compose_model(model: dict[str, object]) -> list[str]:
@@ -143,7 +253,11 @@ def validate_compose_model(model: dict[str, object]) -> list[str]:
         if volume.get("read_only") is not True:
             errors.append(f"{target} bind mount must be read-only")
         bind = volume.get("bind")
-        if not isinstance(bind, dict) or bind.get("create_host_path") is not False:
+        if (
+            isinstance(bind, dict)
+            and bind.get("create_host_path") is not None
+            and bind.get("create_host_path") is not False
+        ):
             errors.append(f"{target} must disable automatic host-path creation")
     return errors
 
@@ -238,6 +352,11 @@ def validate_turn_config(text: str) -> list[str]:
 def check(compose_file: Path, turn_config: Path) -> list[str]:
     model = load_compose_model(compose_file)
     errors = validate_compose_model(model)
+    try:
+        compose_text = compose_file.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ConfigurationError(f"unable to read {compose_file}: {error}") from error
+    errors.extend(validate_compose_source(compose_text))
     try:
         config_text = turn_config.read_text(encoding="utf-8")
     except OSError as error:
