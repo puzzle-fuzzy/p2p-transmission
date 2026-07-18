@@ -17,28 +17,44 @@ cargo audit --deny warnings
 
 ## 准备生产环境
 
-服务器需要 Docker Engine、Compose plugin、HTTPS 反向代理和可用的 coturn。先准备配置和数据目录：
+服务器需要 Docker Engine、Compose plugin、HTTPS 反向代理、Python 3、OpenSSH server、`sudo` 和可用的 coturn。首次建机不要手工创建宽权限部署账户；从可信、已核对 commit 且无 tracked 修改的 checkout 执行固定 bootstrap：
 
 ```bash
-cp deploy/production/.env.example deploy/production/.env
-mkdir -p deploy/production/data
-sudo chown 10001:10001 deploy/production/data
-chmod 700 deploy/production/data
-chmod 600 deploy/production/.env
+sudo bash deploy/production/bootstrap-host.sh \
+  --source-root "$PWD" \
+  --authorized-key-file /root/p2p-deploy.pub
+sudo bash deploy/production/bootstrap-host.sh --source-root "$PWD" --check
 ```
 
-必须替换 `.env` 中的域名与两个密钥。可分别使用 `openssl rand -base64 48` 生成 `P2P_CAPABILITY_SECRET` 和 coturn 共享密钥。安全约束如下：
+bootstrap 固定创建无额外组、锁定密码的 `p2p-deploy`，安装 root-owned `/opt/p2p-transmission`、`/usr/local/sbin/p2p-transmission-deploy`，以及同时包含入口和 `deploy_control_plane` 的版本化只读控制面，并只通过 sudoers 放行五个明确操作。`/usr/local/libexec/p2p-transmission/current` 是入口与模块唯一的原子切换点；bootstrap 自身使用只读安全 `PATH`，wrapper 先把 `current` 固化成摘要目录内的物理入口，再通过绝对路径 `/usr/bin/env -i` 清空 sudo 调用者环境、固定安全 `PATH`/locale，并以 Python isolated mode 启动，因此不会跨版本混装，也不会从 release tree、cwd 或 `PYTHONPATH` 加载控制面。bootstrap 只接受完整父路径、消费文件及整个 `.git` 都由 root 控制、没有 tracked/untracked/ignored 漂移的专用新鲜 checkout，随后把 `git archive HEAD` 固化到 root-only 快照；外部公钥也先经父路径与 `O_NOFOLLOW` inode 校验复制一次，后续不再读取调用者路径。源码归档不能覆盖 `.env`/数据库/备份/回滚状态，Compose 与 Nginx 还必须匹配控制面批准的 SHA-256。所有会改变生产状态的操作由 root-owned 文件锁串行化；若进程被 OOM、SIGKILL 或重启中断，下一次发布、回滚或维护会严格校验并回收残留的 root 私有工件快照。SSH Match policy 和公钥的 `restrict` 选项关闭密码、TTY、agent/X11/TCP/Unix socket 转发与 tunnel，但保留 workflow 所需的远程命令和 SFTP/SCP。脚本拒绝非 root；绝不能从线上 `/opt/p2p-transmission` 执行它。脚本不 reload sshd，管理员必须保持控制台会话，在 `sshd -t` 后 reload 实际的 `ssh`/`sshd` 服务，并从第二终端完成 key-only SSH、SCP 和 sudoers 查询。
+
+部署 key 是应用发布高权限 secret：它可以替换受沙箱约束的应用镜像并影响应用数据，但不能更新固定控制面或宿主机 Compose/Nginx 约束。稳定入口、任一控制面模块、Compose 或 Nginx 变化时，必须先从待发布 commit 的可信 checkout 重新运行 bootstrap；存在 `deploy/production/rollback/pending.json` 时必须先 finalize 或 rollback，bootstrap 在同一全局锁内拒绝让一次发布跨越两套控制面。Production workflow 会在 stage 前校验入口和所有模块的确定性 SHA 清单摘要，不一致即安全停止。
+
+必须替换 `/opt/p2p-transmission/deploy/production/.env` 中的域名与两个密钥。可分别使用 `openssl rand -base64 48` 生成 `P2P_CAPABILITY_SECRET` 和 coturn 共享密钥。安全约束如下：
 
 - `P2P_ALLOWED_ORIGINS` 使用完整、精确的公网 HTTPS origin，不带路径。
 - HTTPS 环境必须保持 `P2P_SECURE_COOKIES=true`；Compose 已固定该值。
 - `P2P_TURN_URLS` 与 `P2P_TURN_SECRET` 必须成对配置，并与 coturn 一致。
 - 不要把 `.env`、SQLite、证书或 TURN 密钥提交到 Git。
 
+第一次自动发布之前，以 bootstrap 播种的目标 commit 在 `/opt/p2p-transmission` 手工构建并启动一个健康基线。自动 stage 需要已有不可变镜像、Compose/Nginx pre-image 和数据库备份点，不能把没有回滚基线的空主机当作普通更新目标。
+
+GitHub `production` environment 必须仅在 environment 范围保存四个 secrets：
+
+- `TENCENT_HOST`：workflow 实际连接的域名或 IP。
+- `TENCENT_DEPLOY_USER`：固定为 `p2p-deploy`。
+- `TENCENT_SSH_PRIVATE_KEY_B64`：专用 Ed25519 私钥原始字节的单行 Base64。
+- `TENCENT_SSH_KNOWN_HOSTS`：与 `TENCENT_HOST` 字段匹配、已核验的 Ed25519 host key 完整行。
+
+`ssh-keyscan` 只能采集 key，不能建立信任。必须分别在云控制台对 `/etc/ssh/ssh_host_ed25519_key.pub`、在可信工作站对采集结果执行 `ssh-keygen -lf`，确认 SHA256 指纹完全一致后再写入 `TENCENT_SSH_KNOWN_HOSTS`。不得把私钥、未经核验的 keyscan 输出或线上 secret 写进仓库和 Actions 日志。完整首轮初始化、第二会话验证和换机顺序见 [`deploy/README.md`](../../deploy/README.md)。
+
 正式环境使用 [`p2p.yxswy.com.conf`](../../deploy/production/nginx/p2p.yxswy.com.conf) 配置 HTTPS/WSS 反向代理。文件正文使用 WebRTC，不需要放大 HTTP 请求体限制；控制 WebSocket 需要保留 Upgrade 头和长连接超时。
 
-`main` 分支的生产 workflow 会在 GitHub Runner 构建带提交标识的不可变镜像，只允许仍指向当前 `main` 的 workflow 进入部署，并使用 production environment 的 SSH 密钥上传。受限服务器脚本会按已部署源码清单清理退役文件（生产 `.env`、SQLite、备份、回滚状态和 TURN 私密配置不在清理范围），再完成 SQLite 发布前备份、精确 release ready 检查和 Nginx 原子切换。新版本先处于 pending；GitHub Runner 实际请求公网 CSS、启动脚本、Service Worker、哈希 JS 与 WASM，并确认退役 HTML 入口直接返回 404。全部通过后才 finalize 并释放回滚快照。
+`main` 分支的生产 workflow 将所有 Actions 固定到完整 commit SHA，在 GitHub Runner 构建带提交标识的不可变镜像，只允许仍指向当前 `main` 的 workflow 进入部署，并使用 production environment 的 SSH 密钥上传。受限服务器脚本先核对固定控制面、归档保护边界与磁盘峰值，再按已部署源码清单清理退役文件，完成 SQLite 发布前备份、精确 release ready 检查和 Nginx 原子切换。新版本先处于 pending；GitHub Runner 实际请求公网壳资源并确认退役入口 404，再完成真实 WSS 与强制 TURN relay 文件传输。全部通过后才 finalize 并释放回滚快照。
 
-stage 通过绑定 operation ID、版本和 helper 协议的后台 supervisor 调用固定 sudo wrapper，SSH 断线后仍可重连等待，全局锁冲突不会进入并发回滚。pending 会分别记录“容器可能已切换”和“数据库已恢复”阶段：容器切换前失败不停止旧容器、不回放数据库；完整回滚先在同盘预制并校验 SQLite，再隔离主库与 WAL/SHM 后替换，重试不会重复覆盖恢复后的新写入。首次迁移旧单阶段 helper 时还会校验线上提交与宿主机文件、保存真实 Compose/Nginx pre-image，并绑定该次操作的精确数据库备份路径。未知、混合或锁冲突状态按失败关闭，工件只在 finalize 或明确回滚成功后清理。
+stage 通过绑定 operation ID 和版本的后台 supervisor 调用固定、受 sudoers 限制的 `stage` wrapper，SSH 断线后仍可重连等待，全局锁冲突不会进入并发回滚。pending 会分别记录“容器可能已切换”和“数据库已恢复”阶段：容器切换前失败不停止旧容器、不回放数据库；完整回滚先在同盘预制并校验 SQLite，再隔离主库与 WAL/SHM 后替换，重试不会重复覆盖恢复后的新写入。未知或锁冲突状态按失败关闭，工件只在 finalize 或明确回滚成功后清理。
+
+`Production health` workflow 每 6 小时及手工触发时执行两条互补路径：公网 Playwright 以隔离 Chromium context 验证 WSS 与默认 ICE 小文件传输，并使用服务端短期 TURN 凭据强制 relay 再传输；主机 job 使用相同 `TENCENT_*` secrets，通过唯一 sudo wrapper 执行无参数 `maintenance`。maintenance 与发布共用 concurrency group且不会取消正在执行的维护，会拒绝 pending release，核对 ready/release identity 和仅限本机的内部指标，并按备份/恢复实际峰值在每个文件系统保留 2 GiB 余量。SQLite backup 先写同目录隐藏临时文件，完成 `quick_check`、文件和目录同步后才原子发布；随后恢复到一次性数据库执行事务回滚演练。它不替换生产主库，公网 `/internal/metrics` 由 Nginx 固定返回 404。任何一条失败都应作为生产告警处理，不能用本机 health 成功掩盖公网 TURN 失败；仓库管理员仍需开启 Actions 失败通知或接入现有告警渠道。
 
 ## 构建、启动与验收
 

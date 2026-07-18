@@ -117,6 +117,100 @@ BROWSER_PLATFORM_FACADE_FORBIDDEN_IMPLEMENTATION_MARKERS = (
     "thread_local!",
     "async fn request_json",
 )
+RTC_BROWSER_SOURCE = BROWSER_PLATFORM_SOURCE / "rtc" / "browser"
+RTC_BROWSER_FILE_CAPABILITY_MODULE = RTC_BROWSER_SOURCE / "files.rs"
+RTC_BROWSER_FILE_CAPABILITY_REQUIRED_MARKERS = (
+    "pub struct BrowserFile",
+    "pub fn browser_files_from_input",
+    "pub fn persistent_source_file_support",
+    "pub async fn choose_persistent_source_files",
+    "HtmlInputElement",
+    "choose_source_files",
+)
+RTC_BROWSER_MOD_FORBIDDEN_FILE_CAPABILITY_PATTERNS = (
+    r"\bpub\s+struct\s+BrowserFile\b",
+    r"\bpub\s+fn\s+browser_files_from_input\b",
+    r"\bpub\s+fn\s+persistent_source_file_support\b",
+    r"\bpub\s+async\s+fn\s+choose_persistent_source_files\b",
+    r"\bHtmlInputElement\b",
+    r"\bchoose_source_files\b",
+)
+RTC_BROWSER_CONNECTION_MODULE = RTC_BROWSER_SOURCE / "connection.rs"
+RTC_BROWSER_CONNECTION_REQUIRED_MARKERS = (
+    "pub(super) fn rtc_configuration",
+    "pub(super) fn map_connection_state",
+    "pub(super) fn description_sdp",
+    "RtcConfiguration",
+    "RtcPeerConnectionState",
+    "Reflect::get",
+)
+RTC_BROWSER_MOD_FORBIDDEN_CONNECTION_PATTERNS = (
+    r"\bfn\s+rtc_configuration\b",
+    r"\bfn\s+map_connection_state\b",
+    r"\bfn\s+description_sdp\b",
+)
+RTC_BROWSER_FACADE_MAX_LINES = 80
+RTC_BROWSER_RESPONSIBILITY_MODULES = ("peer", "signaling", "lifecycle", "recovery")
+RTC_BROWSER_FACADE_FORBIDDEN_IMPLEMENTATION_PATTERNS = (
+    r"\bstruct\s+Inner\b",
+    r"\bimpl\s+RtcPeer\b",
+    r"\bfn\s+prepare_outgoing\b",
+    r"\bfn\s+ensure_peer_connection\b",
+)
+RTC_BROWSER_THIN_FACADES = {
+    Path("mod.rs"): 80,
+    Path("lifecycle/mod.rs"): 24,
+    Path("recovery/mod.rs"): 24,
+}
+RTC_BROWSER_RESPONSIBILITY_MARKERS = {
+    Path("peer.rs"): (
+        "pub struct RtcPeer",
+        "struct Inner",
+        "pub fn new",
+        "fn clear_peer_resources",
+    ),
+    Path("signaling.rs"): (
+        "pub fn start_offer",
+        "pub fn accept_signal",
+        "fn ensure_peer_connection",
+        "fn install_data_channel",
+    ),
+    Path("lifecycle/commands.rs"): (
+        "pub fn offer_files",
+        "pub async fn cancel_transfer",
+        "fn install_and_offer_outgoing",
+    ),
+    Path("lifecycle/events.rs"): (
+        "fn handle_decision",
+        "fn handle_stream_complete",
+        "fn clear_transfer",
+    ),
+    Path("lifecycle/reconnect.rs"): (
+        "pub fn reset",
+        "pub fn prepare_reconnect",
+        "fn suspend_stream_for_reconnect",
+    ),
+    Path("lifecycle/manifest.rs"): (
+        "fn active_transfer_id",
+        "fn prepare_outgoing",
+    ),
+    Path("recovery/outgoing.rs"): (
+        "pub async fn offer_persistent_files",
+        "pub async fn restore_outgoing_transfer",
+        "fn handle_stream_ready",
+        "fn restore_outgoing_recovery",
+    ),
+    Path("recovery/incoming.rs"): (
+        "pub async fn accept_stream_transfer",
+        "pub async fn resume_stream_transfer",
+        "fn handle_manifest",
+        "fn restore_stream_recovery",
+    ),
+}
+RTC_BROWSER_REMOVED_MONOLITHS = (
+    RTC_BROWSER_SOURCE / "lifecycle.rs",
+    RTC_BROWSER_SOURCE / "recovery.rs",
+)
 TRANSFER_EVENT_FACADE_MAX_LINES = 80
 TRANSFER_EVENT_TRANSITION_MODULES = ("offer", "pause", "progress", "terminal")
 
@@ -186,6 +280,107 @@ def main() -> None:
                 f"marker {marker}"
             )
 
+    rtc_browser_mod_path = RTC_BROWSER_SOURCE / "mod.rs"
+    rtc_browser_mod = rtc_browser_mod_path.read_text(encoding="utf-8")
+    if "mod files;" not in rtc_browser_mod:
+        violations.append(
+            f"{rtc_browser_mod_path.relative_to(ROOT)} does not declare files"
+        )
+    if not re.search(r"\bpub\s+use\s+files::\{", rtc_browser_mod):
+        violations.append(
+            f"{rtc_browser_mod_path.relative_to(ROOT)} does not re-export files"
+        )
+    for pattern in RTC_BROWSER_MOD_FORBIDDEN_FILE_CAPABILITY_PATTERNS:
+        if re.search(pattern, rtc_browser_mod):
+            violations.append(
+                f"{rtc_browser_mod_path.relative_to(ROOT)} contains file capability "
+                f"implementation matching {pattern}"
+            )
+    if "mod connection;" not in rtc_browser_mod:
+        violations.append(
+            f"{rtc_browser_mod_path.relative_to(ROOT)} does not declare connection"
+        )
+    for pattern in RTC_BROWSER_MOD_FORBIDDEN_CONNECTION_PATTERNS:
+        if re.search(pattern, rtc_browser_mod):
+            violations.append(
+                f"{rtc_browser_mod_path.relative_to(ROOT)} contains connection setup "
+                f"implementation matching {pattern}"
+            )
+
+    if not RTC_BROWSER_FILE_CAPABILITY_MODULE.is_file():
+        violations.append(
+            f"{RTC_BROWSER_FILE_CAPABILITY_MODULE.relative_to(ROOT)} is missing"
+        )
+    else:
+        rtc_browser_files = RTC_BROWSER_FILE_CAPABILITY_MODULE.read_text(encoding="utf-8")
+        for marker in RTC_BROWSER_FILE_CAPABILITY_REQUIRED_MARKERS:
+            if marker not in rtc_browser_files:
+                violations.append(
+                    f"{RTC_BROWSER_FILE_CAPABILITY_MODULE.relative_to(ROOT)} does not own "
+                    f"required file capability marker {marker}"
+                )
+
+    if not RTC_BROWSER_CONNECTION_MODULE.is_file():
+        violations.append(
+            f"{RTC_BROWSER_CONNECTION_MODULE.relative_to(ROOT)} is missing"
+        )
+    else:
+        rtc_browser_connection = RTC_BROWSER_CONNECTION_MODULE.read_text(encoding="utf-8")
+        for marker in RTC_BROWSER_CONNECTION_REQUIRED_MARKERS:
+            if marker not in rtc_browser_connection:
+                violations.append(
+                    f"{RTC_BROWSER_CONNECTION_MODULE.relative_to(ROOT)} does not own "
+                    f"required connection marker {marker}"
+                )
+
+    rtc_browser_facade_lines = len(rtc_browser_mod.splitlines())
+    if rtc_browser_facade_lines > RTC_BROWSER_FACADE_MAX_LINES:
+        violations.append(
+            f"{rtc_browser_mod_path.relative_to(ROOT)} has {rtc_browser_facade_lines} lines; "
+            f"RTC facade limit is {RTC_BROWSER_FACADE_MAX_LINES}"
+        )
+    for module in RTC_BROWSER_RESPONSIBILITY_MODULES:
+        if f"mod {module};" not in rtc_browser_mod:
+            violations.append(
+                f"{rtc_browser_mod_path.relative_to(ROOT)} does not declare {module}"
+            )
+    for pattern in RTC_BROWSER_FACADE_FORBIDDEN_IMPLEMENTATION_PATTERNS:
+        if re.search(pattern, rtc_browser_mod):
+            violations.append(
+                f"{rtc_browser_mod_path.relative_to(ROOT)} contains RTC implementation "
+                f"matching {pattern}"
+            )
+
+    for relative_path, max_lines in RTC_BROWSER_THIN_FACADES.items():
+        path = RTC_BROWSER_SOURCE / relative_path
+        if not path.is_file():
+            violations.append(f"{path.relative_to(ROOT)} is missing")
+            continue
+        line_count = len(path.read_text(encoding="utf-8").splitlines())
+        if line_count > max_lines:
+            violations.append(
+                f"{path.relative_to(ROOT)} has {line_count} lines; "
+                f"thin facade limit is {max_lines}"
+            )
+
+    for relative_path, markers in RTC_BROWSER_RESPONSIBILITY_MARKERS.items():
+        path = RTC_BROWSER_SOURCE / relative_path
+        if not path.is_file():
+            violations.append(f"{path.relative_to(ROOT)} is missing")
+            continue
+        source = path.read_text(encoding="utf-8")
+        for marker in markers:
+            if marker not in source:
+                violations.append(
+                    f"{path.relative_to(ROOT)} does not own required RTC marker {marker}"
+                )
+
+    for path in RTC_BROWSER_REMOVED_MONOLITHS:
+        if path.exists():
+            violations.append(
+                f"{path.relative_to(ROOT)} recreates a removed RTC responsibility monolith"
+            )
+
     transfer_event_facade_path = WEB_SOURCE / "rtc_transfer_events.rs"
     transfer_event_facade = transfer_event_facade_path.read_text(encoding="utf-8")
     transfer_event_facade_lines = len(transfer_event_facade.splitlines())
@@ -242,7 +437,8 @@ def main() -> None:
     print(
         "Browser architecture dependency check passed: "
         f"checked {len(FORBIDDEN_DEPENDENCIES)} web module boundaries, the browser-platform "
-        "facade, and the shared UI boundary."
+        "facade, the RTC file, connection, peer/signaling, transfer-lifecycle, and "
+        "recovery boundaries, and the shared UI boundary."
     )
 
 

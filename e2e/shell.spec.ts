@@ -137,7 +137,7 @@ test('a valid stored room selects the restoration shell before the first paint',
       }),
     )
   })
-  await page.route('**/shell/app-shell.css', route => route.abort())
+  await page.route(/\/shell\/app-shell\.css(?:\?.*)?$/u, route => route.abort())
   await page.route(/\.wasm(?:\?.*)?$/u, route => route.abort())
 
   const response = await page.goto('/', { waitUntil: 'domcontentloaded' })
@@ -156,7 +156,7 @@ test('a valid stored room selects the restoration shell before the first paint',
 
 test('the root keeps a useful anonymous lobby when WebAssembly is blocked', { tag: '@smoke' }, async ({ page }) => {
   let blockedWasmRequest = false
-  await page.route('**/shell/app-shell.css', route => route.abort())
+  await page.route(/\/shell\/app-shell\.css(?:\?.*)?$/u, route => route.abort())
   await page.route(/\.wasm(?:\?.*)?$/u, route => {
     blockedWasmRequest = true
     return route.abort()
@@ -185,20 +185,27 @@ test('the installed PWA keeps the root workspace available offline', async ({ co
   await page.evaluate(async () => {
     await navigator.serviceWorker.ready
   })
-  const cachedPaths = await page.evaluate(async () => {
+  const cachedUrls = await page.evaluate(async () => {
     const cacheNames = await caches.keys()
     const requests = await Promise.all(cacheNames
       .filter(name => name.startsWith('p2p-transmission-'))
       .map(async name => (await caches.open(name)).keys()))
-    return requests.flat().map(request => new URL(request.url).pathname)
+    return requests.flat().map(request => {
+      const url = new URL(request.url)
+      return `${url.pathname}${url.search}`
+    })
   })
-  expect(cachedPaths).toContain('/')
-  expect(cachedPaths).toContain('/shell/app-shell.css')
-  expect(cachedPaths).toContain('/shell/room-restore.js')
-  expect(cachedPaths).not.toContain('/shell/app.css')
-  expect(cachedPaths.some(path => path.endsWith('.wasm'))).toBe(true)
-  expect(cachedPaths).not.toContain('/app')
-  expect(cachedPaths).not.toContain('/app/')
+  expect(cachedUrls).toContain('/')
+  expect(cachedUrls).toEqual(expect.arrayContaining([
+    expect.stringMatching(/^\/shell\/app-shell\.css\?v=[A-Za-z0-9._-]+$/u),
+    expect.stringMatching(/^\/shell\/room-restore\.js\?v=[A-Za-z0-9._-]+$/u),
+    expect.stringMatching(/^\/shell\/app-shell\.js\?v=[A-Za-z0-9._-]+$/u),
+  ]))
+  expect(cachedUrls).not.toContain('/shell/app-shell.css')
+  expect(cachedUrls).not.toContain('/shell/app.css')
+  expect(cachedUrls.some(path => path.endsWith('.wasm'))).toBe(true)
+  expect(cachedUrls).not.toContain('/app')
+  expect(cachedUrls).not.toContain('/app/')
   await page.reload()
   await expect.poll(() => page.evaluate(() => navigator.serviceWorker.controller !== null)).toBe(true)
   await expect(page.getByRole('heading', { name: '加入房间' })).toBeVisible()
@@ -228,6 +235,7 @@ test('unknown routes, removed legacy routes, and missing assets return 404', asy
     '/app/?room=ABC234',
     '/appx',
     '/index.html',
+    '/shell/app.css',
   ]) {
     const response = await request.get(path, { maxRedirects: 0 })
     expect(response.status()).toBe(404)

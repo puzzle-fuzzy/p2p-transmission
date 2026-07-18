@@ -106,7 +106,7 @@
       "refersTo": "file-item",
       "description": "文件列表中的单行条目。可选进度条背景填充。",
       "html": "<div class=\"ds-file-wrap\"><div class=\"ds-file-progress\" style=\"width:65%\"></div><div class=\"ds-file-item\"><svg class=\"ds-file-icon\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"rgba(255,255,255,0.3)\"><path d=\"M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z\"/></svg><span class=\"ds-file-name\">设计稿.fig</span><span class=\"ds-file-size\">2.3 MB</span></div></div>",
-      "css": ".ds-file-wrap { position: relative; overflow: hidden; background: rgba(255,255,255,0.05); border-radius: 8px; } .ds-file-progress { position: absolute; top: 0; left: 0; bottom: 0; background: rgba(94,17,209,0.15); border-radius: 8px; transition: width 0.3s cubic-bezier(0.4,0,0.2,1); } .ds-file-item { position: relative; display: flex; align-items: center; gap: 12px; padding: 8px 12px; z-index: 10; } .ds-file-icon { flex-shrink: 0; } .ds-file-name { flex: 1; font-size: 12px; color: rgba(255,255,255,0.6); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-file-size { font-size: 12px; color: rgba(255,255,255,0.2); flex-shrink: 0; }"
+      "css": ".ds-file-wrap { position: relative; overflow: hidden; background: rgba(255,255,255,0.05); border-radius: 8px; } .ds-file-progress { position: absolute; top: 0; left: 0; bottom: 0; background: rgba(94,17,209,0.22); border-radius: 8px; transition: width 0.3s cubic-bezier(0.4,0,0.2,1); } .ds-file-item { position: relative; display: flex; align-items: center; gap: 12px; padding: 8px 12px; z-index: 10; } .ds-file-icon { flex-shrink: 0; } .ds-file-name { flex: 1; font-size: 12px; color: rgba(255,255,255,0.6); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-file-size { font-size: 12px; color: rgba(255,255,255,0.2); flex-shrink: 0; }"
     },
     {
       "name": "Log Entry",
@@ -129,16 +129,16 @@
     ],
     "rules": [
       { "name": "The One Color Rule", "body": "Signal Purple 是唯一的彩色，只出现在交互元素（按钮、聚焦、进度、完成标记）上。它的稀有度就是它的意义。不要将它用在纯装饰元素上。", "section": "colors" },
-      { "name": "The Opacity Scale Rule", "body": "层次不靠阴影，靠白色叠加的透明度阶梯：5% → 10% → 15% → 50% → 80%。每跳对应一个语义角色。不要跳过层级或使用任意值。", "section": "colors" },
+      { "name": "The Opacity Scale Rule", "body": "层次不靠阴影，靠白色叠加的透明度阶梯：5% → 10% → 15% → 56% → 80%。输入控件边界使用 36% 作为非文本对比度例外；Signal Purple 的进度/选中表面使用 22%，以保证深色背景上的可辨识度。", "section": "colors" },
       { "name": "The Flat Hierarchy Rule", "body": "不使用超出 16px 的正文或小于 12px 的标签。字号梯度只有 12 → 14 → 20（等宽）三级。不引入 display / headline 等大字号层级——这个系统不需要。", "section": "typography" },
       { "name": "The Flat-By-Default Rule", "body": "所有表面在静止状态下都是平的。没有任何元素自带阴影。阴影的出现永远是错误。", "section": "elevation" }
     ],
     "dos": [
       "Do 使用 Signal Purple 作为唯一的交互色——按钮填充、焦点边框、进度条、完成对勾。",
-      "Do 使用透明度阶梯（5% / 10% / 15% / 50% / 80%）区分层次，不要用阴影或渐变。",
+      "Do 使用透明度阶梯（5% / 10% / 15% / 56% / 80%）区分层次；仅为非文本对比度使用 36% 控件边界、为进度/选中表面使用 22% Signal Purple，不要用阴影或渐变。",
       "Do 保持 12px 圆角上限：大容器、按钮、输入框用 12px，内部元素（Tab、文件行）用 8px。",
       "Do 让每个页面只有一个核心操作。Tab 选中态靠背景色区分，不需要底部指示条。",
-      "Do 为浅色模式预留变量——使用 color-mix() 或 CSS 变量方案，以便未来扩展。"
+      "Do 使用 CSS 变量维护深色体系的语义一致性。浅色映射仅在未来需求明确后补充，不属于当前实现要求。"
     ],
     "donts": [
       "Don't 使用赛博朋克风格：霓虹色、故障效果、暗黑过载背景。",

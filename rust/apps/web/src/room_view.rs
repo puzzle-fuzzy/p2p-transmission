@@ -163,6 +163,7 @@ pub(super) fn RoomView(
                 && let Some(request) = snapshot.pending_join_requests.first()
             {
                 JoinRequestDialog {
+                    key: "{request.request_id}",
                     model,
                     realtime_target,
                     request: request.clone(),

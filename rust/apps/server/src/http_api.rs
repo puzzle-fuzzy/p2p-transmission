@@ -23,6 +23,7 @@ use time::Duration as CookieDuration;
 use tracing::error;
 
 use crate::{
+    observability::Observability,
     realtime::hub::RealtimeHub,
     realtime::socket::{cleanup_attachments, event_id},
     services::{AppServices, ServiceError, room_mutation_response, session_response},
@@ -53,6 +54,7 @@ where
 pub struct AppState {
     pub services: Arc<AppServices>,
     pub hub: RealtimeHub,
+    pub observability: Observability,
 }
 
 impl AppState {
@@ -61,6 +63,7 @@ impl AppState {
         Self {
             services: Arc::new(services),
             hub,
+            observability: Observability::new(),
         }
     }
 }

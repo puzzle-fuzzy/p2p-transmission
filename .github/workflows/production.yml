@@ -1,6 +1,7 @@
 name: Production
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -9,48 +10,46 @@ on:
       - "rust-toolchain.toml"
       - "rust/**"
       - "scripts/*.py"
+      - "!scripts/check_coturn_config.py"
+      - "!scripts/test_check_coturn_config.py"
+      - "scripts/*.ts"
       - "e2e/*.spec.ts"
       - "e2e/playwright.config.ts"
+      - "e2e/playwright.public.config.ts"
       - "e2e/playwright.stress.config.ts"
       - "package.json"
       - "bun.lock"
       - "deploy/production/**"
       - "deploy/scripts/**"
-      - ".github/workflows/production.yml"
-  pull_request:
-    paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "rust-toolchain.toml"
-      - "rust/**"
-      - "scripts/*.py"
-      - "e2e/*.spec.ts"
-      - "e2e/playwright.config.ts"
-      - "e2e/playwright.stress.config.ts"
-      - "package.json"
-      - "bun.lock"
-      - "deploy/production/**"
-      - "deploy/scripts/**"
-      - "docs/release/**"
       - ".github/workflows/production.yml"
 
 permissions:
   contents: read
 
 jobs:
+  coturn:
+    name: TURN configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - run: python -X utf8 -m unittest scripts/test_check_coturn_config.py
+      - run: python -X utf8 scripts/check_coturn_config.py
+
   native:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
           toolchain: 1.97.0
           components: clippy,rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
       - run: cargo install cargo-audit --version 0.22.2 --locked
       - run: cargo audit --deny warnings
       - run: cargo fmt --all -- --check
       - run: python -X utf8 scripts/check_web_architecture.py
+      - run: python -X utf8 scripts/check_server_architecture.py
       - run: python -X utf8 -m unittest discover -s deploy/scripts -p "test_*.py"
       - run: cargo clippy --locked -p p2p-domain -p p2p-protocol -p p2p-transfer -p p2p-server -p p2p-ui-shell --all-targets -- -D warnings
       - run: cargo test --locked
@@ -60,13 +59,13 @@ jobs:
   wasm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
           toolchain: 1.97.0
           targets: wasm32-unknown-unknown
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
       - run: cargo install dioxus-cli --version 0.7.6 --locked
       - run: cargo clippy --locked -p p2p-browser-platform -p p2p-web --target wasm32-unknown-unknown -- -D warnings
       - run: python -X utf8 scripts/dev.py --profile release --build-only
@@ -75,30 +74,31 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
           toolchain: 1.97.0
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-      - uses: oven-sh/setup-bun@v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.3.14
       - run: test "$(bun --version)" = "1.3.14"
       - run: bun install --frozen-lockfile
+      - run: bun run test:service-worker
       - run: bunx playwright install --with-deps chromium firefox webkit
       - run: cargo install dioxus-cli --version 0.7.6 --locked
       - run: python -X utf8 scripts/test_e2e.py --full
 
   container:
     runs-on: ubuntu-latest
-    needs: [native, wasm]
+    needs: [coturn, native, wasm]
     timeout-minutes: 30
     outputs:
       app-version: ${{ steps.release.outputs.app-version }}
       release-version: ${{ steps.release.outputs.release-version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Calculate release version
         id: release
         env:
@@ -119,9 +119,9 @@ jobs:
           echo "app-version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "release-version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
       - run: docker compose --env-file deploy/production/.env.example -f deploy/production/compose.yml config
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
       - name: Build release image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: deploy/production/Dockerfile
@@ -136,7 +136,7 @@ jobs:
           GITHUB_SHA: ${{ github.sha }}
           RELEASE_VERSION: ${{ steps.release.outputs.release-version }}
         run: docker save "p2p-transmission:$RELEASE_VERSION" | gzip -1 > "p2p-transmission-image-$GITHUB_SHA.tar.gz"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: production-image-${{ github.sha }}
           path: p2p-transmission-image-${{ github.sha }}.tar.gz
@@ -145,8 +145,8 @@ jobs:
 
   deploy:
     name: Deploy production
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [native, wasm, e2e, container]
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    needs: [coturn, native, wasm, e2e, container]
     runs-on: ubuntu-latest
     timeout-minutes: 120
     environment:
@@ -156,7 +156,7 @@ jobs:
       group: production
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
 
@@ -183,7 +183,24 @@ jobs:
               print(f"::notice::Skipping superseded release {expected}; main is {current}")
           PY
 
-      - uses: actions/download-artifact@v8
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        if: steps.release_head.outputs.current == 'true'
+        with:
+          bun-version: 1.3.14
+      - name: Prepare the lightweight public browser verifier
+        if: steps.release_head.outputs.current == 'true'
+        run: |
+          test "$(bun --version)" = "1.3.14"
+          bun install --frozen-lockfile
+          bunx playwright install --with-deps chromium
+      - name: Verify TURN relay before staging
+        id: turn_preflight
+        if: steps.release_head.outputs.current == 'true'
+        env:
+          P2P_PUBLIC_BASE_URL: https://p2p.yxswy.com
+        run: bunx playwright test --config e2e/playwright.public.config.ts --grep 'relay ICE candidate$'
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         if: steps.release_head.outputs.current == 'true'
         with:
           name: production-image-${{ github.sha }}
@@ -200,132 +217,19 @@ jobs:
           chmod 600 "$HOME/.ssh/id_ed25519"
           chmod 644 "$HOME/.ssh/known_hosts"
 
-      - name: Inspect installed deployment helper
-        id: deploy_helper
+      - name: Verify the fixed host deployment control plane
+        id: control_plane
         if: steps.release_head.outputs.current == 'true'
         env:
           DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
           DEPLOY_USER: ${{ secrets.TENCENT_DEPLOY_USER }}
         run: |
-          set +e
-          PROTOCOL="$(ssh -o BatchMode=yes -o ConnectTimeout=10 \
-            -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
-            "$DEPLOY_USER@$DEPLOY_HOST" \
-            'sudo -n /usr/local/sbin/p2p-transmission-deploy protocol-version' 2>/dev/null)"
-          PROBE_STATUS=$?
-          set -e
-          if [[ "$PROBE_STATUS" == "0" && "$PROTOCOL" == "2" ]]; then
-            MODE=v2
-          elif [[ "$PROBE_STATUS" != "0" ]]; then
-            MODE=legacy
-          else
-            echo "unsupported deployment helper protocol: $PROTOCOL" >&2
-            exit 1
-          fi
-          case "$MODE" in
-            v2|legacy) ;;
-            *) echo "unsupported deployment helper mode: $MODE" >&2; exit 1 ;;
-          esac
-          printf 'mode=%s\n' "$MODE" >> "$GITHUB_OUTPUT"
-
-      - name: Prepare the disconnect-safe deployment supervisor
-        if: steps.release_head.outputs.current == 'true'
-        env:
-          DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
-          DEPLOY_USER: ${{ secrets.TENCENT_DEPLOY_USER }}
-          GITHUB_SHA: ${{ github.sha }}
-        run: |
-          BRIDGE="p2p-transmission-legacy-$GITHUB_SHA-bridge.py"
-          scp -o BatchMode=yes -o ConnectTimeout=10 \
-            -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
-            deploy/scripts/legacy-deploy-bridge.py "$DEPLOY_USER@$DEPLOY_HOST:/tmp/$BRIDGE"
+          HELPER_SHA256="$(python3 -I -B -X utf8 deploy/scripts/deploy-release.py control-plane-manifest --format sha256)"
+          echo "sha256=$HELPER_SHA256" >> "$GITHUB_OUTPUT"
           ssh -o BatchMode=yes -o ConnectTimeout=10 \
             -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
-            "$DEPLOY_USER@$DEPLOY_HOST" "chmod 600 /tmp/$BRIDGE"
-
-      - name: Prepare the one-time legacy helper migration
-        id: legacy_baseline
-        if: steps.release_head.outputs.current == 'true' && steps.deploy_helper.outputs.mode == 'legacy'
-        env:
-          DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
-          DEPLOY_USER: ${{ secrets.TENCENT_DEPLOY_USER }}
-          GITHUB_SHA: ${{ github.sha }}
-        run: |
-          BRIDGE="p2p-transmission-legacy-$GITHUB_SHA-bridge.py"
-          SNAPSHOT_JSON="$(ssh -o BatchMode=yes -o ConnectTimeout=10 \
-            -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "python3 /tmp/$BRIDGE snapshot --operation-id $GITHUB_SHA --mode legacy")"
-          SNAPSHOT_JSON="$SNAPSHOT_JSON" python3 - <<'PY'
-          import hashlib
-          import json
-          import os
-          import re
-          import subprocess
-          from pathlib import Path
-
-          snapshot = json.loads(os.environ['SNAPSHOT_JSON'])
-          operation_id = os.environ['GITHUB_SHA']
-          if (
-              snapshot.get('schema') != 1
-              or snapshot.get('operation_id') != operation_id
-              or snapshot.get('mode') != 'legacy'
-          ):
-              raise SystemExit('legacy bridge snapshot does not match this release')
-          previous_release = snapshot.get('previous_release')
-          match = re.fullmatch(r'[A-Za-z0-9_.-]+-([0-9a-f]{7,40})', previous_release or '')
-          if match is None:
-              raise SystemExit('cannot identify the current production release for migration')
-
-          subprocess.run(
-              ['git', 'fetch', '--no-tags', '--depth=64', 'origin', 'main'],
-              check=True,
-          )
-          previous_commit = subprocess.check_output(
-              ['git', 'rev-parse', f'{match.group(1)}^{{commit}}'],
-              text=True,
-          ).strip()
-          current_commit = os.environ['GITHUB_SHA']
-          subprocess.run(
-              ['git', 'merge-base', '--is-ancestor', previous_commit, current_commit],
-              check=True,
-          )
-
-          expected_sources = {
-              'compose_sha256': 'deploy/production/compose.yml',
-              'nginx_sha256': 'deploy/production/nginx/p2p.yxswy.com.conf',
-              'helper_sha256': 'deploy/scripts/deploy-release.py',
-              'wrapper_sha256': 'deploy/scripts/p2p-transmission-deploy.sh',
-          }
-          for key, source in expected_sources.items():
-              contents = subprocess.check_output(
-                  ['git', 'show', f'{previous_commit}:{source}']
-              )
-              expected = hashlib.sha256(contents).hexdigest()
-              if snapshot.get(key) != expected:
-                  raise SystemExit(f'production {source} drifted from {previous_release}')
-
-          expected_paths = {
-              'compose_snapshot': f'/tmp/p2p-transmission-legacy-{operation_id}-compose.yml',
-              'nginx_snapshot': f'/tmp/p2p-transmission-legacy-{operation_id}-nginx.conf',
-          }
-          for key, expected in expected_paths.items():
-              if snapshot.get(key) != expected:
-                  raise SystemExit(f'legacy bridge returned an unexpected {key}')
-
-          outputs = {
-              'previous-release': previous_release,
-              'operation-state': f'/tmp/p2p-transmission-legacy-{operation_id}-status.json',
-              'compose-snapshot': snapshot['compose_snapshot'],
-              'nginx-snapshot': snapshot['nginx_snapshot'],
-              'compose-sha256': snapshot['compose_sha256'],
-              'nginx-sha256': snapshot['nginx_sha256'],
-          }
-          with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as result:
-              for key, value in outputs.items():
-                  result.write(f'{key}={value}\n')
-          print(f'legacy helper migration baseline: {previous_release}')
-          PY
+            "/usr/bin/sudo -n /usr/local/sbin/p2p-transmission-deploy control-plane-status --expected-sha256 $HELPER_SHA256"
 
       - name: Create source release archive
         if: steps.release_head.outputs.current == 'true'
@@ -382,46 +286,47 @@ jobs:
           DEPLOY_USER: ${{ secrets.TENCENT_DEPLOY_USER }}
           GITHUB_SHA: ${{ github.sha }}
           RELEASE_VERSION: ${{ needs.container.outputs.release-version }}
-          HELPER_MODE: ${{ steps.deploy_helper.outputs.mode }}
-          PREVIOUS_RELEASE: ${{ steps.legacy_baseline.outputs.previous-release }}
-          OPERATION_STATE: ${{ steps.legacy_baseline.outputs.operation-state }}
-          COMPOSE_SNAPSHOT: ${{ steps.legacy_baseline.outputs.compose-snapshot }}
-          NGINX_SNAPSHOT: ${{ steps.legacy_baseline.outputs.nginx-snapshot }}
-          COMPOSE_SHA256: ${{ steps.legacy_baseline.outputs.compose-sha256 }}
-          NGINX_SHA256: ${{ steps.legacy_baseline.outputs.nginx-sha256 }}
+          EXPECTED_CONTROL_PLANE_SHA256: ${{ steps.control_plane.outputs.sha256 }}
         run: |
           SOURCE_ARCHIVE="p2p-transmission-$GITHUB_SHA.tar.gz"
           IMAGE_ARCHIVE="p2p-transmission-image-$GITHUB_SHA.tar.gz"
           RETIRED_FILES="p2p-transmission-retired-$GITHUB_SHA.json"
+          SUPERVISOR="p2p-transmission-deploy-$GITHUB_SHA-supervisor.py"
+          SUPERVISOR_BUNDLE="$RUNNER_TEMP/$SUPERVISOR"
+          python3 -I -B -X utf8 deploy/scripts/build_deployment_supervisor.py \
+            --output "$SUPERVISOR_BUNDLE"
+          chmod 600 "$SUPERVISOR_BUNDLE" "$SOURCE_ARCHIVE" "$IMAGE_ARCHIVE" "$RETIRED_FILES"
+          scp -o BatchMode=yes -o ConnectTimeout=10 \
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
+            "$SUPERVISOR_BUNDLE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/$SUPERVISOR"
           scp -o BatchMode=yes -o ConnectTimeout=10 \
             -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
             "$SOURCE_ARCHIVE" "$IMAGE_ARCHIVE" "$RETIRED_FILES" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/"
           ssh -o BatchMode=yes -o ConnectTimeout=10 \
             -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "chmod 600 /tmp/$SOURCE_ARCHIVE /tmp/$IMAGE_ARCHIVE /tmp/$RETIRED_FILES"
-          BRIDGE="p2p-transmission-legacy-$GITHUB_SHA-bridge.py"
-          # The unprivileged bridge detaches and tracks the fixed sudo-approved
-          # wrapper for both helper protocols. An SSH disconnect can therefore
+            "chmod 600 /tmp/$SUPERVISOR /tmp/$SOURCE_ARCHIVE /tmp/$IMAGE_ARCHIVE /tmp/$RETIRED_FILES"
+          # The unprivileged supervisor detaches and tracks the fixed
+          # sudo-approved stage wrapper. An SSH disconnect can therefore
           # never race rollback against an unfinished runtime switch.
           ssh -o BatchMode=yes -o ConnectTimeout=10 \
             -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "python3 /tmp/$BRIDGE start --operation-id $GITHUB_SHA --version $RELEASE_VERSION --mode $HELPER_MODE"
+            "/usr/bin/python3 -I -B -X utf8 /tmp/$SUPERVISOR start --operation-id $GITHUB_SHA --version $RELEASE_VERSION --expected-control-plane-sha256 $EXPECTED_CONTROL_PLANE_SHA256"
           WAIT_DEADLINE=$((SECONDS + 1800))
           while true; do
             set +e
             ssh -o BatchMode=yes -o ConnectTimeout=10 \
               -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
               "$DEPLOY_USER@$DEPLOY_HOST" \
-              "python3 /tmp/$BRIDGE wait --operation-id $GITHUB_SHA --version $RELEASE_VERSION --mode $HELPER_MODE --timeout 20 --poll-interval 2"
-            BRIDGE_STATUS=$?
+              "/usr/bin/python3 -I -B -X utf8 /tmp/$SUPERVISOR wait --operation-id $GITHUB_SHA --version $RELEASE_VERSION --expected-control-plane-sha256 $EXPECTED_CONTROL_PLANE_SHA256 --timeout 20 --poll-interval 2"
+            SUPERVISOR_STATUS=$?
             set -e
-            if [[ "$BRIDGE_STATUS" == "0" ]]; then
+            if [[ "$SUPERVISOR_STATUS" == "0" ]]; then
               break
             fi
-            if [[ "$BRIDGE_STATUS" != "22" && "$BRIDGE_STATUS" != "255" ]]; then
-              exit "$BRIDGE_STATUS"
+            if [[ "$SUPERVISOR_STATUS" != "22" && "$SUPERVISOR_STATUS" != "255" ]]; then
+              exit "$SUPERVISOR_STATUS"
             fi
             if (( SECONDS >= WAIT_DEADLINE )); then
               echo 'timed out reconnecting to the deployment supervisor' >&2
@@ -429,14 +334,6 @@ jobs:
             fi
             sleep 5
           done
-          if [[ "$HELPER_MODE" == "legacy" ]]; then
-            # shellcheck disable=SC2029
-            ssh -o BatchMode=yes -o ConnectTimeout=10 \
-              -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
-              "$DEPLOY_USER@$DEPLOY_HOST" \
-              "sudo -n /usr/local/sbin/p2p-transmission-deploy adopt-legacy --version $RELEASE_VERSION --previous-version $PREVIOUS_RELEASE --operation-state $OPERATION_STATE --compose-snapshot $COMPOSE_SNAPSHOT --nginx-snapshot $NGINX_SNAPSHOT --compose-sha256 $COMPOSE_SHA256 --nginx-sha256 $NGINX_SHA256"
-          fi
-
       - name: Verify the public Rust service
         id: public_verify
         if: steps.release_head.outputs.current == 'true'
@@ -447,6 +344,49 @@ jobs:
           python3 deploy/scripts/verify-public-release.py \
             --app-version "$EXPECTED_APP_VERSION" \
             --release-version "$EXPECTED_RELEASE_VERSION"
+
+      - name: Verify the public WSS and WebRTC transfer
+        id: public_browser_verify
+        if: steps.release_head.outputs.current == 'true'
+        env:
+          P2P_PUBLIC_BASE_URL: https://p2p.yxswy.com
+        run: bunx playwright test --config e2e/playwright.public.config.ts --grep 'over WSS$'
+
+      - name: Verify the staged TURN relay transfer
+        id: public_relay_verify
+        if: steps.release_head.outputs.current == 'true'
+        env:
+          P2P_PUBLIC_BASE_URL: https://p2p.yxswy.com
+        run: bunx playwright test --config e2e/playwright.public.config.ts --grep 'through TURN relay$'
+
+      - name: Revalidate main and the fixed control plane before finalize
+        id: finalize_preflight
+        if: steps.release_head.outputs.current == 'true'
+        env:
+          DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
+          DEPLOY_USER: ${{ secrets.TENCENT_DEPLOY_USER }}
+          EXPECTED_SHA: ${{ github.sha }}
+          EXPECTED_CONTROL_PLANE_SHA256: ${{ steps.control_plane.outputs.sha256 }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import subprocess
+
+          expected = os.environ['EXPECTED_SHA']
+          output = subprocess.check_output(
+              ['git', 'ls-remote', '--exit-code', 'origin', 'refs/heads/main'],
+              text=True,
+          )
+          current = output.split()[0]
+          if current != expected:
+              raise SystemExit(
+                  f'refusing to finalize superseded release {expected}; main is {current}'
+              )
+          PY
+          ssh -o BatchMode=yes -o ConnectTimeout=10 \
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "/usr/bin/sudo -n /usr/local/sbin/p2p-transmission-deploy control-plane-status --expected-sha256 $EXPECTED_CONTROL_PLANE_SHA256"
 
       - name: Finalize the publicly verified release
         id: finalize
@@ -461,7 +401,7 @@ jobs:
           ssh -o BatchMode=yes -o ConnectTimeout=10 \
             -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "sudo -n /usr/local/sbin/p2p-transmission-deploy finalize --version $RELEASE_VERSION"
+            "/usr/bin/sudo -n /usr/local/sbin/p2p-transmission-deploy finalize --version $RELEASE_VERSION"
 
       - name: Roll back any staged release that was not finalized
         id: rollback
@@ -470,69 +410,43 @@ jobs:
           DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
           DEPLOY_USER: ${{ secrets.TENCENT_DEPLOY_USER }}
           RELEASE_VERSION: ${{ needs.container.outputs.release-version }}
-          HELPER_MODE: ${{ steps.deploy_helper.outputs.mode }}
-          PREVIOUS_RELEASE: ${{ steps.legacy_baseline.outputs.previous-release }}
-          OPERATION_STATE: ${{ steps.legacy_baseline.outputs.operation-state }}
-          COMPOSE_SNAPSHOT: ${{ steps.legacy_baseline.outputs.compose-snapshot }}
-          NGINX_SNAPSHOT: ${{ steps.legacy_baseline.outputs.nginx-snapshot }}
-          COMPOSE_SHA256: ${{ steps.legacy_baseline.outputs.compose-sha256 }}
-          NGINX_SHA256: ${{ steps.legacy_baseline.outputs.nginx-sha256 }}
+          EXPECTED_CONTROL_PLANE_SHA256: ${{ steps.control_plane.outputs.sha256 }}
         run: |
-          BRIDGE="p2p-transmission-legacy-${{ github.sha }}-bridge.py"
+          SUPERVISOR="p2p-transmission-deploy-${{ github.sha }}-supervisor.py"
           WAIT_DEADLINE=$((SECONDS + 1800))
-          BRIDGE_STATUS=22
-          while [[ "$BRIDGE_STATUS" == "22" || "$BRIDGE_STATUS" == "255" ]]; do
+          SUPERVISOR_STATUS=22
+          while [[ "$SUPERVISOR_STATUS" == "22" || "$SUPERVISOR_STATUS" == "255" ]]; do
             set +e
             ssh -o BatchMode=yes -o ConnectTimeout=10 \
               -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
               "$DEPLOY_USER@$DEPLOY_HOST" \
-              "python3 /tmp/$BRIDGE wait --operation-id ${{ github.sha }} --version $RELEASE_VERSION --mode $HELPER_MODE --timeout 20 --poll-interval 2"
-            BRIDGE_STATUS=$?
+              "/usr/bin/python3 -I -B -X utf8 /tmp/$SUPERVISOR wait --operation-id ${{ github.sha }} --version $RELEASE_VERSION --expected-control-plane-sha256 $EXPECTED_CONTROL_PLANE_SHA256 --timeout 20 --poll-interval 2"
+            SUPERVISOR_STATUS=$?
             set -e
             if (( SECONDS >= WAIT_DEADLINE )) && \
-              [[ "$BRIDGE_STATUS" == "22" || "$BRIDGE_STATUS" == "255" ]]; then
+              [[ "$SUPERVISOR_STATUS" == "22" || "$SUPERVISOR_STATUS" == "255" ]]; then
               echo 'timed out reconciling the deployment supervisor' >&2
               exit 1
             fi
-            if [[ "$BRIDGE_STATUS" == "22" || "$BRIDGE_STATUS" == "255" ]]; then
+            if [[ "$SUPERVISOR_STATUS" == "22" || "$SUPERVISOR_STATUS" == "255" ]]; then
               sleep 5
             fi
           done
-          if [[ "$BRIDGE_STATUS" == "25" ]]; then
+          if [[ "$SUPERVISOR_STATUS" == "25" ]]; then
             echo 'another detached deployment worker still owns the global lock; refusing concurrent rollback' >&2
             exit 1
           fi
-          if [[ "$BRIDGE_STATUS" != "0" && "$BRIDGE_STATUS" != "23" ]]; then
-            echo "deployment state is not safely recoverable: $BRIDGE_STATUS" >&2
+          if [[ "$SUPERVISOR_STATUS" != "0" && "$SUPERVISOR_STATUS" != "23" ]]; then
+            echo "deployment state is not safely recoverable: $SUPERVISOR_STATUS" >&2
             exit 1
           fi
-          if [[ "$HELPER_MODE" == "legacy" ]]; then
-            set +e
-            PROTOCOL="$(ssh -o BatchMode=yes -o ConnectTimeout=10 \
-              -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
-              "$DEPLOY_USER@$DEPLOY_HOST" \
-              'sudo -n /usr/local/sbin/p2p-transmission-deploy protocol-version' 2>/dev/null)"
-            PROTOCOL_STATUS=$?
-            set -e
-            if [[ "$PROTOCOL_STATUS" != "0" || "$PROTOCOL" != "2" ]]; then
-              echo 'legacy helper process ended before rollback support was installed' >&2
-              exit 1
-            fi
-            # The bridge has proved the old process ended; rollback may now
-            # classify a fully previous or fully target runtime without racing it.
-            # shellcheck disable=SC2029
-            ssh -o BatchMode=yes -o ConnectTimeout=10 \
-              -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
-              "$DEPLOY_USER@$DEPLOY_HOST" \
-              "sudo -n /usr/local/sbin/p2p-transmission-deploy rollback --version $RELEASE_VERSION --bootstrap-previous-version $PREVIOUS_RELEASE --bootstrap-operation-state $OPERATION_STATE --bootstrap-compose-snapshot $COMPOSE_SNAPSHOT --bootstrap-nginx-snapshot $NGINX_SNAPSHOT --bootstrap-compose-sha256 $COMPOSE_SHA256 --bootstrap-nginx-sha256 $NGINX_SHA256"
-          else
-            # Release values are locally validated identifiers.
-            # shellcheck disable=SC2029
-            ssh -o BatchMode=yes -o ConnectTimeout=10 \
-              -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
-              "$DEPLOY_USER@$DEPLOY_HOST" \
-              "sudo -n /usr/local/sbin/p2p-transmission-deploy rollback --version $RELEASE_VERSION"
-          fi
+          # The supervisor has proved the stage worker ended; the fixed helper
+          # can now reconcile its durable pending state without racing it.
+          # shellcheck disable=SC2029
+          ssh -o BatchMode=yes -o ConnectTimeout=10 \
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "/usr/bin/sudo -n /usr/local/sbin/p2p-transmission-deploy rollback --version $RELEASE_VERSION"
 
       - name: Remove temporary remote release artifacts
         id: cleanup
@@ -542,13 +456,13 @@ jobs:
           DEPLOY_USER: ${{ secrets.TENCENT_DEPLOY_USER }}
           GITHUB_SHA: ${{ github.sha }}
           RELEASE_VERSION: ${{ needs.container.outputs.release-version }}
-          HELPER_MODE: ${{ steps.deploy_helper.outputs.mode }}
+          EXPECTED_CONTROL_PLANE_SHA256: ${{ steps.control_plane.outputs.sha256 }}
         run: |
-          BRIDGE="p2p-transmission-legacy-$GITHUB_SHA-bridge.py"
+          SUPERVISOR="p2p-transmission-deploy-$GITHUB_SHA-supervisor.py"
           ssh -o BatchMode=yes -o ConnectTimeout=10 \
             -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "python3 /tmp/$BRIDGE cleanup --operation-id $GITHUB_SHA --version $RELEASE_VERSION --mode $HELPER_MODE"
+            "/usr/bin/python3 -I -B -X utf8 /tmp/$SUPERVISOR cleanup --operation-id $GITHUB_SHA --version $RELEASE_VERSION --expected-control-plane-sha256 $EXPECTED_CONTROL_PLANE_SHA256"
 
       - name: Report preserved recovery artifacts
         if: always() && steps.release_head.outputs.current == 'true' && steps.stage.outcome != 'skipped' && steps.cleanup.outcome != 'success'
@@ -559,14 +473,11 @@ jobs:
           echo "::error title=Deployment recovery unresolved::Remote recovery artifacts were preserved on $DEPLOY_HOST"
           printf '%s\n' \
             "Recovery artifact candidates on $DEPLOY_HOST:" \
-            "/tmp/p2p-transmission-legacy-$GITHUB_SHA-bridge.py" \
-            "/tmp/p2p-transmission-legacy-$GITHUB_SHA-operation.json" \
-            "/tmp/p2p-transmission-legacy-$GITHUB_SHA-status.json" \
-            "/tmp/p2p-transmission-legacy-$GITHUB_SHA-worker.log" \
-            "/tmp/p2p-transmission-legacy-$GITHUB_SHA-worker.pid" \
-            "/tmp/p2p-transmission-legacy-$GITHUB_SHA-snapshot.json" \
-            "/tmp/p2p-transmission-legacy-$GITHUB_SHA-compose.yml" \
-            "/tmp/p2p-transmission-legacy-$GITHUB_SHA-nginx.conf" \
+            "/tmp/p2p-transmission-deploy-$GITHUB_SHA-supervisor.py" \
+            "/tmp/p2p-transmission-deploy-$GITHUB_SHA-operation.json" \
+            "/tmp/p2p-transmission-deploy-$GITHUB_SHA-status.json" \
+            "/tmp/p2p-transmission-deploy-$GITHUB_SHA-worker.log" \
+            "/tmp/p2p-transmission-deploy-$GITHUB_SHA-worker.pid" \
             "/tmp/p2p-transmission-$GITHUB_SHA.tar.gz" \
             "/tmp/p2p-transmission-image-$GITHUB_SHA.tar.gz" \
             "/tmp/p2p-transmission-retired-$GITHUB_SHA.json" \
@@ -574,6 +485,15 @@ jobs:
             "/opt/p2p-transmission/deploy/production/rollback/ (protected snapshots referenced by pending.json)" \
             "Do not delete these files; inspect only the snapshot/backup paths in pending.json without printing its environment payload."
           exit 1
+
+      - name: Preserve public browser diagnostics
+        if: always() && (steps.turn_preflight.outcome == 'failure' || steps.public_browser_verify.outcome == 'failure' || steps.public_relay_verify.outcome == 'failure')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: production-browser-${{ github.run_id }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Remove temporary SSH material
         if: always()

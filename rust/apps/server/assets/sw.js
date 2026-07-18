@@ -1,12 +1,18 @@
 const CACHE_PREFIX = 'p2p-transmission-';
-const CACHE_NAME = `${CACHE_PREFIX}__P2P_RELEASE__`;
+const RELEASE = '__P2P_RELEASE__';
+const CACHE_NAME = `${CACHE_PREFIX}${RELEASE}`;
+const SHELL_ASSET_PATHS = new Set([
+  '/shell/app-shell.css',
+  '/shell/room-restore.js',
+  '/shell/app-shell.js',
+]);
+const CURRENT_SHELL_ASSETS = [...SHELL_ASSET_PATHS]
+  .map(path => `${path}?v=${encodeURIComponent(RELEASE)}`);
 const CORE_ASSETS = [
   '/',
   '/favicon.svg',
   '/manifest.webmanifest',
-  '/shell/app-shell.css',
-  '/shell/room-restore.js',
-  '/shell/app-shell.js',
+  ...CURRENT_SHELL_ASSETS,
 ];
 
 const offlineResponse = () => new Response('离线时无法访问此地址', {
@@ -30,6 +36,21 @@ const sameOriginAppAsset = value => {
   return null;
 };
 
+const applicationShellMatchesRelease = html => {
+  const expected = new Set(CURRENT_SHELL_ASSETS.map(value => new URL(
+    value,
+    self.location.origin,
+  ).href));
+  const observed = [];
+  for (const match of html.matchAll(/\b(?:src|href)="([^"]+)"/gu)) {
+    const asset = sameOriginAppAsset(match[1]);
+    if (asset && SHELL_ASSET_PATHS.has(new URL(asset).pathname)) observed.push(asset);
+  }
+  return observed.length === expected.size
+    && new Set(observed).size === expected.size
+    && observed.every(asset => expected.has(asset));
+};
+
 const cacheAsset = async (cache, url) => {
   const response = await fetch(url, { cache: 'no-store' });
   if (!response.ok) throw new Error(`unable to cache ${url}: ${response.status}`);
@@ -39,8 +60,13 @@ const cacheAsset = async (cache, url) => {
 
 const cacheApplication = async () => {
   const cache = await caches.open(CACHE_NAME);
-  const shell = await cacheAsset(cache, '/');
-  const html = await shell.text();
+  const shell = await fetch('/', { cache: 'no-store' });
+  if (!shell.ok) throw new Error(`unable to cache /: ${shell.status}`);
+  const html = await shell.clone().text();
+  if (!applicationShellMatchesRelease(html)) {
+    throw new Error('application shell does not match this service worker release');
+  }
+  await cache.put('/', shell.clone());
   const assets = new Set(CORE_ASSETS.slice(1).map(value => new URL(
     value,
     self.location.origin,
@@ -86,7 +112,10 @@ const networkFirstApplication = async request => {
   try {
     const response = await fetch(request);
     if (response.ok && new URL(response.url).pathname === '/') {
-      await cache.put('/', response.clone());
+      const html = await response.clone().text();
+      if (applicationShellMatchesRelease(html)) {
+        await cache.put('/', response.clone());
+      }
     }
     return response;
   } catch {
@@ -102,6 +131,37 @@ const networkFirstAsset = async request => {
     return response;
   } catch {
     return await cache.match(request) ?? offlineResponse();
+  }
+};
+
+const currentReleaseShellAsset = url => {
+  const query = [...url.searchParams.entries()];
+  return SHELL_ASSET_PATHS.has(url.pathname)
+    && query.length === 1
+    && query[0][0] === 'v'
+    && query[0][1] === RELEASE;
+};
+
+const cacheFirstShellAsset = async request => {
+  const cache = await caches.open(CACHE_NAME);
+  const cached = await cache.match(request);
+  if (cached) return cached;
+  try {
+    const response = await fetch(request, { cache: 'no-store' });
+    if (response.ok) await cache.put(request, response.clone());
+    return response;
+  } catch {
+    return offlineResponse();
+  }
+};
+
+const networkFirstUnversionedShellAsset = async request => {
+  try {
+    // A previous worker can control a page from the next release. Do not put
+    // that page's asset URL in this release's cache or fall back to mismatched bytes.
+    return await fetch(request, { cache: 'no-store' });
+  } catch {
+    return offlineResponse();
   }
 };
 
@@ -138,8 +198,15 @@ self.addEventListener('fetch', event => {
     event.respondWith(staleWhileRevalidate(request));
     return;
   }
-  if (/^\/shell\//u.test(url.pathname)
-      || url.pathname === '/favicon.svg'
+  if (SHELL_ASSET_PATHS.has(url.pathname) && currentReleaseShellAsset(url)) {
+    event.respondWith(cacheFirstShellAsset(request));
+    return;
+  }
+  if (/^\/shell\//u.test(url.pathname)) {
+    event.respondWith(networkFirstUnversionedShellAsset(request));
+    return;
+  }
+  if (url.pathname === '/favicon.svg'
       || url.pathname === '/manifest.webmanifest') {
     event.respondWith(networkFirstAsset(request));
   }

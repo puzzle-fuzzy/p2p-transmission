@@ -21,7 +21,8 @@ pub(super) fn TransferRequestDialog(
     files: Vec<TransferFile>,
     recovery_available: bool,
 ) -> Element {
-    let actions = TransferActions::new(model, rtc_peers);
+    let dialog_error = use_signal(|| None::<String>);
+    let actions = TransferActions::new(model, rtc_peers).with_dialog_error(dialog_error);
     use_effect(|| {
         let _ = show_modal_dialog("transfer-request-dialog");
     });
@@ -76,6 +77,9 @@ pub(super) fn TransferRequestDialog(
                             "当前浏览器不支持大文件直接保存，请使用桌面版 Chrome 或 Edge。"
                         }
                     }
+                }
+                if let Some(error) = dialog_error() {
+                    p { class: "dialog-error", role: "alert", "{error}" }
                 }
                 div { class: "dialog-actions dialog-actions-primary-first",
                     if streamed {

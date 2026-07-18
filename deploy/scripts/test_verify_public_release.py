@@ -38,9 +38,9 @@ class VerifyPublicReleaseTests(unittest.TestCase):
     def test_shell_verification_fetches_css_scripts_service_worker_and_wasm(self) -> None:
         index = '''
             <!doctype html>
-            <link rel="stylesheet" href="/shell/app-shell.css">
-            <script src="/shell/room-restore.js"></script>
-            <script src="/shell/app-shell.js" defer></script>
+            <link rel="stylesheet" href="/shell/app-shell.css?v=2.0.1-abcdef0">
+            <script src="/shell/room-restore.js?v=2.0.1-abcdef0"></script>
+            <script src="/shell/app-shell.js?v=2.0.1-abcdef0" defer></script>
             <script type="module" src="/./assets/p2p-web-dxh778fd993dcd1d7b.js"></script>
         '''
         requested: list[str] = []
@@ -56,13 +56,13 @@ class VerifyPublicReleaseTests(unittest.TestCase):
             return b'fixture'
 
         assets = verify_public_release.verify_shell_assets(
-            'https://p2p.yxswy.com/', index, fetch
+            'https://p2p.yxswy.com/', index, '2.0.1-abcdef0', fetch
         )
 
         expected = {
-            'https://p2p.yxswy.com/shell/app-shell.css',
-            'https://p2p.yxswy.com/shell/room-restore.js',
-            'https://p2p.yxswy.com/shell/app-shell.js',
+            'https://p2p.yxswy.com/shell/app-shell.css?v=2.0.1-abcdef0',
+            'https://p2p.yxswy.com/shell/room-restore.js?v=2.0.1-abcdef0',
+            'https://p2p.yxswy.com/shell/app-shell.js?v=2.0.1-abcdef0',
             'https://p2p.yxswy.com/sw.js',
             'https://p2p.yxswy.com/assets/p2p-web-dxh778fd993dcd1d7b.js',
             'https://p2p.yxswy.com/assets/p2p-web_bg-dxh5ece83cd412cb753.wasm',
@@ -72,9 +72,9 @@ class VerifyPublicReleaseTests(unittest.TestCase):
 
     def test_shell_verification_rejects_a_script_without_wasm(self) -> None:
         index = '''
-            <link rel="stylesheet" href="/shell/app-shell.css">
-            <script src="/shell/room-restore.js"></script>
-            <script src="/shell/app-shell.js"></script>
+            <link rel="stylesheet" href="/shell/app-shell.css?v=2.0.1-abcdef0">
+            <script src="/shell/room-restore.js?v=2.0.1-abcdef0"></script>
+            <script src="/shell/app-shell.js?v=2.0.1-abcdef0"></script>
             <script type="module" src="/assets/p2p-web-build123.js"></script>
         '''
 
@@ -82,6 +82,7 @@ class VerifyPublicReleaseTests(unittest.TestCase):
             verify_public_release.verify_shell_assets(
                 'https://p2p.yxswy.com/',
                 index,
+                '2.0.1-abcdef0',
                 lambda url: (
                     b'new URL("p2p-web_bg.wasm", import.meta.url)'
                     if url.endswith('.js')
@@ -92,14 +93,54 @@ class VerifyPublicReleaseTests(unittest.TestCase):
     def test_shell_verification_rejects_cross_origin_boot_assets(self) -> None:
         index = '''
             <link rel="stylesheet" href="https://assets.example/app-shell.css">
-            <script src="/shell/room-restore.js"></script>
-            <script src="/shell/app-shell.js"></script>
+            <script src="/shell/room-restore.js?v=2.0.1-abcdef0"></script>
+            <script src="/shell/app-shell.js?v=2.0.1-abcdef0"></script>
             <script type="module" src="/assets/p2p-web-build123.js"></script>
         '''
 
         with self.assertRaises(verify_public_release.PublicVerificationError):
             verify_public_release.verify_shell_assets(
-                'https://p2p.yxswy.com/', index, lambda _url: b'fixture'
+                'https://p2p.yxswy.com/',
+                index,
+                '2.0.1-abcdef0',
+                lambda _url: b'fixture',
+            )
+
+    def test_shell_verification_rejects_missing_or_stale_release_fingerprints(self) -> None:
+        for fingerprint in ('', '?v=2.0.1-abcdef1'):
+            with self.subTest(fingerprint=fingerprint):
+                index = f'''
+                    <link rel="stylesheet" href="/shell/app-shell.css{fingerprint}">
+                    <script src="/shell/room-restore.js{fingerprint}"></script>
+                    <script src="/shell/app-shell.js{fingerprint}"></script>
+                    <script type="module" src="/assets/p2p-web-build123.js"></script>
+                '''
+                with self.assertRaises(verify_public_release.PublicVerificationError):
+                    verify_public_release.verify_shell_assets(
+                        'https://p2p.yxswy.com/',
+                        index,
+                        '2.0.1-abcdef0',
+                        lambda _url: b'fixture',
+                    )
+
+    def test_shell_verification_rejects_duplicate_release_references(self) -> None:
+        index = '''
+            <link rel="stylesheet" href="/shell/app-shell.css?v=2.0.1-abcdef0">
+            <link rel="stylesheet" href="/shell/app-shell.css?v=2.0.1-abcdef1">
+            <script src="/shell/room-restore.js?v=2.0.1-abcdef0"></script>
+            <script src="/shell/app-shell.js?v=2.0.1-abcdef0"></script>
+            <script type="module" src="/assets/p2p-web-build123.js"></script>
+        '''
+
+        with self.assertRaisesRegex(
+            verify_public_release.PublicVerificationError,
+            'app-shell.css exactly once',
+        ):
+            verify_public_release.verify_shell_assets(
+                'https://p2p.yxswy.com/',
+                index,
+                '2.0.1-abcdef0',
+                lambda _url: b'fixture',
             )
 
     def test_base_url_must_be_a_plain_https_origin(self) -> None:
@@ -116,7 +157,7 @@ class VerifyPublicReleaseTests(unittest.TestCase):
                 with self.assertRaises(verify_public_release.PublicVerificationError):
                     verify_public_release.canonical_base_url(invalid)
 
-    def test_removed_legacy_paths_are_all_verified_as_direct_404s(self) -> None:
+    def test_removed_public_paths_are_all_verified_as_direct_404s(self) -> None:
         requested: list[str] = []
         paths = verify_public_release.verify_removed_public_paths(
             'https://p2p.yxswy.com/', requested.append
@@ -127,6 +168,8 @@ class VerifyPublicReleaseTests(unittest.TestCase):
                 'https://p2p.yxswy.com/app',
                 'https://p2p.yxswy.com/app/',
                 'https://p2p.yxswy.com/index.html',
+                'https://p2p.yxswy.com/shell/app.css',
+                'https://p2p.yxswy.com/internal/metrics',
             ],
         )
         self.assertEqual(requested, paths)

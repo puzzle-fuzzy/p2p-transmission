@@ -3,6 +3,7 @@
 pub mod config;
 pub mod http_api;
 pub mod maintenance;
+pub mod observability;
 pub mod rate_limit;
 pub mod realtime;
 pub mod services;
@@ -17,6 +18,7 @@ use std::{
 use axum::{
     Extension, Json, Router,
     http::{HeaderName, HeaderValue, StatusCode, header},
+    middleware,
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -39,6 +41,13 @@ pub fn release_version() -> &'static str {
     option_env!("P2P_RELEASE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
 }
 
+pub(crate) fn is_safe_release_version(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
 pub fn app(
     web_root: impl Into<PathBuf>,
     state: AppState,
@@ -46,21 +55,23 @@ pub fn app(
     let web_root = web_root.into();
     let shell_renderer = web_shell::WebShellRenderer::from_web_root(&web_root)?;
     let static_files = ServeDir::new(web_root);
+    let observability = state.observability.clone();
 
     Ok(Router::new()
         .route("/", get(web_shell::root).layer(Extension(shell_renderer)))
         // Prevent the static fallback from exposing a second HTML entrypoint.
         .route("/index.html", get(missing_html_entry))
         .route("/shell/app-shell.css", get(app_css))
-        // Keep the former stylesheet endpoint for one service-worker update
-        // cycle. The application shell no longer references it.
-        .route("/shell/app.css", get(app_css))
         .route("/shell/room-restore.js", get(room_restore_js))
         .route("/shell/app-shell.js", get(app_shell_js))
         .route("/manifest.webmanifest", get(web_manifest))
         .route("/sw.js", get(service_worker))
         .route("/health/live", get(live))
         .route("/health/ready", get(http_api::ready))
+        .route(
+            "/internal/metrics",
+            get(observability::metrics).layer(Extension(observability.clone())),
+        )
         .route("/realtime", get(realtime::socket::upgrade))
         .route("/api/meta", get(meta))
         .nest("/api", http_api::router())
@@ -86,6 +97,10 @@ pub fn app(
             Duration::from_secs(30),
         ))
         .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn_with_state(
+            observability,
+            observability::track_http,
+        ))
         .with_state(state))
 }
 
@@ -266,6 +281,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn observability_endpoint_reports_router_requests() {
+        let web_root = fixture_dir();
+        let state = test_state(&web_root).await;
+        let router = test_app(&web_root, state.clone());
+
+        let health = router
+            .clone()
+            .oneshot(
+                Request::get("/health/live")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("health response");
+        assert_eq!(health.status(), StatusCode::NO_CONTENT);
+
+        let metrics = router
+            .oneshot(
+                Request::get("/internal/metrics")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("metrics response");
+        assert_eq!(metrics.status(), StatusCode::OK);
+        assert_eq!(
+            metrics.headers()[header::CONTENT_TYPE],
+            HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8")
+        );
+        assert_eq!(
+            metrics.headers()[header::CACHE_CONTROL],
+            HeaderValue::from_static("no-store")
+        );
+        let metrics = metrics
+            .into_body()
+            .collect()
+            .await
+            .expect("collect metrics")
+            .to_bytes();
+        let metrics = String::from_utf8(metrics.to_vec()).expect("metrics UTF-8");
+        assert!(metrics.contains("p2p_http_requests_total 1\n"));
+        assert!(metrics.contains("p2p_websocket_connections_active 0\n"));
+
+        state.services.storage.close().await;
+        fs::remove_dir_all(web_root).expect("remove static fixture directory");
+    }
+
+    #[tokio::test]
     async fn root_is_the_only_application_entrypoint() {
         let web_root = fixture_dir();
         let state = test_state(&web_root).await;
@@ -301,6 +364,7 @@ mod tests {
             "/app?intent=create",
             "/app/?room=ABC234",
             "/index.html",
+            "/shell/app.css",
             "/unknown-route",
             "/assets/missing.js",
             "/appx",
@@ -387,6 +451,11 @@ mod tests {
         assert!(service_worker.contains(release_version()));
         assert!(!service_worker.contains("__P2P_RELEASE__"));
         assert!(service_worker.contains("'/shell/app-shell.css'"));
+        assert!(service_worker.contains("?v=${encodeURIComponent(RELEASE)}"));
+        assert!(service_worker.contains("applicationShellMatchesRelease(html)"));
+        assert!(service_worker.contains("currentReleaseShellAsset(url)"));
+        assert!(service_worker.contains("cacheFirstShellAsset(request)"));
+        assert!(service_worker.contains("networkFirstUnversionedShellAsset(request)"));
         assert!(service_worker.contains("networkFirstAsset(request)"));
         assert!(!service_worker.contains("url.pathname === '/app'"));
 

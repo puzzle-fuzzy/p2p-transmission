@@ -16,6 +16,7 @@ use crate::transfer_presentation::transfer_is_active;
 pub(super) struct TransferActions {
     model: Signal<AppModel>,
     rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+    dialog_error: Option<Signal<Option<String>>>,
 }
 
 impl TransferActions {
@@ -23,16 +24,46 @@ impl TransferActions {
         model: Signal<AppModel>,
         rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
     ) -> Self {
-        Self { model, rtc_peers }
+        Self {
+            model,
+            rtc_peers,
+            dialog_error: None,
+        }
+    }
+
+    pub(super) fn with_dialog_error(mut self, dialog_error: Signal<Option<String>>) -> Self {
+        self.dialog_error = Some(dialog_error);
+        self
+    }
+
+    fn clear_error(self) {
+        let mut model = self.model;
+        model.write().error = None;
+        if let Some(mut dialog_error) = self.dialog_error
+            && let Ok(mut error) = dialog_error.try_write()
+        {
+            *error = None;
+        }
+    }
+
+    fn set_error(self, message: String) {
+        if let Some(mut dialog_error) = self.dialog_error {
+            if let Ok(mut error) = dialog_error.try_write() {
+                *error = Some(message);
+            }
+        } else {
+            let mut model = self.model;
+            model.write().error = Some(message);
+        }
     }
 
     pub(super) fn submit_selected_files(self, peer_ids: Vec<String>) -> Vec<String> {
-        let mut model = self.model;
+        self.clear_error();
         let files = match browser_files_from_input("transfer-file-input") {
             Ok(files) if !files.is_empty() => files,
             Ok(_) => return Vec::new(),
             Err(error) => {
-                model.write().error = Some(friendly_transfer_error(&error));
+                self.set_error(friendly_transfer_error(&error));
                 return Vec::new();
             }
         };
@@ -50,17 +81,19 @@ impl TransferActions {
             }
         }
         drop(peers);
-        model.write().error = last_error;
+        if let Some(error) = last_error {
+            self.set_error(error);
+        }
         offered
     }
 
     pub(super) async fn submit_persistent_source_files(self, peer_ids: Vec<String>) -> Vec<String> {
-        let mut model = self.model;
+        self.clear_error();
         let files = match choose_persistent_source_files().await {
             Ok(files) if !files.is_empty() => files,
             Ok(_) | Err(BrowserPlatformError::UserCancelled) => return Vec::new(),
             Err(error) => {
-                model.write().error = Some(friendly_transfer_error(&error));
+                self.set_error(friendly_transfer_error(&error));
                 return Vec::new();
             }
         };
@@ -83,12 +116,14 @@ impl TransferActions {
                 Err(error) => last_error = Some(friendly_transfer_error(&error)),
             }
         }
-        model.write().error = last_error;
+        if let Some(error) = last_error {
+            self.set_error(error);
+        }
         offered
     }
 
     pub(super) fn resume_outgoing_transfers(self, peer_ids: Vec<String>) {
-        let mut model = self.model;
+        self.clear_error();
         let peers = {
             let peers = self.rtc_peers.read();
             peer_ids
@@ -103,20 +138,20 @@ impl TransferActions {
                     last_error = Some(friendly_transfer_error(&error));
                 }
             }
-            model.write().error = last_error;
+            if let Some(error) = last_error {
+                self.set_error(error);
+            }
         });
     }
 
     pub(super) fn decide_incoming_transfer(self, peer_id: &str, transfer_id: &str, accepted: bool) {
-        let mut model = self.model;
+        self.clear_error();
         let Some(peer) = self.rtc_peers.read().get(peer_id).cloned() else {
-            model.write().error = Some("点对点连接已经断开".to_owned());
+            self.set_error("点对点连接已经断开".to_owned());
             return;
         };
         if let Err(error) = peer.decide_transfer(transfer_id, accepted) {
-            model.write().error = Some(friendly_transfer_error(&error));
-        } else {
-            model.write().error = None;
+            self.set_error(friendly_transfer_error(&error));
         }
     }
 
@@ -126,24 +161,24 @@ impl TransferActions {
         transfer_id: String,
         file_names: Vec<String>,
     ) {
-        let mut model = self.model;
+        self.clear_error();
         let Some(peer) = self.rtc_peers.read().get(&peer_id).cloned() else {
-            model.write().error = Some("点对点连接已经断开".to_owned());
+            self.set_error("点对点连接已经断开".to_owned());
             return;
         };
         let writers = match choose_stream_files(&file_names).await {
             Ok(writers) => writers,
             Err(BrowserPlatformError::UserCancelled) => return,
             Err(error) => {
-                model.write().error = Some(friendly_transfer_error(&error));
+                self.set_error(friendly_transfer_error(&error));
                 return;
             }
         };
         if let Err(error) = peer.accept_stream_transfer(&transfer_id, writers).await {
-            model.write().error = Some(friendly_transfer_error(&error));
+            self.set_error(friendly_transfer_error(&error));
         } else {
+            let mut model = self.model;
             let mut state = model.write();
-            state.error = None;
             state.notice = Some(if file_names.len() > 1 {
                 "已选择保存文件夹，开始按顺序接收".to_owned()
             } else {
@@ -153,22 +188,22 @@ impl TransferActions {
     }
 
     pub(super) async fn resume_streaming_transfer(self, peer_id: String, transfer_id: String) {
-        let mut model = self.model;
+        self.clear_error();
         let Some(peer) = self.rtc_peers.read().get(&peer_id).cloned() else {
-            model.write().error = Some("点对点连接已经断开".to_owned());
+            self.set_error("点对点连接已经断开".to_owned());
             return;
         };
         if let Err(error) = peer.resume_stream_transfer(&transfer_id).await {
-            model.write().error = Some(friendly_transfer_error(&error));
+            self.set_error(friendly_transfer_error(&error));
         } else {
+            let mut model = self.model;
             let mut state = model.write();
-            state.error = None;
             state.notice = Some("已校验原保存位置，继续接收".to_owned());
         }
     }
 
     pub(super) fn cancel_current_transfers(self, role: RoomRole, batch_peer_ids: Vec<String>) {
-        let mut model = self.model;
+        self.clear_error();
         let reason = if role == RoomRole::Owner {
             CancelReason::SenderCancelled
         } else {
@@ -177,7 +212,7 @@ impl TransferActions {
         let peer_ids = if role == RoomRole::Owner {
             batch_peer_ids
         } else {
-            model
+            self.model
                 .read()
                 .transfers_by_peer
                 .iter()
@@ -199,7 +234,9 @@ impl TransferActions {
                     last_error = Some(friendly_transfer_error(&error));
                 }
             }
-            model.write().error = last_error;
+            if let Some(error) = last_error {
+                self.set_error(error);
+            }
         });
     }
 

@@ -25,8 +25,12 @@ SSR_LOBBY_START = "<!-- P2P_SSR_LOBBY_START -->"
 SSR_LOBBY_END = "<!-- P2P_SSR_LOBBY_END -->"
 ISLAND_MOUNT = '<div id="main" hidden inert aria-hidden="true"></div>'
 BOOT_FALLBACK = 'id="boot-fallback"'
-APP_STYLESHEET_REFERENCE = 'href="/shell/app-shell.css"'
-ROOM_RESTORE_SCRIPT = 'src="/shell/room-restore.js"'
+RELEASE_PLACEHOLDER = "__P2P_RELEASE__"
+SHELL_ASSET_REFERENCES = (
+    'href="/shell/app-shell.css?v=__P2P_RELEASE__"',
+    'src="/shell/room-restore.js?v=__P2P_RELEASE__"',
+    'src="/shell/app-shell.js?v=__P2P_RELEASE__"',
+)
 CRITICAL_RESTORE_STYLE = '.boot-room-restore { display: none; }'
 
 
@@ -54,10 +58,11 @@ def shell_contract_failures(index_html: Path) -> list[str]:
         failures.append("built HTML must contain one hidden inert #main island mount")
     if BOOT_FALLBACK in template:
         failures.append("built HTML still contains the deleted handwritten lobby fallback")
-    if APP_STYLESHEET_REFERENCE not in template:
-        failures.append("built HTML must reference the version-migrated application stylesheet")
-    if ROOM_RESTORE_SCRIPT not in template:
-        failures.append("built HTML must load the pre-paint room restore hint")
+    if template.count(RELEASE_PLACEHOLDER) != len(SHELL_ASSET_REFERENCES):
+        failures.append("built HTML must fingerprint exactly three shell assets")
+    for reference in SHELL_ASSET_REFERENCES:
+        if template.count(reference) != 1:
+            failures.append(f"built HTML must contain exactly one {reference}")
     if CRITICAL_RESTORE_STYLE not in template:
         failures.append("built HTML must contain the critical room restore visibility rule")
     if not failures and not (

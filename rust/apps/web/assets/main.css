@@ -16,7 +16,7 @@
   --border-subtle: rgba(255, 251, 235, 0.08);
   --control-border: rgba(255, 251, 235, 0.36);
   --surface-hover: rgba(255, 255, 255, 0.05);
-  --accent-surface: rgba(94, 17, 209, 0.15);
+  --accent-surface: rgba(94, 17, 209, 0.22);
   --scrim: rgba(0, 0, 0, 0.6);
   --qr-surface: rgba(255, 248, 231, 0.94);
 }
@@ -770,6 +770,19 @@ html[data-p2p-room-restore="pending"] #boot-fallback .boot-room-restore {
   display: block;
 }
 
+.transfer-file-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  margin-top: 4px;
+  gap: 2px 10px;
+}
+
+.transfer-file-meta .transfer-file-secondary span {
+  display: inline;
+  margin: 0;
+}
+
 .transfer-file-meta strong {
   overflow: hidden;
   color: var(--ink);
@@ -784,6 +797,12 @@ html[data-p2p-room-restore="pending"] #boot-fallback .boot-room-restore {
   margin-top: 4px;
   color: var(--ink-muted);
   font-size: 0.75rem;
+}
+
+.transfer-file-meta .transfer-file-status {
+  color: var(--ink);
+  font-weight: 500;
+  overflow-wrap: anywhere;
 }
 
 .transfer-file-row code {
@@ -1002,10 +1021,12 @@ html[data-p2p-room-restore="pending"] #boot-fallback .boot-room-restore {
   white-space: nowrap;
 }
 
-.recipient-picker-error {
+.recipient-picker-error,
+.dialog-error {
   margin: 12px 0 0;
   color: var(--ink);
   font-size: 0.75rem;
+  line-height: 1.6;
 }
 
 .about-dialog p,

@@ -43,6 +43,7 @@ pub(super) fn ShareDialog(
     room_code: String,
     capability: String,
 ) -> Element {
+    let mut share_error = use_signal(|| None::<String>);
     let invite_url = build_invite_url(&room_code, &capability).ok();
     let qr_code = invite_url.as_deref().and_then(invite_qr_code);
     let has_native_share = native_share_supported();
@@ -84,6 +85,7 @@ pub(super) fn ShareDialog(
                     class: "primary-button",
                     r#type: "button",
                     onclick: move |_| {
+                        share_error.set(None);
                         let room_code = room_code.clone();
                         let capability = capability.clone();
                         spawn(async move {
@@ -114,14 +116,17 @@ pub(super) fn ShareDialog(
                                 }
                                 Ok(None) => {}
                                 Err(_) => {
-                                    model.write().notice = Some(
-                                        "无法自动分享，请改用房间码加入".to_owned(),
-                                    );
+                                    if let Ok(mut error) = share_error.try_write() {
+                                        *error = Some("无法自动分享，请改用房间码加入".to_owned());
+                                    }
                                 }
                             }
                         });
                     },
                     if has_native_share { "分享邀请链接" } else { "复制邀请链接" }
+                }
+                if let Some(error) = share_error() {
+                    p { class: "dialog-error", role: "alert", "{error}" }
                 }
                 button {
                     class: "dialog-close",

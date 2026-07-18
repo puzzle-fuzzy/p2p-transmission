@@ -16,6 +16,13 @@ pub const SSR_LOBBY_END: &str = "<!-- P2P_SSR_LOBBY_END -->";
 
 const BOOT_FALLBACK_ID: &str = "id=\"boot-fallback\"";
 const ISLAND_MOUNT_ID: &str = "id=\"main\"";
+const RELEASE_PLACEHOLDER: &str = "__P2P_RELEASE__";
+const RELEASE_FINGERPRINT_COUNT: usize = 3;
+const VERSIONED_SHELL_ASSET_REFERENCES: [&str; RELEASE_FINGERPRINT_COUNT] = [
+    "href=\"/shell/app-shell.css?v=__P2P_RELEASE__\"",
+    "src=\"/shell/room-restore.js?v=__P2P_RELEASE__\"",
+    "src=\"/shell/app-shell.js?v=__P2P_RELEASE__\"",
+];
 
 #[cfg(test)]
 // Combined with the release template's 2 KiB raw ceiling, this keeps the
@@ -24,7 +31,11 @@ const SSR_SOURCE_RESPONSE_RAW_BUDGET: usize = 6 * 1024;
 
 #[cfg(test)]
 pub(crate) const TEST_WEB_SHELL_TEMPLATE: &str = concat!(
-    "<!doctype html><body>",
+    "<!doctype html><head>",
+    "<link rel=\"stylesheet\" href=\"/shell/app-shell.css?v=__P2P_RELEASE__\">",
+    "<script src=\"/shell/room-restore.js?v=__P2P_RELEASE__\"></script>",
+    "<script src=\"/shell/app-shell.js?v=__P2P_RELEASE__\" defer></script>",
+    "</head><body>",
     "<!-- P2P_SSR_LOBBY_START -->",
     "<div id=\"boot-fallback\"><main>build fallback</main></div>",
     "<!-- P2P_SSR_LOBBY_END -->",
@@ -65,7 +76,10 @@ impl WebShellRenderer {
         if lobby_html.trim().is_empty() {
             return Err(WebShellTemplateError::EmptyLobby);
         }
-        if lobby_html.contains(SSR_LOBBY_START) || lobby_html.contains(SSR_LOBBY_END) {
+        if lobby_html.contains(SSR_LOBBY_START)
+            || lobby_html.contains(SSR_LOBBY_END)
+            || lobby_html.contains(RELEASE_PLACEHOLDER)
+        {
             return Err(WebShellTemplateError::ReservedMarkerInLobby);
         }
         let boot_fallback_count = lobby_html.matches(BOOT_FALLBACK_ID).count();
@@ -104,6 +118,27 @@ impl WebShellRenderer {
             return Err(WebShellTemplateError::IslandInsideLobby);
         }
 
+        let release_fingerprint_count = template.matches(RELEASE_PLACEHOLDER).count();
+        if release_fingerprint_count != RELEASE_FINGERPRINT_COUNT {
+            return Err(WebShellTemplateError::ReleaseFingerprintCount {
+                actual: release_fingerprint_count,
+            });
+        }
+        for reference in VERSIONED_SHELL_ASSET_REFERENCES {
+            let actual = template.matches(reference).count();
+            if actual != 1 {
+                return Err(WebShellTemplateError::VersionedShellAssetReferenceCount {
+                    reference,
+                    actual,
+                });
+            }
+        }
+
+        let release = crate::release_version();
+        if !crate::is_safe_release_version(release) {
+            return Err(WebShellTemplateError::InvalidReleaseVersion);
+        }
+
         let lobby_html = lobby_html.trim();
         let mut html = String::with_capacity(template.len() + lobby_html.len());
         let content_start = start + SSR_LOBBY_START.len();
@@ -113,6 +148,7 @@ impl WebShellRenderer {
         html.push('\n');
         html.push_str(&template[end..]);
 
+        let html = html.replace(RELEASE_PLACEHOLDER, release);
         Ok(Self {
             html: Bytes::from(html),
         })
@@ -183,6 +219,17 @@ pub enum WebShellTemplateError {
     EmptyLobby,
     #[error("the SSR lobby HTML contains a reserved template marker")]
     ReservedMarkerInLobby,
+    #[error("the web shell must contain exactly three release fingerprints, found {actual}")]
+    ReleaseFingerprintCount { actual: usize },
+    #[error("the web shell must contain exactly one {reference}, found {actual}")]
+    VersionedShellAssetReferenceCount {
+        reference: &'static str,
+        actual: usize,
+    },
+    #[error(
+        "the release version may contain only ASCII letters, digits, dots, underscores, and hyphens"
+    )]
+    InvalidReleaseVersion,
     #[error("the SSR lobby HTML must contain exactly one #boot-fallback, found {actual}")]
     BootFallbackCount { actual: usize },
     #[error("the SSR lobby HTML must not contain the #main WebAssembly island mount")]
@@ -215,14 +262,38 @@ mod tests {
         assert!(renderer.html().contains(p2p_ui_shell::NOSCRIPT_COPY));
         assert_eq!(renderer.html().matches(BOOT_FALLBACK_ID).count(), 1);
         assert_eq!(renderer.html().matches(ISLAND_MOUNT_ID).count(), 1);
-        assert!(renderer.html().contains("href=\"/shell/app-shell.css\""));
+        let release = crate::release_version();
+        assert!(
+            renderer
+                .html()
+                .contains(&format!("href=\"/shell/app-shell.css?v={release}\""))
+        );
+        assert!(
+            renderer
+                .html()
+                .contains(&format!("src=\"/shell/room-restore.js?v={release}\""))
+        );
+        assert!(
+            renderer
+                .html()
+                .contains(&format!("src=\"/shell/app-shell.js?v={release}\""))
+        );
+        assert!(!renderer.html().contains(RELEASE_PLACEHOLDER));
+        assert!(
+            renderer
+                .html()
+                .contains("href=\"/favicon.svg\" type=\"image/svg+xml\" sizes=\"any\"")
+        );
+        assert!(!renderer.html().contains("href=\"/favicon.ico\""));
         let critical_restore_style = renderer
             .html()
             .find(".boot-room-restore { display: none; }")
             .expect("the room restore state needs inline critical CSS for old service workers");
+        let restore_reference =
+            format!("<script src=\"/shell/room-restore.js?v={release}\"></script>");
         let restore_script = renderer
             .html()
-            .find("<script src=\"/shell/room-restore.js\"></script>")
+            .find(&restore_reference)
             .expect("the room restore hint must block body parsing before first paint");
         let fallback = renderer
             .html()
@@ -300,6 +371,40 @@ mod tests {
             .expect_err("reversed markers must fail"),
             WebShellTemplateError::MarkerOrder
         );
+    }
+
+    #[test]
+    fn rejects_missing_or_misplaced_release_fingerprints() {
+        let lobby = "<div id=\"boot-fallback\"><main>lobby</main></div>";
+        let unversioned = TEST_WEB_SHELL_TEMPLATE.replace("?v=__P2P_RELEASE__", "");
+        assert_eq!(
+            WebShellRenderer::from_template(&unversioned, lobby)
+                .expect_err("unversioned shell assets must fail"),
+            WebShellTemplateError::ReleaseFingerprintCount { actual: 0 }
+        );
+
+        let misplaced = TEST_WEB_SHELL_TEMPLATE.replace(
+            "href=\"/shell/app-shell.css?v=__P2P_RELEASE__\"",
+            "href=\"/shell/other.css?v=__P2P_RELEASE__\"",
+        );
+        assert_eq!(
+            WebShellRenderer::from_template(&misplaced, lobby)
+                .expect_err("a fingerprint on the wrong asset must fail"),
+            WebShellTemplateError::VersionedShellAssetReferenceCount {
+                reference: VERSIONED_SHELL_ASSET_REFERENCES[0],
+                actual: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn release_fingerprint_character_set_is_url_and_javascript_safe() {
+        for valid in ["2.0.1", "2.0.1-abcdef0", "release_candidate-1"] {
+            assert!(crate::is_safe_release_version(valid));
+        }
+        for invalid in ["", "release+1", "release&1", "release'1", "版本-1"] {
+            assert!(!crate::is_safe_release_version(invalid));
+        }
     }
 
     #[test]

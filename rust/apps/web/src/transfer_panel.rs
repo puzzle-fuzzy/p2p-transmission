@@ -193,7 +193,11 @@ pub(super) fn TransferPanel(
 
     rsx! {
         section { class: "transfer-panel", aria_label: "文件传输",
-            div { class: "transfer-panel-copy",
+            div {
+                class: "transfer-panel-copy",
+                role: "status",
+                aria_live: "polite",
+                aria_atomic: "true",
                 h1 { "{title}" }
                 p { "{description}" }
             }
@@ -224,7 +228,14 @@ pub(super) fn TransferPanel(
                             }
                             div { class: "transfer-file-meta",
                                 strong { title: "{item.name}", "{item.name}" }
-                                span { "{format_bytes(item.size_bytes)}" }
+                                div { class: "transfer-file-secondary",
+                                    span { "{format_bytes(item.size_bytes)}" }
+                                    span {
+                                        class: "transfer-file-status",
+                                        aria_hidden: "true",
+                                        "{file_progress_value_texts[index]}"
+                                    }
+                                }
                             }
                             if index + 1 == files.len() {
                                 if role == RoomRole::Owner
@@ -256,7 +267,14 @@ pub(super) fn TransferPanel(
                     }
                     div { class: "transfer-file-meta",
                         strong { title: "{file.name}", "{file.name}" }
-                        span { "{format_bytes(file.size_bytes)}" }
+                        div { class: "transfer-file-secondary",
+                            span { "{format_bytes(file.size_bytes)}" }
+                            span {
+                                class: "transfer-file-status",
+                                aria_hidden: "true",
+                                "{fallback_progress_value_text}"
+                            }
+                        }
                     }
                 }
             }
@@ -403,6 +421,7 @@ pub(super) fn TransferPanel(
             }
             if let Some((peer_id, transfer_id, mode, files, recovery_available)) = incoming_request {
                 TransferRequestDialog {
+                    key: "{transfer_id}",
                     model,
                     rtc_peers,
                     peer_id,

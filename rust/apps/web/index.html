@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#2d2d2d">
-    <link rel="icon" href="/favicon.ico" sizes="any">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any">
     <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180">
     <meta
@@ -13,14 +13,14 @@
     >
     <link rel="manifest" href="/manifest.webmanifest">
     <title>{app_title}</title>
-    <link rel="stylesheet" href="/shell/app-shell.css">
+    <link rel="stylesheet" href="/shell/app-shell.css?v=__P2P_RELEASE__">
     <style>
       .boot-room-restore { display: none; }
       html[data-p2p-room-restore="pending"] #boot-fallback .boot-lobby-shell { display: none; }
       html[data-p2p-room-restore="pending"] #boot-fallback .boot-room-restore { display: block; }
     </style>
-    <script src="/shell/room-restore.js"></script>
-    <script src="/shell/app-shell.js" defer></script>
+    <script src="/shell/room-restore.js?v=__P2P_RELEASE__"></script>
+    <script src="/shell/app-shell.js?v=__P2P_RELEASE__" defer></script>
   </head>
   <body>
     <!-- P2P_SSR_LOBBY_START -->

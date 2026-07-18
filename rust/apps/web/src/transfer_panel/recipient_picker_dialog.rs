@@ -32,7 +32,12 @@ pub(super) fn RecipientPickerDialog(
                         h2 { id: "recipient-picker-title", "选择接收者" }
                         p { "选择本次文件要发送给谁。" }
                     }
-                    span { "已选 {selected_count} 人" }
+                    span {
+                        role: "status",
+                        aria_live: "polite",
+                        aria_atomic: "true",
+                        "已选 {selected_count} 人"
+                    }
                 }
                 div { class: "recipient-picker-tools",
                     button {

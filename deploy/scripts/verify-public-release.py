@@ -12,7 +12,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from html.parser import HTMLParser
-from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, unquote, urljoin, urlsplit, urlunsplit
 
 
 HASHED_APP_JS_RE = re.compile(r'^/assets/p2p-web-[A-Za-z0-9_-]+\.js$')
@@ -20,7 +20,13 @@ WASM_REFERENCE_RE = re.compile(r'''["']([^"']+\.wasm(?:\?[^"']*)?)["']''')
 HASHED_WASM_RE = re.compile(r'^/assets/[A-Za-z0-9_.-]+-dxh[0-9a-f]+\.wasm$')
 REQUIRED_STYLESHEET = '/shell/app-shell.css'
 REQUIRED_SCRIPTS = {'/shell/room-restore.js', '/shell/app-shell.js'}
-REMOVED_PUBLIC_PATHS = ('/app', '/app/', '/index.html')
+REMOVED_PUBLIC_PATHS = (
+    '/app',
+    '/app/',
+    '/index.html',
+    '/shell/app.css',
+    '/internal/metrics',
+)
 
 
 class PublicVerificationError(RuntimeError):
@@ -94,6 +100,12 @@ def same_origin_url(base_url: str, reference: str) -> str:
         )
     path = normalized_path(candidate)
     return urlunsplit((base.scheme, base.netloc, path, parsed.query, ''))
+
+
+def has_release_fingerprint(url: str, release_version: str) -> bool:
+    return parse_qsl(urlsplit(url).query, keep_blank_values=True) == [
+        ('v', release_version)
+    ]
 
 
 def fetch_200(url: str, *, timeout: int = 5) -> bytes:
@@ -195,22 +207,32 @@ def wait_for_public_readiness(
 def verify_shell_assets(
     base_url: str,
     index_html: str,
+    release_version: str,
     fetch: Callable[[str], bytes] = fetch_200,
 ) -> list[str]:
     references = ShellReferences()
     references.feed(index_html)
-    stylesheet_urls = {same_origin_url(base_url, ref) for ref in references.stylesheets}
-    script_urls = {same_origin_url(base_url, ref) for ref in references.scripts}
-    stylesheets_by_path = {normalized_path(url): url for url in stylesheet_urls}
+    stylesheet_urls = [same_origin_url(base_url, ref) for ref in references.stylesheets]
+    script_urls = [same_origin_url(base_url, ref) for ref in references.scripts]
     scripts_by_path = {normalized_path(url): url for url in script_urls}
 
-    if REQUIRED_STYLESHEET not in stylesheets_by_path:
-        raise PublicVerificationError('public shell does not reference the application stylesheet')
-    missing_scripts = REQUIRED_SCRIPTS - scripts_by_path.keys()
-    if missing_scripts:
-        raise PublicVerificationError(
-            f'public shell is missing required scripts: {sorted(missing_scripts)}'
-        )
+    def require_one(urls: list[str], path: str) -> str:
+        matches = [url for url in urls if normalized_path(url) == path]
+        if len(matches) != 1:
+            raise PublicVerificationError(
+                f'public shell must reference {path} exactly once; found {len(matches)}'
+            )
+        return matches[0]
+
+    versioned_shell_urls = {
+        REQUIRED_STYLESHEET: require_one(stylesheet_urls, REQUIRED_STYLESHEET),
+        **{path: require_one(script_urls, path) for path in REQUIRED_SCRIPTS},
+    }
+    for path, url in versioned_shell_urls.items():
+        if not has_release_fingerprint(url, release_version):
+            raise PublicVerificationError(
+                f'public shell asset does not match release {release_version}: {path}'
+            )
     hashed_scripts = {
         path: url for path, url in scripts_by_path.items() if HASHED_APP_JS_RE.fullmatch(path)
     }
@@ -218,8 +240,7 @@ def verify_shell_assets(
         raise PublicVerificationError('public shell does not reference a hashed application script')
 
     required_urls = {
-        stylesheets_by_path[REQUIRED_STYLESHEET],
-        *(scripts_by_path[path] for path in REQUIRED_SCRIPTS),
+        *versioned_shell_urls.values(),
         same_origin_url(base_url, '/sw.js'),
     }
     fetched = set(required_urls)
@@ -259,7 +280,7 @@ def verify_public_release(
         raise PublicVerificationError('public application shell is not UTF-8') from error
     if 'P2P Transmission' not in index_html or 'id="boot-fallback"' not in index_html:
         raise PublicVerificationError('public root application shell check failed')
-    assets = verify_shell_assets(base_url, index_html)
+    assets = verify_shell_assets(base_url, index_html, release_version)
     removed_paths = verify_removed_public_paths(base_url)
     return {'readiness': readiness, 'assets': assets, 'removed_paths': removed_paths}
 

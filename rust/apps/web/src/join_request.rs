@@ -15,6 +15,7 @@ pub(super) fn JoinRequestDialog(
     realtime_target: Signal<Option<RealtimeTarget>>,
     request: JoinRequestSnapshot,
 ) -> Element {
+    let decision_error = use_signal(|| None::<String>);
     use_effect(|| {
         let _ = show_modal_dialog("join-request-dialog");
     });
@@ -50,6 +51,7 @@ pub(super) fn JoinRequestDialog(
                                     realtime_target,
                                     request_id.clone(),
                                     JoinDecisionRequest::Reject,
+                                    decision_error,
                                 )
                             }
                         },
@@ -67,11 +69,15 @@ pub(super) fn JoinRequestDialog(
                                     realtime_target,
                                     request_id.clone(),
                                     JoinDecisionRequest::Approve,
+                                    decision_error,
                                 )
                             }
                         },
                         if pending { "处理中…" } else { "允许加入" }
                     }
+                }
+                if let Some(error) = decision_error() {
+                    p { class: "dialog-error", role: "alert", "{error}" }
                 }
         }
     }
@@ -92,11 +98,15 @@ fn submit_decision(
     realtime_target: Signal<Option<RealtimeTarget>>,
     request_id: String,
     decision: JoinDecisionRequest,
+    mut decision_error: Signal<Option<String>>,
 ) {
     if model.read().decision_request_id.is_some() {
         return;
     }
+    decision_error.set(None);
+    model.write().error = None;
     let Some(target_scope) = current_realtime_target_scope(realtime_target) else {
+        decision_error.set(Some("房间连接已断开，请稍后重试".to_owned()));
         return;
     };
     let (room_code, revision) = {
@@ -128,7 +138,11 @@ fn submit_decision(
                     schedule_avatar_cleanup(model, entering);
                 }
             }
-            Err(error) => model.write().error = Some(friendly_error(&error)),
+            Err(error) => {
+                if let Ok(mut current_error) = decision_error.try_write() {
+                    *current_error = Some(friendly_error(&error));
+                }
+            }
         }
         if decision_operation_is_current(model, realtime_target, &target_scope, &request_id) {
             model.write().decision_request_id = None;

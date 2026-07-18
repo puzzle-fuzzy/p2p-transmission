@@ -10,10 +10,9 @@ use axum::{
 };
 use axum_extra::extract::CookieJar;
 use futures_util::{SinkExt, StreamExt};
-use p2p_domain::{MembershipState, PeerId, RequestId, RoomCode, RoomCommand, RoomError, RoomId};
+use p2p_domain::RoomCommand;
 use p2p_protocol::{
-    CURRENT_PROTOCOL, ClientRealtimeMessage, JoinRequestStateWire, ServerRealtimeMessage,
-    parse_client_message,
+    CURRENT_PROTOCOL, ClientRealtimeMessage, ServerRealtimeMessage, parse_client_message,
 };
 use tokio::time::timeout;
 use tracing::{debug, warn};
@@ -21,9 +20,12 @@ use uuid::Uuid;
 
 use crate::{
     http_api::{AppState, HttpError, authenticate, require_origin},
-    realtime::hub::{Attachment, ConnectionId, HubError, Outbound},
-    storage::StorageError,
+    realtime::hub::{Attachment, ConnectionId, Outbound},
 };
+
+mod commands;
+
+use commands::{SocketAction, handle_client_message};
 
 const SOCKET_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_PROTOCOL_VIOLATIONS: u8 = 3;
@@ -42,6 +44,7 @@ pub async fn upgrade(
 }
 
 async fn serve_socket(socket: WebSocket, state: AppState, session: p2p_domain::Session) {
+    let _connection = state.observability.websocket_connection();
     let registration = state.hub.register(session.id().clone()).await;
     let connection_id = registration.connection_id;
     let mut receiver = registration.receiver;
@@ -169,290 +172,6 @@ async fn serve_socket(socket: WebSocket, state: AppState, session: p2p_domain::S
     let _ = timeout(Duration::from_secs(1), writer).await;
 }
 
-async fn handle_client_message(
-    state: &AppState,
-    connection_id: &ConnectionId,
-    session: &p2p_domain::Session,
-    message: ClientRealtimeMessage,
-) -> Result<SocketAction, SocketCommandError> {
-    match message {
-        ClientRealtimeMessage::AttachRoom {
-            room_code,
-            peer_id,
-            last_revision,
-            ..
-        } => {
-            let room_code =
-                RoomCode::parse(room_code).map_err(|_| SocketCommandError::invalid())?;
-            let peer_id = PeerId::parse(peer_id).map_err(|_| SocketCommandError::invalid())?;
-            let now = state
-                .services
-                .now()
-                .map_err(|_| SocketCommandError::unavailable())?;
-            let mutation = state
-                .services
-                .storage
-                .apply_room_command(
-                    &room_code,
-                    None,
-                    RoomCommand::Attach {
-                        session_id: session.id().clone(),
-                        peer_id: peer_id.clone(),
-                        now,
-                    },
-                    now,
-                )
-                .await
-                .map_err(map_storage_error)?;
-
-            let replaced = state
-                .hub
-                .attach(
-                    connection_id,
-                    mutation.room.id().clone(),
-                    room_code.clone(),
-                    peer_id.clone(),
-                )
-                .await
-                .map_err(map_hub_error)?;
-            if !replaced.is_empty() {
-                cleanup_attachments(state, replaced).await;
-            }
-
-            state
-                .hub
-                .send(
-                    connection_id,
-                    Outbound::Message(ServerRealtimeMessage::Attached {
-                        version: CURRENT_PROTOCOL,
-                        event_id: event_id(),
-                        room_id: mutation.room.id().to_string(),
-                        revision: mutation.room.revision().value(),
-                    }),
-                )
-                .await
-                .map_err(map_hub_error)?;
-
-            if last_revision != Some(mutation.room.revision().value()) {
-                let snapshot = state
-                    .services
-                    .bootstrap_room(session, &room_code)
-                    .await
-                    .map_err(|_| SocketCommandError::unavailable())?;
-                state
-                    .hub
-                    .send(
-                        connection_id,
-                        Outbound::Message(ServerRealtimeMessage::RoomSnapshot {
-                            version: CURRENT_PROTOCOL,
-                            event_id: event_id(),
-                            room_id: snapshot.room_id,
-                            room_code: snapshot.room_code,
-                            revision: snapshot.revision,
-                            expires_at_ms: snapshot.expires_at_ms,
-                            participants: snapshot.participants,
-                            pending_join_requests: snapshot.pending_join_requests,
-                        }),
-                    )
-                    .await
-                    .map_err(map_hub_error)?;
-            }
-
-            if mutation.outcome.changed() {
-                let evicted = state
-                    .hub
-                    .broadcast(
-                        mutation.room.id(),
-                        ServerRealtimeMessage::PeerOnline {
-                            version: CURRENT_PROTOCOL,
-                            event_id: event_id(),
-                            revision: mutation.room.revision().value(),
-                            session_id: session.id().to_string(),
-                            peer_id: peer_id.to_string(),
-                        },
-                    )
-                    .await;
-                cleanup_attachments(state, evicted).await;
-            }
-            Ok(SocketAction::Attached)
-        }
-        ClientRealtimeMessage::WatchJoinRequest {
-            room_code,
-            request_id,
-            last_revision,
-            ..
-        } => {
-            let room_code =
-                RoomCode::parse(room_code).map_err(|_| SocketCommandError::invalid())?;
-            let request_id =
-                RequestId::parse(request_id).map_err(|_| SocketCommandError::invalid())?;
-            let status = state
-                .services
-                .join_request_status(session, &room_code, &request_id)
-                .await
-                .map_err(|_| SocketCommandError::forbidden())?;
-            if status.state != JoinRequestStateWire::Pending {
-                return Err(SocketCommandError::join_resolved());
-            }
-            let room_id =
-                RoomId::parse(&status.room_id).map_err(|_| SocketCommandError::unavailable())?;
-            let snapshot = state
-                .services
-                .bootstrap_room(session, &room_code)
-                .await
-                .map_err(|_| SocketCommandError::unavailable())?;
-            let replaced = state
-                .hub
-                .watch_join(connection_id, room_id.clone())
-                .await
-                .map_err(map_hub_error)?;
-            if !replaced.is_empty() {
-                cleanup_attachments(state, replaced).await;
-            }
-            state
-                .hub
-                .send(
-                    connection_id,
-                    Outbound::Message(ServerRealtimeMessage::JoinWatching {
-                        version: CURRENT_PROTOCOL,
-                        event_id: event_id(),
-                        room_id: room_id.to_string(),
-                        request_id: request_id.to_string(),
-                        revision: status.revision,
-                    }),
-                )
-                .await
-                .map_err(map_hub_error)?;
-            if last_revision != Some(snapshot.revision) {
-                state
-                    .hub
-                    .send(
-                        connection_id,
-                        Outbound::Message(ServerRealtimeMessage::RoomSnapshot {
-                            version: CURRENT_PROTOCOL,
-                            event_id: event_id(),
-                            room_id: snapshot.room_id,
-                            room_code: snapshot.room_code,
-                            revision: snapshot.revision,
-                            expires_at_ms: snapshot.expires_at_ms,
-                            participants: snapshot.participants,
-                            pending_join_requests: snapshot.pending_join_requests,
-                        }),
-                    )
-                    .await
-                    .map_err(map_hub_error)?;
-            }
-            Ok(SocketAction::Attached)
-        }
-        ClientRealtimeMessage::DetachRoom { room_code, .. } => {
-            let room_code =
-                RoomCode::parse(room_code).map_err(|_| SocketCommandError::invalid())?;
-            let current = state
-                .hub
-                .attachment(connection_id)
-                .await
-                .map_err(map_hub_error)?;
-            if current.room_code != room_code {
-                return Err(SocketCommandError::forbidden());
-            }
-            let attachment = state
-                .hub
-                .detach(connection_id)
-                .await
-                .map_err(map_hub_error)?;
-            if let Some(attachment) = attachment {
-                cleanup_attachments(state, vec![attachment]).await;
-            }
-            Ok(SocketAction::Detached)
-        }
-        ClientRealtimeMessage::Signal {
-            room_code,
-            to_peer_id,
-            signal,
-            ..
-        } => {
-            let room_code =
-                RoomCode::parse(room_code).map_err(|_| SocketCommandError::invalid())?;
-            let to_peer_id =
-                PeerId::parse(to_peer_id).map_err(|_| SocketCommandError::invalid())?;
-            let attachment =
-                authorize_signal(state, connection_id, &room_code, &to_peer_id).await?;
-            let now = state
-                .services
-                .now()
-                .map_err(|_| SocketCommandError::unavailable())?;
-            if !state
-                .services
-                .limiter
-                .check(
-                    "signal",
-                    session.id().as_str(),
-                    state.services.config.signal_rate,
-                    now.value(),
-                )
-                .await
-            {
-                return Err(SocketCommandError::rate_limited());
-            }
-            state
-                .hub
-                .send_to_peer(
-                    connection_id,
-                    &to_peer_id,
-                    ServerRealtimeMessage::Signal {
-                        version: CURRENT_PROTOCOL,
-                        event_id: event_id(),
-                        from_peer_id: attachment.peer_id.to_string(),
-                        signal,
-                    },
-                )
-                .await
-                .map_err(map_hub_error)?;
-            Ok(SocketAction::Continue)
-        }
-        ClientRealtimeMessage::Heartbeat { .. } | ClientRealtimeMessage::AckEvent { .. } => {
-            Ok(SocketAction::Continue)
-        }
-    }
-}
-
-async fn authorize_signal(
-    state: &AppState,
-    connection_id: &ConnectionId,
-    room_code: &RoomCode,
-    to_peer_id: &PeerId,
-) -> Result<Attachment, SocketCommandError> {
-    let attachment = state
-        .hub
-        .attachment(connection_id)
-        .await
-        .map_err(map_hub_error)?;
-    if &attachment.room_code != room_code || &attachment.peer_id == to_peer_id {
-        return Err(SocketCommandError::forbidden());
-    }
-    let room = state
-        .services
-        .storage
-        .find_room_by_code(room_code)
-        .await
-        .map_err(|_| SocketCommandError::unavailable())?
-        .ok_or_else(SocketCommandError::forbidden)?;
-    let sender_is_current = matches!(
-        room.membership_state(&attachment.session_id),
-        Some(MembershipState::Online { peer_id }) if peer_id == &attachment.peer_id
-    );
-    let target_is_current = room.membership_snapshots().into_iter().any(|membership| {
-        matches!(
-            membership.state,
-            MembershipState::Online { peer_id } if peer_id == *to_peer_id
-        )
-    });
-    if !sender_is_current || !target_is_current {
-        return Err(SocketCommandError::forbidden());
-    }
-    Ok(attachment)
-}
-
 pub(crate) async fn cleanup_attachments(state: &AppState, initial: Vec<Attachment>) {
     let mut pending = initial;
     let mut seen = HashSet::new();
@@ -527,130 +246,6 @@ pub(crate) fn event_id() -> String {
     format!("e_{}", Uuid::new_v4().simple())
 }
 
-fn map_storage_error(error: StorageError) -> SocketCommandError {
-    match error {
-        StorageError::RoomNotFound => SocketCommandError::not_found(),
-        StorageError::Room(
-            RoomError::MembershipNotFound | RoomError::MembershipLeft | RoomError::Unauthorized,
-        ) => SocketCommandError::forbidden(),
-        StorageError::Room(RoomError::Inactive | RoomError::RequestExpired) => {
-            SocketCommandError::expired()
-        }
-        _ => {
-            warn!(%error, "realtime storage command failed");
-            SocketCommandError::unavailable()
-        }
-    }
-}
-
-fn map_hub_error(error: HubError) -> SocketCommandError {
-    match error {
-        HubError::NotAttached => SocketCommandError::attach_required(),
-        HubError::TargetNotFound | HubError::CannotSignalSelf => SocketCommandError::forbidden(),
-        HubError::SlowConsumer => SocketCommandError {
-            code: "slow_consumer",
-            message: "realtime outbound queue is full",
-            retryable: true,
-            fatal: true,
-        },
-        HubError::ConnectionNotFound => SocketCommandError {
-            code: "connection_closed",
-            message: "realtime connection is no longer active",
-            retryable: true,
-            fatal: true,
-        },
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SocketAction {
-    Attached,
-    Detached,
-    Continue,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct SocketCommandError {
-    code: &'static str,
-    message: &'static str,
-    retryable: bool,
-    fatal: bool,
-}
-
-impl SocketCommandError {
-    fn invalid() -> Self {
-        Self {
-            code: "invalid_message",
-            message: "realtime message contains an invalid value",
-            retryable: false,
-            fatal: false,
-        }
-    }
-
-    fn forbidden() -> Self {
-        Self {
-            code: "signal_forbidden",
-            message: "peer is not authorized for this realtime operation",
-            retryable: false,
-            fatal: false,
-        }
-    }
-
-    fn not_found() -> Self {
-        Self {
-            code: "room_not_found",
-            message: "room does not exist",
-            retryable: false,
-            fatal: true,
-        }
-    }
-
-    fn expired() -> Self {
-        Self {
-            code: "room_expired",
-            message: "room has expired",
-            retryable: false,
-            fatal: true,
-        }
-    }
-
-    fn unavailable() -> Self {
-        Self {
-            code: "realtime_unavailable",
-            message: "realtime service is temporarily unavailable",
-            retryable: true,
-            fatal: false,
-        }
-    }
-
-    fn attach_required() -> Self {
-        Self {
-            code: "attach_required",
-            message: "connection must attach a room first",
-            retryable: false,
-            fatal: false,
-        }
-    }
-
-    fn join_resolved() -> Self {
-        Self {
-            code: "join_request_resolved",
-            message: "join request is no longer pending",
-            retryable: false,
-            fatal: true,
-        }
-    }
-
-    fn rate_limited() -> Self {
-        Self {
-            code: "rate_limited",
-            message: "signaling rate limit exceeded",
-            retryable: true,
-            fatal: false,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{net::SocketAddr, path::PathBuf};
@@ -660,7 +255,7 @@ mod tests {
         http::{HeaderValue, Request, StatusCode, header},
     };
     use futures_util::{SinkExt, StreamExt};
-    use p2p_domain::{JoinDecision, RequestId, Revision, RoomCode};
+    use p2p_domain::{JoinDecision, MembershipState, PeerId, RequestId, Revision, RoomCode};
     use p2p_protocol::{ClientRealtimeMessage, ServerRealtimeMessage, Signal};
     use serde_json::json;
     use tokio::{net::TcpStream, sync::oneshot, task::JoinHandle, time::sleep};

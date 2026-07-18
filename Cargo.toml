@@ -67,6 +67,9 @@ strip = "debuginfo"
 # UI-facing crates while transfer and hashing dependencies retain `opt-level = "s"`.
 [profile.wasm-release]
 inherits = "release"
+# Whole-program LTO removes duplicate framework and Web API glue without
+# changing the transfer/hashing optimization level.
+lto = "fat"
 
 [profile.wasm-release.package.p2p-web]
 opt-level = "z"
