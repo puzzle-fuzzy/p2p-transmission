@@ -275,6 +275,15 @@ class ControlPlaneManifestBootstrapTests(unittest.TestCase):
             compiled_blocks += 1
         self.assertGreaterEqual(compiled_blocks, 6)
 
+    def test_effective_sshd_value_consumes_complete_sshd_output(self) -> None:
+        bootstrap = BOOTSTRAP_HOST.read_text(encoding='utf-8')
+        self.assertIn(
+            "awk -v expected=\"$key\" "
+            "'$1 == expected && !found { print $2; found = 1 }'",
+            bootstrap,
+        )
+        self.assertNotIn('$1 == expected { print $2; exit }', bootstrap)
+
 
 if __name__ == '__main__':
     unittest.main()

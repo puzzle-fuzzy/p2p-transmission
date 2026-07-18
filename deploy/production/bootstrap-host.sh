@@ -1037,7 +1037,7 @@ check_runtime_paths() {
 effective_sshd_value() {
   local key="$1"
   sshd -T -C user="$DEPLOY_USER",host=localhost,addr=127.0.0.1 | \
-    awk -v expected="$key" '$1 == expected { print $2; exit }'
+    awk -v expected="$key" '$1 == expected && !found { print $2; found = 1 }'
 }
 
 check_sshd_policy() {
