@@ -155,16 +155,6 @@ const cacheFirstShellAsset = async request => {
   }
 };
 
-const networkFirstUnversionedShellAsset = async request => {
-  try {
-    // A previous worker can control a page from the next release. Do not put
-    // that page's asset URL in this release's cache or fall back to mismatched bytes.
-    return await fetch(request, { cache: 'no-store' });
-  } catch {
-    return offlineResponse();
-  }
-};
-
 const staleWhileRevalidate = async request => {
   const cache = await caches.open(CACHE_NAME);
   const cached = await cache.match(request);
@@ -200,10 +190,6 @@ self.addEventListener('fetch', event => {
   }
   if (SHELL_ASSET_PATHS.has(url.pathname) && currentReleaseShellAsset(url)) {
     event.respondWith(cacheFirstShellAsset(request));
-    return;
-  }
-  if (/^\/shell\//u.test(url.pathname)) {
-    event.respondWith(networkFirstUnversionedShellAsset(request));
     return;
   }
   if (url.pathname === '/favicon.svg'

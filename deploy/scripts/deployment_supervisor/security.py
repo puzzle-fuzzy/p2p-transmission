@@ -222,7 +222,7 @@ def read_json_file(path: Path) -> dict[str, object]:
     return payload
 
 def validate_release_artifacts(paths: state.OperationPaths) -> None:
-    for artifact in (paths.source_archive, paths.image_archive, paths.retired_files):
+    for artifact in (paths.source_archive, paths.image_archive):
         lstat_regular(artifact, require_owner=True)
 
 def _open_lock_file() -> BinaryIO:

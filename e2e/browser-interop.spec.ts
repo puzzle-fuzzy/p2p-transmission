@@ -4,6 +4,22 @@ import { open, readFile } from 'node:fs/promises'
 
 import { connectSingleReceiverRoom } from './room.helper'
 
+test('Firefox and WebKit establish a peer connection', { tag: '@interop-smoke' }, async ({
+  browser,
+  baseURL,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name === 'desktop-webkit' && process.platform === 'win32',
+    'Playwright WebKit on Windows does not expose RTCPeerConnection',
+  )
+  const ownerContext = await browser.newContext({ baseURL })
+  const receiverContext = await browser.newContext({ baseURL })
+  const owner = await ownerContext.newPage()
+  const receiver = await receiverContext.newPage()
+
+  await connectSingleReceiverRoom(owner, receiver, { readyTimeout: 20_000 })
+})
+
 test('Firefox and WebKit complete the buffered transfer path', async ({ browser, baseURL }, testInfo) => {
   test.skip(
     testInfo.project.name === 'desktop-webkit' && process.platform === 'win32',
@@ -29,12 +45,12 @@ test('Firefox and WebKit complete the buffered transfer path', async ({ browser,
   })).toBe(true)
 
   await fileInput.setInputFiles({
-    name: 'compatibility.txt',
+    name: 'cross-browser.txt',
     mimeType: 'text/plain',
     buffer: payload,
   })
   const transferDialog = receiver.getByRole('dialog', { name: '接收文件' })
-  await expect(transferDialog).toContainText('compatibility.txt')
+  await expect(transferDialog).toContainText('cross-browser.txt')
   await transferDialog.getByRole('button', { name: '接收文件' }).click()
 
   await expect(owner.getByRole('heading', { name: '文件发送完成' })).toBeVisible()
@@ -57,7 +73,7 @@ test('Firefox and WebKit explain the streamed-file fallback', async ({ browser, 
   const receiverContext = await browser.newContext({ baseURL })
   const owner = await ownerContext.newPage()
   const receiver = await receiverContext.newPage()
-  const sourcePath = testInfo.outputPath('compatibility-100-mib-plus-one.bin')
+  const sourcePath = testInfo.outputPath('cross-browser-100-mib-plus-one.bin')
   const source = await open(sourcePath, 'w')
   await source.truncate(100 * 1024 * 1024 + 1)
   await source.close()

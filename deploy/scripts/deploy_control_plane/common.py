@@ -13,7 +13,6 @@ APP_DIR = Path('/opt/p2p-transmission')
 UPLOAD_ROOT = Path('/tmp')
 SOURCE_ARCHIVE_RE = re.compile(r'^p2p-transmission-[0-9a-f]{40}\.tar\.gz$')
 IMAGE_ARCHIVE_RE = re.compile(r'^p2p-transmission-image-[0-9a-f]{40}\.tar\.gz$')
-RETIRED_FILES_RE = re.compile(r'^p2p-transmission-retired-[0-9a-f]{40}\.json$')
 VERSION_RE = re.compile(r'^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$')
 ENV_KEY_RE = re.compile(r'^[A-Z][A-Z0-9_]*$')
 SHA256_RE = re.compile(r'^[0-9a-f]{64}$')
@@ -28,8 +27,6 @@ PRODUCTION_PROJECT = 'p2p-transmission-production'
 DATABASE_BACKUP_LIMIT = 10
 MAINTENANCE_BACKUP_MAX_AGE_SECONDS = 20 * 60 * 60
 DISK_SAFETY_MARGIN_BYTES = 2 * 1024 * 1024 * 1024
-# Retain the public constant used by existing operational checks and tests.
-MAINTENANCE_MIN_FREE_BYTES = DISK_SAFETY_MARGIN_BYTES
 SOURCE_MANIFEST = APP_DIR / 'deploy/production/source-files.json'
 NGINX_SOURCE = APP_DIR / 'deploy/production/nginx/p2p.yxswy.com.conf'
 NGINX_TARGET = Path('/etc/nginx/conf.d/p2p.yxswy.com.conf')
@@ -55,7 +52,7 @@ CONTROL_PLANE_LOCK_NAME = '.control-plane.lock'
 ARTIFACT_SNAPSHOT_PREFIX = '.stage-artifacts-'
 TRACKED_RUNTIME_CONFIG_HASHES = {
     'deploy/production/compose.yml': (
-        '03dc38d254561dbc5bdb34142596d63cf2bdd98a7977f1aa7363c672331e738e'
+        '39317b5feafc35faba893e41d1570293990ef26770e81a6e561cd14277579696'
     ),
     'deploy/production/nginx/p2p.yxswy.com.conf': (
         '2f2cbe32cf30c684b8029742d26c914c211a8e4804a0f423de540f25f26cbc39'

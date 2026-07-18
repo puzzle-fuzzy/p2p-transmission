@@ -34,10 +34,11 @@ test('the root transfer workspace passes WCAG axe rules', { tag: '@smoke' }, asy
   await expect(page.getByRole('heading', { name: '加入房间' })).toBeVisible()
   await expectNoAccessibilityViolations(page)
 
-  const aboutTrigger = page.getByRole('button', { name: '关于 P2P Transmission' })
+  const aboutTrigger = page.getByRole('button', { name: '关于', exact: true })
   await aboutTrigger.click()
-  const aboutDialog = page.getByRole('dialog', { name: '关于 P2P Transmission' })
+  const aboutDialog = page.getByRole('dialog', { name: '关于', exact: true })
   await expect(aboutDialog).toBeVisible()
+  await expect(aboutDialog).toContainText('文件和文本正文通过加密的 WebRTC 通道传输')
   await expect(aboutDialog).toHaveCSS('opacity', '1')
   await expectNoAccessibilityViolations(page)
   await page.keyboard.press('Escape')
@@ -174,7 +175,9 @@ test('essential flows survive forced colors and 200% text scaling', async ({
     await roomCode.focus()
     expect(await roomCode.evaluate(element => {
       const style = getComputedStyle(element)
-      return style.outlineStyle !== 'none' && Number.parseFloat(style.outlineWidth) >= 2
+      return style.outlineStyle === 'none'
+        && style.borderStyle !== 'none'
+        && Number.parseFloat(style.borderWidth) >= 2
     })).toBe(true)
     await expectNoHorizontalOverflow(page)
   } finally {

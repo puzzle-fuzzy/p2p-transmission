@@ -30,7 +30,7 @@ use crate::{
     storage::StorageError,
 };
 
-pub const SESSION_COOKIE_NAME: &str = "p2p_session";
+pub const SESSION_COOKIE_NAME: &str = "p2p_session_v5";
 
 struct ClientAddress(Option<SocketAddr>);
 
@@ -813,7 +813,7 @@ mod tests {
                 "POST",
                 "/api/session",
                 json!({
-                    "version": { "major": 2, "minor": 0 },
+                    "version": { "major": 5, "minor": 0 },
                     "display_name": display_name
                 }),
                 None,
@@ -831,7 +831,7 @@ mod tests {
     async fn mutation_origin_and_cookie_flags_are_enforced() {
         let app = TestApp::create(true).await;
         let body = json!({
-            "version": { "major": 2, "minor": 0 },
+            "version": { "major": 5, "minor": 0 },
             "display_name": "Owner"
         });
 
@@ -940,13 +940,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn previous_protocol_unknown_fields_and_cookie_are_rejected() {
+        let app = TestApp::create(false).await;
+
+        for body in [
+            json!({
+                "version": { "major": 2, "minor": 0 },
+                "display_name": "Previous"
+            }),
+            json!({
+                "version": { "major": 5, "minor": 0 },
+                "display_name": "Unknown field",
+                "unsupported": true
+            }),
+        ] {
+            let response = app
+                .router
+                .clone()
+                .oneshot(json_request(
+                    "POST",
+                    "/api/session",
+                    body,
+                    None,
+                    Some("http://localhost:3410"),
+                ))
+                .await
+                .expect("strict session response");
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        }
+
+        let (cookie, _) = create_session_for(&app, "Current").await;
+        assert!(cookie.starts_with("p2p_session_v5="));
+        let previous_cookie = cookie.replacen("p2p_session_v5=", "p2p_session_v4=", 1);
+        let response = app
+            .router
+            .clone()
+            .oneshot(get_request("/api/rtc/config", Some(&previous_cookie)))
+            .await
+            .expect("previous cookie response");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        app.cleanup().await;
+    }
+
+    #[tokio::test]
     async fn room_join_decision_and_bootstrap_flow_is_persisted() {
         let app = TestApp::create(false).await;
         let (owner_cookie, owner) = create_session_for(&app, "Owner").await;
         assert_eq!(owner.display_name, "Owner");
 
         let create_body = json!({
-            "version": { "major": 2, "minor": 0 },
+            "version": { "major": 5, "minor": 0 },
             "request_id": "create_1"
         });
         let created = app
@@ -981,7 +1025,7 @@ mod tests {
         assert_eq!(replayed_room.room_id, room.room_id);
 
         let invite_request = json!({
-            "version": { "major": 2, "minor": 0 },
+            "version": { "major": 5, "minor": 0 },
             "request_id": "invite_1"
         });
         let invite = app
@@ -1029,7 +1073,7 @@ mod tests {
                 "POST",
                 &format!("/api/rooms/{}/join-requests", room.room_code),
                 json!({
-                    "version": { "major": 2, "minor": 0 },
+                    "version": { "major": 5, "minor": 0 },
                     "request_id": "join_bad",
                     "room_code": room.room_code,
                     "expected_revision": 1,
@@ -1048,7 +1092,7 @@ mod tests {
                 "POST",
                 &format!("/api/rooms/{}/join-requests", room.room_code),
                 json!({
-                    "version": { "major": 2, "minor": 0 },
+                    "version": { "major": 5, "minor": 0 },
                     "request_id": "join_1",
                     "room_code": room.room_code,
                     "expected_revision": 1,
@@ -1104,7 +1148,7 @@ mod tests {
                     room.room_code
                 ),
                 json!({
-                    "version": { "major": 2, "minor": 0 },
+                    "version": { "major": 5, "minor": 0 },
                     "request_id": "join_1",
                     "decision": "approve",
                     "expected_revision": 2
@@ -1144,7 +1188,7 @@ mod tests {
                 "POST",
                 &format!("/api/rooms/{}/leave", room.room_code),
                 json!({
-                    "version": { "major": 2, "minor": 0 },
+                    "version": { "major": 5, "minor": 0 },
                     "request_id": "leave_1",
                     "expected_revision": 2
                 }),

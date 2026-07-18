@@ -4,7 +4,7 @@ use p2p_browser_platform::{
 };
 use p2p_ui_shell::ROOM_CODE_LENGTH;
 
-use crate::app_state::{AppModel, RoomRole, Screen, StoredRoomSession};
+use crate::app_state::{AppModel, LobbyActionError, RoomRole, Screen, StoredRoomSession};
 use crate::browser_errors::friendly_error;
 use crate::realtime_target::{RealtimeTarget, join_watch_target, member_target};
 use crate::room_session::persist_room_session;
@@ -16,8 +16,12 @@ pub(super) fn submit_create_room(
     if model.read().busy || model.read().session.is_none() {
         return;
     }
-    model.write().busy = true;
-    model.write().error = None;
+    {
+        let mut state = model.write();
+        state.busy = true;
+        state.lobby_action_error = None;
+        state.error = None;
+    }
     spawn(async move {
         let create_request_id = new_client_id("create");
         let invite_request_id = new_client_id("invite");
@@ -44,7 +48,7 @@ pub(super) fn submit_create_room(
                 {
                     let mut state = model.write();
                     state.busy = false;
-                    state.notice = Some("房间已创建，可以分享邀请链接".to_owned());
+                    state.notice = Some("房间已创建，可以复制邀请链接".to_owned());
                     state.screen = Screen::Room {
                         role: RoomRole::Owner,
                         snapshot,
@@ -57,7 +61,7 @@ pub(super) fn submit_create_room(
             Err(error) => {
                 let mut state = model.write();
                 state.busy = false;
-                state.error = Some(friendly_error(&error));
+                state.lobby_action_error = Some(LobbyActionError::Create(friendly_error(&error)));
             }
         }
     });
@@ -78,8 +82,12 @@ pub(super) fn submit_join(
     if snapshot.busy || room_code.len() != ROOM_CODE_LENGTH || snapshot.session.is_none() {
         return;
     }
-    model.write().busy = true;
-    model.write().error = None;
+    {
+        let mut state = model.write();
+        state.busy = true;
+        state.lobby_action_error = None;
+        state.error = None;
+    }
     spawn(async move {
         let request_id = new_client_id("join");
         match request_join(&room_code, &request_id, None, invite_capability.clone()).await {
@@ -112,7 +120,7 @@ pub(super) fn submit_join(
             Err(error) => {
                 let mut state = model.write();
                 state.busy = false;
-                state.error = Some(friendly_error(&error));
+                state.lobby_action_error = Some(LobbyActionError::Join(friendly_error(&error)));
             }
         }
     });

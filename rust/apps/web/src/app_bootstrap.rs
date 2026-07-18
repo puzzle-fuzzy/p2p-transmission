@@ -9,7 +9,7 @@ use crate::app_state::{AppModel, RoomRole, Screen, StoredRoomSession};
 use crate::browser_errors::friendly_error;
 use crate::realtime_session::enter_receiver_room;
 use crate::realtime_target::{RealtimeTarget, join_watch_target, member_target};
-use crate::room_entry::{submit_create_room, submit_join};
+use crate::room_entry::submit_join;
 use crate::room_session::{persist_room_session, restored_room_session};
 
 pub(super) fn initialize(mut model: Signal<AppModel>, target: Signal<Option<RealtimeTarget>>) {
@@ -19,7 +19,7 @@ pub(super) fn initialize(mut model: Signal<AppModel>, target: Signal<Option<Real
             Some(LaunchIntent::JoinRoom {
                 room_code,
                 capability,
-            }) => (room_code.clone(), capability.clone()),
+            }) => (room_code.clone(), Some(capability.clone())),
             _ => (String::new(), None),
         };
         let stored_room_session = restored_room_session();
@@ -58,7 +58,6 @@ pub(super) fn initialize(mut model: Signal<AppModel>, target: Signal<Option<Real
             invite_capability,
         };
         match launch_intent {
-            Some(LaunchIntent::CreateRoom) => submit_create_room(model, target),
             Some(LaunchIntent::JoinRoom { .. }) => submit_join(model, target),
             None => {}
         }
@@ -104,7 +103,7 @@ async fn restore_room(
                 invite_request_id: stored.invite_request_id.clone(),
             };
             if role == RoomRole::Owner {
-                state.notice = Some("房间已创建，可以分享邀请链接".to_owned());
+                state.notice = Some("房间已创建，可以复制邀请链接".to_owned());
             }
         }
         let peer_id = stored.peer_id.clone();

@@ -25,6 +25,8 @@ sudo bash deploy/production/bootstrap-host.sh \
 - 为该账户只启用公钥登录，禁止密码、TTY、agent/X11/TCP/Unix socket 转发和 tunnel；远程命令与 SFTP/SCP 仍可使用。
 - 创建 UID/GID `10001:10001`、模式 `0700` 的数据目录，并创建 root-only 的备份和回滚目录。
 
+当前部署契约不再接管旧布局：`/opt/p2p-transmission` 必须为空，或已经带有 root-owned、模式 `0600` 且与现有源码树精确一致的 `deploy/production/source-files.json`。旧的 standalone 控制面入口或缺少该 manifest 的非空应用目录都会让 bootstrap 直接失败，脚本不会自动删除、转换或猜测旧主机状态。迁入本版本前应在云控制台显式保存 `.env`、数据库和备份，从空应用目录执行干净 bootstrap，并在 bootstrap 完成后按原所有权和模式恢复这些运行时文件。
+
 脚本不会覆盖已有 `/opt/p2p-transmission/deploy/production/.env`、SQLite 主文件或 WAL/SHM，也不会自动 reload sshd。它要求 `--source-root` 是位于完整 root-only 父路径下的专用新鲜 checkout：消费文件及其父目录、整个 `.git` 都必须由 root 拥有且不可组/全局写，不能有符号链接、特殊文件或多硬链，也不能有 tracked、untracked 或 ignored 漂移。校验后只从 `git archive HEAD` 的 root-only 快照读取 helper、wrapper、sudoers、sshd、环境模板和首次播种内容；**不要从可由 release archive 更新的 `/opt/p2p-transmission` 执行 bootstrap**。它会先执行 `sshd -t` 和有效策略检查；如果新 drop-in 无效，会恢复原文件。保持云控制台会话开启，按系统实际服务名 reload `ssh` 或 `sshd`。先在仍打开的云控制台 root 会话、仍位于可信 checkout 时检查主机边界：
 
 ```bash

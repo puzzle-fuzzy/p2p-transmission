@@ -16,6 +16,7 @@ pub const CHUNK_HEADER_LEN: usize = 53;
 const DATA_FRAME_TYPE: u8 = 1;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FileManifest {
     pub file_id: String,
     pub name: String,
@@ -42,7 +43,7 @@ impl Validate for FileManifest {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum TransferMode {
     Buffered,
     Streamed { segment_bytes: u32 },
@@ -74,6 +75,7 @@ impl Validate for TransferMode {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ResumeCursor {
     pub file_id: String,
     pub committed_bytes: u64,
@@ -97,6 +99,7 @@ impl Validate for ResumeCursor {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FileDigest {
     pub file_id: String,
     pub size_bytes: u64,
@@ -130,7 +133,7 @@ pub enum StreamPauseReason {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlMessage {
     Manifest {
         version: ProtocolVersion,
@@ -526,6 +529,22 @@ mod tests {
     }
 
     #[test]
+    fn control_frames_reject_previous_versions_and_unknown_fields() {
+        let previous =
+            r#"{"type":"start","version":{"major":2,"minor":0},"transfer_id":"transfer_1"}"#;
+        assert_eq!(
+            parse_control_message(previous),
+            Err(ProtocolError::UnsupportedVersion { major: 2, minor: 0 })
+        );
+
+        let unknown = r#"{"type":"start","version":{"major":5,"minor":0},"transfer_id":"transfer_1","unsupported":true}"#;
+        assert!(matches!(
+            parse_control_message(unknown),
+            Err(ProtocolError::InvalidJson(_))
+        ));
+    }
+
+    #[test]
     fn binary_chunk_round_trips_and_checks_exact_payload_length() {
         let header = BinaryChunkHeader {
             version: CURRENT_PROTOCOL,
@@ -543,6 +562,14 @@ mod tests {
         assert_eq!(
             decode_binary_frame(&frame),
             Err(ProtocolError::BinaryLengthMismatch)
+        );
+
+        let mut previous = header.encode().to_vec();
+        previous[4..6].copy_from_slice(&2_u16.to_be_bytes());
+        previous.extend_from_slice(b"abc");
+        assert_eq!(
+            decode_binary_frame(&previous),
+            Err(ProtocolError::UnsupportedVersion { major: 2, minor: 0 })
         );
     }
 

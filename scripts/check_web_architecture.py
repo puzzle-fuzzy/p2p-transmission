@@ -213,6 +213,20 @@ RTC_BROWSER_REMOVED_MONOLITHS = (
 )
 TRANSFER_EVENT_FACADE_MAX_LINES = 80
 TRANSFER_EVENT_TRANSITION_MODULES = ("offer", "pause", "progress", "terminal")
+TRANSFER_PANEL_FACADE_MAX_LINES = 220
+TRANSFER_PANEL_RESPONSIBILITY_MODULES = (
+    "file_progress_list",
+    "receiver_transfer_list",
+    "transfer_action_area",
+    "view_model",
+)
+TRANSFER_PANEL_VIEW_MODEL_FORBIDDEN_MARKERS = (
+    "dioxus::",
+    "wasm_bindgen::",
+    "web_sys::",
+    "Signal<",
+    "rsx!",
+)
 
 
 def load_toml(path: Path) -> dict[str, object]:
@@ -404,6 +418,36 @@ def main() -> None:
         if not module_path.is_file():
             violations.append(f"{module_path.relative_to(ROOT)} is missing")
 
+    transfer_panel_facade_path = WEB_SOURCE / "transfer_panel.rs"
+    transfer_panel_facade = transfer_panel_facade_path.read_text(encoding="utf-8")
+    transfer_panel_facade_lines = len(transfer_panel_facade.splitlines())
+    if transfer_panel_facade_lines > TRANSFER_PANEL_FACADE_MAX_LINES:
+        violations.append(
+            f"{transfer_panel_facade_path.relative_to(ROOT)} has "
+            f"{transfer_panel_facade_lines} lines; facade limit is "
+            f"{TRANSFER_PANEL_FACADE_MAX_LINES}"
+        )
+    transfer_panel_source = WEB_SOURCE / "transfer_panel"
+    for module in TRANSFER_PANEL_RESPONSIBILITY_MODULES:
+        module_path = transfer_panel_source / f"{module}.rs"
+        if not module_path.is_file():
+            violations.append(f"{module_path.relative_to(ROOT)} is missing")
+        if f"mod {module};" not in transfer_panel_facade:
+            violations.append(
+                f"{transfer_panel_facade_path.relative_to(ROOT)} does not declare {module}"
+            )
+    transfer_panel_view_model_path = transfer_panel_source / "view_model.rs"
+    if transfer_panel_view_model_path.is_file():
+        transfer_panel_view_model = transfer_panel_view_model_path.read_text(
+            encoding="utf-8"
+        )
+        for marker in TRANSFER_PANEL_VIEW_MODEL_FORBIDDEN_MARKERS:
+            if marker in transfer_panel_view_model:
+                violations.append(
+                    f"{transfer_panel_view_model_path.relative_to(ROOT)} contains UI/runtime "
+                    f"marker {marker}"
+                )
+
     ui_shell_manifest_path = UI_SHELL / "Cargo.toml"
     ui_shell_manifest = load_toml(ui_shell_manifest_path)
     unexpected_dependencies = ui_shell_runtime_dependencies(
@@ -438,7 +482,8 @@ def main() -> None:
         "Browser architecture dependency check passed: "
         f"checked {len(FORBIDDEN_DEPENDENCIES)} web module boundaries, the browser-platform "
         "facade, the RTC file, connection, peer/signaling, transfer-lifecycle, and "
-        "recovery boundaries, and the shared UI boundary."
+        "recovery boundaries, the transfer-panel facade/view-model split, and the shared "
+        "UI boundary."
     )
 
 

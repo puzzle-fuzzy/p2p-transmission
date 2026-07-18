@@ -13,7 +13,6 @@ from . import artifacts, capacity, manifest, release_state, runtime
 from .common import (
     CONTROL_PLANE_HELPER,
     IMAGE_ARCHIVE_RE,
-    RETIRED_FILES_RE,
     SOURCE_ARCHIVE_RE,
     VERSION_RE,
 )
@@ -23,20 +22,17 @@ def deploy(
     archive: Path,
     version: str,
     image_archive: Path,
-    retired_files: Path,
 ) -> None:
     if not VERSION_RE.fullmatch(version):
         raise SystemExit("release version contains unsupported characters")
     uploaded_archive = archive
     uploaded_image = image_archive
-    uploaded_retired = retired_files
     snapshot: Optional[artifacts.ReleaseArtifactSnapshot] = None
     try:
         release_state.ensure_no_pending_release()
         snapshot = artifacts.snapshot_release_artifacts(
             archive,
             image_archive,
-            retired_files,
         )
         archive = artifacts.validate_source_archive(
             snapshot.source_archive,
@@ -46,16 +42,13 @@ def deploy(
             snapshot.image_archive,
             trusted_root=snapshot.root,
         )
-        _, bootstrap_files = artifacts.validate_retired_files(
-            snapshot.retired_files,
-            trusted_root=snapshot.root,
-        )
         current_files = artifacts.source_archive_files(archive)
+        artifacts.read_source_manifest()
         capacity.require_stage_disk_capacity(archive, image)
         preflight = runtime.preflight_production(image, version)
         try:
             artifacts.extract_archive(archive)
-            artifacts.remove_retired_source_files(current_files, bootstrap_files)
+            artifacts.remove_retired_source_files(current_files)
             artifacts.write_source_manifest(current_files)
         except BaseException as source_error:
             compose_restored = runtime.restore_compose(preflight.compose_snapshot)
@@ -73,7 +66,6 @@ def deploy(
         finally:
             artifacts.remove_uploaded_artifact(uploaded_archive, SOURCE_ARCHIVE_RE)
             artifacts.remove_uploaded_artifact(uploaded_image, IMAGE_ARCHIVE_RE)
-            artifacts.remove_uploaded_artifact(uploaded_retired, RETIRED_FILES_RE)
 
 
 def source_control_plane_manifest(
@@ -148,7 +140,6 @@ def main() -> int:
     stage.add_argument("--archive", required=True, type=Path)
     stage.add_argument("--version", required=True)
     stage.add_argument("--image-archive", required=True, type=Path)
-    stage.add_argument("--retired-files", required=True, type=Path)
     stage.add_argument("--expected-control-plane-sha256", required=True)
     finalize = actions.add_parser("finalize", help="accept a publicly verified release")
     finalize.add_argument("--version", required=True)
@@ -187,7 +178,7 @@ def main() -> int:
         release_state.cleanup_abandoned_release_artifacts()
         release_state.cleanup_abandoned_runtime_snapshots()
         if args.action == "stage":
-            deploy(args.archive, args.version, args.image_archive, args.retired_files)
+            deploy(args.archive, args.version, args.image_archive)
         elif args.action == "finalize":
             runtime.finalize_pending_release(args.version)
         elif args.action == "rollback":

@@ -1,6 +1,6 @@
 # P2P Transmission
 
-这里是与 1.x 独立的 Rust 正式工程。它保留产品体验与功能结果，不兼容旧 API、协议或数据库。
+这里是独立的 Rust 正式工程。它保留产品体验与功能结果，不兼容任何旧 API、协议、数据库格式或客户端会话。
 
 正式地址：[https://p2p.yxswy.com](https://p2p.yxswy.com)。生产部署与回滚步骤见[发布手册](../docs/release/RELEASE.md)。
 
@@ -13,9 +13,9 @@
 - 小文件内存接收，以及超过 100 MiB、最大约 5 GiB 的直接磁盘流式接收。
 - 刷新、断网、系统休眠和浏览器后台恢复后的检查点续传。
 - SQLite 控制面持久化、TURN 临时凭据、安全响应头、限流与健康检查。
-- Chromium 桌面/移动端 E2E，以及 Firefox 的缓冲传输和大文件降级验证。
+- Chromium 桌面/移动端 E2E、Firefox/WebKit 轻量协商，以及发布前跨浏览器缓冲传输和大文件降级验证。
 
-当前实现不兼容 1.x API、协议或数据库。大文件正文始终通过 WebRTC 传输，不经过 Axum 或 SQLite。
+当前协议固定为 5.0，只接受 major 与 minor 都完全匹配的消息；外部 JSON 出现未知字段也会被拒绝。服务端会话 Cookie 使用 `p2p_session_v5`，房间会话使用 `p2p_room_session_v5`，旧状态不会恢复。大文件正文始终通过 WebRTC 传输，不经过 Axum 或 SQLite。
 
 ## 启动
 
@@ -38,9 +38,10 @@ python scripts/dev.py --profile debug --build-only
 ```bash
 python scripts/verify.py
 python scripts/test_e2e.py
+python scripts/test_e2e.py --interop
 ```
 
-`test_e2e.py` 默认只运行快速桌面 Chromium smoke 层。轻量性能基线、完整浏览器矩阵和 opt-in 大文件压力门禁分别运行：
+`test_e2e.py` 默认只运行快速桌面 Chromium smoke 层；`--interop` 只运行 Firefox/WebKit 点对点协商。轻量性能基线、完整浏览器矩阵和 opt-in 大文件压力门禁分别运行：
 
 ```bash
 python scripts/test_e2e.py --performance

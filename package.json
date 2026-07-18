@@ -12,6 +12,7 @@
   "scripts": {
     "e2e": "playwright test --config e2e/playwright.smoke.config.ts",
     "e2e:full": "playwright test --config e2e/playwright.config.ts",
+    "e2e:interop": "playwright test --config e2e/playwright.interop.config.ts",
     "e2e:performance": "playwright test --config e2e/playwright.performance.config.ts",
     "e2e:public": "playwright test --config e2e/playwright.public.config.ts",
     "e2e:stress": "playwright test --config e2e/playwright.stress.config.ts",

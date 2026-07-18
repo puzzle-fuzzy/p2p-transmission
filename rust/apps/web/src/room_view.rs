@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 
 use dioxus::prelude::*;
 use p2p_browser_platform::{RtcPeer, copy_text, leave_room, new_client_id};
-use p2p_protocol::{CreateInviteResponse, ParticipantRoleWire, RoomBootstrapResponse};
+use p2p_protocol::{
+    CreateInviteResponse, ParticipantRoleWire, ParticipantSnapshot, RoomBootstrapResponse,
+};
 
 use crate::app_state::{AppModel, RealtimePhase, RoomRole, RtcPhase, Screen};
 use crate::browser_errors::friendly_error;
@@ -10,9 +12,9 @@ use crate::icons::{UiIcon, UiIconKind};
 use crate::join_request::JoinRequestDialog;
 use crate::participant_presence::PeerFlow;
 use crate::realtime_session::return_to_lobby;
-use crate::realtime_target::RealtimeTarget;
+use crate::realtime_target::{RealtimeTarget, RealtimeTargetScope};
 use crate::share_dialog::ShareDialog;
-use crate::transfer_panel::TransferPanel;
+use crate::transfer_panel::{PeerRtcPresentation, TransferPanel};
 
 #[derive(Clone, PartialEq)]
 struct RoomShellState {
@@ -20,11 +22,31 @@ struct RoomShellState {
     snapshot: RoomBootstrapResponse,
     invite: Option<CreateInviteResponse>,
     realtime: RealtimePhase,
-    rtc: RtcPhase,
+    peer_connected: bool,
     busy: bool,
     notice: Option<String>,
     error: Option<String>,
     entering_receivers: Vec<String>,
+}
+
+#[derive(Clone)]
+struct RoomLeaveScope {
+    room_id: String,
+    target: Option<RealtimeTargetScope>,
+}
+
+impl RoomLeaveScope {
+    fn is_current(&self, state: &AppModel, target: Option<&RealtimeTarget>) -> bool {
+        let same_room = matches!(
+            &state.screen,
+            Screen::Room { snapshot, .. } if snapshot.room_id == self.room_id
+        );
+        same_room
+            && match &self.target {
+                Some(scope) => scope.is_current(target),
+                None => target.is_none(),
+            }
+    }
 }
 
 #[component]
@@ -46,7 +68,7 @@ pub(super) fn RoomView(
         snapshot,
         invite,
         realtime,
-        rtc,
+        peer_connected,
         busy,
         notice,
         error,
@@ -140,9 +162,14 @@ pub(super) fn RoomView(
                 sender,
                 receivers: receivers.clone(),
                 entering_receivers,
-                peer_connected: rtc == RtcPhase::Ready,
+                peer_connected,
             }
-            RoomTransferPanel { model, rtc_peers }
+            RoomTransferPanel {
+                model,
+                rtc_peers,
+                role,
+                receivers: receivers.clone(),
+            }
             if let Some(notice) = notice {
                 p { class: "room-notice", role: "status", "{notice}" }
             }
@@ -177,29 +204,33 @@ pub(super) fn RoomView(
 fn RoomTransferPanel(
     model: Signal<AppModel>,
     rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+    role: RoomRole,
+    receivers: Vec<ParticipantSnapshot>,
 ) -> Element {
-    let (role, receivers, rtc, transfer, rtc_by_peer, transfers_by_peer) = {
+    let panel_state = use_memo(move || {
         let state = model.read();
-        let Screen::Room { role, snapshot, .. } = &state.screen else {
-            return rsx! {};
-        };
-        let receivers = snapshot
-            .participants
-            .iter()
-            .filter(|participant| {
-                participant.role == ParticipantRoleWire::Receiver && participant.online
-            })
-            .cloned()
-            .collect::<Vec<_>>();
         (
-            *role,
-            receivers,
-            state.rtc,
+            state.rtc_config_phase,
+            state.rtc_aggregate_phase,
             state.transfer.clone(),
-            state.rtc_by_peer.clone(),
+            state
+                .rtc_peer_states
+                .iter()
+                .map(|(peer_id, peer_state)| {
+                    (
+                        peer_id.clone(),
+                        PeerRtcPresentation::new(
+                            peer_state.phase,
+                            peer_state.outgoing_recovery_is_checking(),
+                        ),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>(),
             state.transfers_by_peer.clone(),
         )
-    };
+    });
+    let (rtc_config_phase, aggregate_rtc, transfer, rtc_peer_presentations, transfers_by_peer) =
+        panel_state.read().clone();
 
     rsx! {
         TransferPanel {
@@ -207,9 +238,10 @@ fn RoomTransferPanel(
             rtc_peers,
             role,
             receivers,
-            rtc,
+            rtc_config_phase,
+            aggregate_rtc,
             transfer,
-            rtc_by_peer,
+            rtc_peer_presentations,
             transfers_by_peer,
         }
     }
@@ -230,7 +262,7 @@ fn room_shell_state(state: &AppModel) -> Option<RoomShellState> {
         snapshot: snapshot.clone(),
         invite: invite.clone(),
         realtime: state.realtime,
-        rtc: state.rtc,
+        peer_connected: state.rtc_aggregate_phase == RtcPhase::Ready,
         busy: state.busy,
         notice: state.notice.clone(),
         error: state.error.clone(),
@@ -239,16 +271,31 @@ fn room_shell_state(state: &AppModel) -> Option<RoomShellState> {
 }
 
 fn submit_leave(mut model: Signal<AppModel>, realtime_target: Signal<Option<RealtimeTarget>>) {
-    let (room_code, revision) = {
+    let (room_id, room_code, revision) = {
         let state = model.read();
         let Screen::Room { snapshot, .. } = &state.screen else {
             return;
         };
-        (snapshot.room_code.clone(), snapshot.revision)
+        (
+            snapshot.room_id.clone(),
+            snapshot.room_code.clone(),
+            snapshot.revision,
+        )
+    };
+    let leave_scope = RoomLeaveScope {
+        room_id,
+        target: realtime_target
+            .read()
+            .as_ref()
+            .cloned()
+            .map(RealtimeTargetScope::new),
     };
     model.write().busy = true;
     spawn(async move {
         let result = leave_room(&room_code, &new_client_id("leave"), Some(revision)).await;
+        if !leave_scope.is_current(&model.read(), realtime_target.read().as_ref()) {
+            return;
+        }
         if let Err(error) = result {
             let mut state = model.write();
             state.busy = false;
@@ -263,6 +310,7 @@ fn submit_leave(mut model: Signal<AppModel>, realtime_target: Signal<Option<Real
 mod tests {
     use super::*;
     use crate::app_state::TransferState;
+    use crate::realtime_target::member_target;
     use p2p_protocol::CURRENT_PROTOCOL;
 
     fn room_model() -> AppModel {
@@ -297,5 +345,26 @@ mod tests {
 
         model.notice = Some("传输完成".to_owned());
         assert!(room_shell_state(&model) != initial);
+    }
+
+    #[test]
+    fn leave_scope_rejects_a_replacement_room_target() {
+        let mut model = room_model();
+        let target = member_target("ABC234".to_owned(), 1, "peer-owner".to_owned());
+        let scope = RoomLeaveScope {
+            room_id: "room-1".to_owned(),
+            target: Some(RealtimeTargetScope::new(target.clone())),
+        };
+
+        assert!(scope.is_current(&model, Some(&target)));
+
+        let replacement = member_target("ABC234".to_owned(), 1, "peer-owner".to_owned());
+        assert!(!scope.is_current(&model, Some(&replacement)));
+
+        model.screen = Screen::Lobby {
+            room_code: String::new(),
+            invite_capability: None,
+        };
+        assert!(!scope.is_current(&model, Some(&target)));
     }
 }

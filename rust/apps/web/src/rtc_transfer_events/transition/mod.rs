@@ -174,7 +174,8 @@ pub(super) fn plan_transfer_event(
         RtcEvent::TransferFailed { message, .. } => terminal::failed(model, peer_id, message),
         RtcEvent::OutboundSignal { .. }
         | RtcEvent::ConnectionState(_)
-        | RtcEvent::DataChannelReady => {
+        | RtcEvent::DataChannelReady
+        | RtcEvent::NegotiationFailed { .. } => {
             unreachable!("control RTC event reached transfer event handler")
         }
     }

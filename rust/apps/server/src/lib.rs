@@ -17,6 +17,7 @@ use std::{
 
 use axum::{
     Extension, Json, Router,
+    extract::RawQuery,
     http::{HeaderName, HeaderValue, StatusCode, header},
     middleware,
     response::{IntoResponse, Response},
@@ -108,7 +109,16 @@ async fn missing_html_entry() -> StatusCode {
     StatusCode::NOT_FOUND
 }
 
-async fn app_css() -> Response {
+fn current_shell_asset_query(query: Option<&str>) -> bool {
+    query
+        .and_then(|value| value.strip_prefix("v="))
+        .is_some_and(|version| version == release_version())
+}
+
+async fn app_css(RawQuery(query): RawQuery) -> Response {
+    if !current_shell_asset_query(query.as_deref()) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     let mut response = embedded_asset("text/css; charset=utf-8", APP_CSS);
     response.headers_mut().insert(
         header::CACHE_CONTROL,
@@ -117,7 +127,10 @@ async fn app_css() -> Response {
     response
 }
 
-async fn app_shell_js() -> Response {
+async fn app_shell_js(RawQuery(query): RawQuery) -> Response {
+    if !current_shell_asset_query(query.as_deref()) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     let mut response = embedded_asset("text/javascript; charset=utf-8", APP_SHELL_JS);
     response.headers_mut().insert(
         header::CACHE_CONTROL,
@@ -126,7 +139,10 @@ async fn app_shell_js() -> Response {
     response
 }
 
-async fn room_restore_js() -> Response {
+async fn room_restore_js(RawQuery(query): RawQuery) -> Response {
+    if !current_shell_asset_query(query.as_deref()) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     let mut response = embedded_asset("text/javascript; charset=utf-8", ROOM_RESTORE_JS);
     response.headers_mut().insert(
         header::CACHE_CONTROL,
@@ -455,14 +471,14 @@ mod tests {
         assert!(service_worker.contains("applicationShellMatchesRelease(html)"));
         assert!(service_worker.contains("currentReleaseShellAsset(url)"));
         assert!(service_worker.contains("cacheFirstShellAsset(request)"));
-        assert!(service_worker.contains("networkFirstUnversionedShellAsset(request)"));
+        assert!(!service_worker.contains("networkFirstUnversionedShellAsset"));
         assert!(service_worker.contains("networkFirstAsset(request)"));
         assert!(!service_worker.contains("url.pathname === '/app'"));
 
         let room_restore = router
             .clone()
             .oneshot(
-                Request::get("/shell/room-restore.js")
+                Request::get(format!("/shell/room-restore.js?v={}", release_version()))
                     .body(Body::empty())
                     .expect("request"),
             )
@@ -485,13 +501,14 @@ mod tests {
             .to_bytes();
         let room_restore =
             String::from_utf8(room_restore.to_vec()).expect("room restore hint utf-8");
-        assert!(room_restore.contains("p2p_room_session"));
+        assert!(room_restore.contains("p2p_room_session_v5"));
+        assert!(room_restore.contains("const schemaVersion = 5"));
         assert!(room_restore.contains("data-p2p-room-restore"));
 
         let app_shell = router
             .clone()
             .oneshot(
-                Request::get("/shell/app-shell.js")
+                Request::get(format!("/shell/app-shell.js?v={}", release_version()))
                     .body(Body::empty())
                     .expect("request"),
             )
@@ -504,8 +521,9 @@ mod tests {
         );
 
         let app_css = router
+            .clone()
             .oneshot(
-                Request::get("/shell/app-shell.css")
+                Request::get(format!("/shell/app-shell.css?v={}", release_version()))
                     .body(Body::empty())
                     .expect("request"),
             )
@@ -520,6 +538,19 @@ mod tests {
             app_css.headers()[header::CACHE_CONTROL],
             HeaderValue::from_static("no-cache, must-revalidate")
         );
+
+        for path in [
+            "/shell/app-shell.css",
+            "/shell/room-restore.js?v=2.0.1-stale",
+            "/shell/app-shell.js?v=2.0.1-stale&preview=1",
+        ] {
+            let response = router
+                .clone()
+                .oneshot(Request::get(path).body(Body::empty()).expect("request"))
+                .await
+                .expect("strict shell asset response");
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        }
 
         state.services.storage.close().await;
         fs::remove_dir_all(web_root).expect("remove static fixture directory");

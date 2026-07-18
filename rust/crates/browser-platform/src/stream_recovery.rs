@@ -7,8 +7,8 @@ use web_sys::{Event, IdbDatabase, IdbObjectStore, IdbRequest, IdbTransactionMode
 
 use crate::BrowserPlatformError;
 
-const DATABASE_NAME: &str = "p2p-transmission";
-const DATABASE_VERSION: u32 = 2;
+const DATABASE_NAME: &str = "p2p-transmission-v5";
+const DATABASE_VERSION: u32 = 1;
 const STREAM_STORE_NAME: &str = "stream-recovery";
 const OUTGOING_STORE_NAME: &str = "outgoing-recovery";
 const RECORD_VERSION: u32 = 1;
@@ -189,12 +189,10 @@ async fn open_database() -> Result<IdbDatabase, BrowserPlatformError> {
             .and_then(|value| value.dyn_into::<IdbDatabase>().map_err(indexed_db_error))
             .and_then(|database| {
                 for name in [STREAM_STORE_NAME, OUTGOING_STORE_NAME] {
-                    if !database.object_store_names().contains(name) {
-                        database
-                            .create_object_store(name)
-                            .map(|_: IdbObjectStore| ())
-                            .map_err(indexed_db_error)?;
-                    }
+                    database
+                        .create_object_store(name)
+                        .map(|_: IdbObjectStore| ())
+                        .map_err(indexed_db_error)?;
                 }
                 Ok(())
             });

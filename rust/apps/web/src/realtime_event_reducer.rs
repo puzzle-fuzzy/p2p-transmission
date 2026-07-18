@@ -107,6 +107,7 @@ pub(super) enum RealtimeEffect {
     ReconnectSocket,
     AcceptRtcSignal {
         from_peer_id: String,
+        negotiation_id: String,
         signal: ProtocolSignal,
     },
 }
@@ -251,9 +252,14 @@ pub(super) fn reduce_server_error(code: &str, message: String) -> Vec<RealtimeEf
     }
 }
 
-pub(super) fn reduce_signal(from_peer_id: String, signal: ProtocolSignal) -> Vec<RealtimeEffect> {
+pub(super) fn reduce_signal(
+    from_peer_id: String,
+    negotiation_id: String,
+    signal: ProtocolSignal,
+) -> Vec<RealtimeEffect> {
     vec![RealtimeEffect::AcceptRtcSignal {
         from_peer_id,
+        negotiation_id,
         signal,
     }]
 }
@@ -517,9 +523,14 @@ mod tests {
             sdp: "test-sdp".to_owned(),
         };
         assert_eq!(
-            reduce_signal("peer-receiver".to_owned(), signal.clone()),
+            reduce_signal(
+                "peer-receiver".to_owned(),
+                "negotiation-1".to_owned(),
+                signal.clone(),
+            ),
             vec![RealtimeEffect::AcceptRtcSignal {
                 from_peer_id: "peer-receiver".to_owned(),
+                negotiation_id: "negotiation-1".to_owned(),
                 signal,
             }]
         );

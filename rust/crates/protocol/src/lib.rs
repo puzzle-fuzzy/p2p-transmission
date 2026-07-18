@@ -41,6 +41,7 @@ pub enum HealthState {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct HealthResponse {
     pub status: HealthState,
     pub service: String,
@@ -64,6 +65,7 @@ impl HealthResponse {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BuildInfo {
     pub product: String,
     pub version: String,

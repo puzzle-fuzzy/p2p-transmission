@@ -18,8 +18,8 @@ readonly HELPER_DIR='/usr/local/libexec/p2p-transmission'
 readonly CONTROL_PLANE_VERSIONS="$HELPER_DIR/control-plane-versions"
 readonly CONTROL_PLANE_CURRENT="$HELPER_DIR/current"
 readonly HELPER="$CONTROL_PLANE_CURRENT/deploy-release.py"
-readonly LEGACY_HELPER="$HELPER_DIR/deploy-release.py"
-readonly LEGACY_CONTROL_PLANE_PACKAGE="$HELPER_DIR/deploy_control_plane"
+readonly UNSUPPORTED_STANDALONE_HELPER="$HELPER_DIR/deploy-release.py"
+readonly UNSUPPORTED_STANDALONE_PACKAGE="$HELPER_DIR/deploy_control_plane"
 readonly SUDOERS_FILE='/etc/sudoers.d/p2p-transmission-deploy'
 readonly SSHD_DROP_IN='/etc/ssh/sshd_config.d/60-p2p-deploy.conf'
 
@@ -102,6 +102,7 @@ readonly PRODUCTION_ENV="$APP_ROOT/deploy/production/.env"
 readonly PRODUCTION_DATA="$APP_ROOT/deploy/production/data"
 readonly PRODUCTION_BACKUPS="$APP_ROOT/deploy/production/backups"
 readonly PRODUCTION_ROLLBACK="$APP_ROOT/deploy/production/rollback"
+readonly SOURCE_MANIFEST="$APP_ROOT/deploy/production/source-files.json"
 readonly PENDING_RELEASE="$PRODUCTION_ROLLBACK/pending.json"
 readonly -a CONTROL_PLANE_MODULES=(
   '__init__.py'
@@ -363,27 +364,11 @@ check_control_plane_bundle() {
     die 'installed control-plane current pointer does not match the trusted source'
   assert_control_plane_version "$digest"
   assert_managed_file "$HELPER_SOURCE" "$HELPER" '444'
-  [[ ! -e "$LEGACY_HELPER" && ! -L "$LEGACY_HELPER" ]] || \
-    die "retired standalone control-plane entry still exists: $LEGACY_HELPER"
-  [[ ! -e "$LEGACY_CONTROL_PLANE_PACKAGE" && ! -L "$LEGACY_CONTROL_PLANE_PACKAGE" ]] || \
-    die "retired standalone control-plane package pointer still exists: $LEGACY_CONTROL_PLANE_PACKAGE"
+  [[ ! -e "$UNSUPPORTED_STANDALONE_HELPER" && ! -L "$UNSUPPORTED_STANDALONE_HELPER" ]] || \
+    die "unsupported standalone control-plane entry exists: $UNSUPPORTED_STANDALONE_HELPER"
+  [[ ! -e "$UNSUPPORTED_STANDALONE_PACKAGE" && ! -L "$UNSUPPORTED_STANDALONE_PACKAGE" ]] || \
+    die "unsupported standalone control-plane package exists: $UNSUPPORTED_STANDALONE_PACKAGE"
   "$WRAPPER" control-plane-status --expected-sha256 "$digest" >/dev/null
-}
-
-remove_legacy_control_plane_layout() {
-  if [[ -e "$LEGACY_HELPER" || -L "$LEGACY_HELPER" ]]; then
-    assert_regular_file "$LEGACY_HELPER"
-    assert_root_controlled "$LEGACY_HELPER"
-    rm -f -- "$LEGACY_HELPER"
-  fi
-  if [[ -e "$LEGACY_CONTROL_PLANE_PACKAGE" || -L "$LEGACY_CONTROL_PLANE_PACKAGE" ]]; then
-    [[ -L "$LEGACY_CONTROL_PLANE_PACKAGE" ]] || \
-      die "refusing to remove non-symbolic legacy control-plane package: $LEGACY_CONTROL_PLANE_PACKAGE"
-    [[ "$(stat -c '%U:%G' -- "$LEGACY_CONTROL_PLANE_PACKAGE")" == 'root:root' ]] || \
-      die 'legacy control-plane package pointer must be root-owned'
-    rm -f -- "$LEGACY_CONTROL_PLANE_PACKAGE"
-  fi
-  fsync_directory "$HELPER_DIR"
 }
 
 acquire_bootstrap_control_plane_lock() {
@@ -837,9 +822,126 @@ check_authorized_key() {
   fi
 }
 
+validate_source_manifest() {
+  assert_regular_file "$SOURCE_MANIFEST"
+  assert_root_controlled "$SOURCE_MANIFEST"
+  assert_mode "$SOURCE_MANIFEST" '600'
+  python3 -I -B -X utf8 - "$APP_ROOT" "$SOURCE_MANIFEST" <<'PY' || \
+    die 'production source manifest does not match the installed current source tree'
+import json
+import os
+import stat
+import sys
+from pathlib import Path, PurePosixPath
+
+root = Path(sys.argv[1])
+manifest = Path(sys.argv[2])
+
+
+def normalize(raw: str) -> str:
+    if not raw or '\\' in raw:
+        raise ValueError(raw)
+    parts = raw.split('/')
+    path = PurePosixPath(raw)
+    if path.is_absolute() or any(part in {'', '.', '..'} for part in parts):
+        raise ValueError(raw)
+    return path.as_posix()
+
+
+def protected(relative: str) -> bool:
+    parts = PurePosixPath(relative).parts
+    prefixes = (
+        ('deploy', 'production', '.env'),
+        ('deploy', 'production', 'data'),
+        ('deploy', 'production', 'backups'),
+        ('deploy', 'production', 'rollback'),
+        ('deploy', 'production', 'source-files.json'),
+        ('deploy', 'coturn', '.local'),
+        ('deploy', 'coturn', 'turnserver.conf'),
+        ('deploy', '.env'),
+        ('deploy', 'data'),
+    )
+    if not parts or parts[0] == '.git':
+        return True
+    if any(parts[:len(prefix)] == prefix for prefix in prefixes):
+        return True
+    if parts[:2] == ('deploy', 'coturn') and relative.endswith(('.pem', '.key')):
+        return True
+    return parts[0] == 'deploy' and (
+        relative.endswith('.sqlite') or '.sqlite-' in PurePosixPath(relative).name
+    )
+
+
+payload = json.loads(manifest.read_text(encoding='utf-8'))
+if not isinstance(payload, list) or not all(isinstance(item, str) for item in payload):
+    raise SystemExit('source manifest must be a JSON string array')
+normalized = [normalize(item) for item in payload]
+if normalized != sorted(set(normalized)):
+    raise SystemExit('source manifest must be sorted and contain unique paths')
+listed = set(normalized)
+if 'deploy/scripts/deploy-release.py' not in listed:
+    raise SystemExit('source manifest is missing the deployment entry')
+
+actual: set[str] = set()
+for current, directory_names, file_names in os.walk(root, followlinks=False):
+    current_path = Path(current)
+    for name in directory_names:
+        path = current_path / name
+        if path.is_symlink():
+            raise SystemExit(f'installed source directory is unsafe: {path}')
+    for name in file_names:
+        path = current_path / name
+        relative = path.relative_to(root).as_posix()
+        metadata = path.lstat()
+        if protected(relative):
+            continue
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            raise SystemExit(f'installed source file is unsafe: {relative}')
+        actual.add(relative)
+
+if actual != listed:
+    raise SystemExit('source manifest does not describe the installed source files exactly')
+PY
+}
+
+write_seed_source_manifest() {
+  local root="$1"
+  local manifest="$root/deploy/production/source-files.json"
+  python3 -I -B -X utf8 - "$root" "$manifest" <<'PY' || \
+    die 'failed to create the current source manifest'
+import json
+import os
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+manifest = Path(sys.argv[2])
+files = sorted(
+    path.relative_to(root).as_posix()
+    for path in root.rglob('*')
+    if path.is_file()
+)
+flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0)
+descriptor = os.open(manifest, flags, 0o600)
+with os.fdopen(descriptor, 'w', encoding='utf-8') as destination:
+    json.dump(files, destination, ensure_ascii=False, indent=2)
+    destination.write('\n')
+    destination.flush()
+    os.fsync(destination.fileno())
+os.chmod(manifest, 0o600)
+PY
+  fsync_regular_file "$manifest"
+  fsync_directory "$(dirname -- "$manifest")"
+}
+
 seed_release_tree() {
-  if [[ -f "$APP_ROOT/deploy/scripts/deploy-release.py" ]]; then
+  if [[ -e "$SOURCE_MANIFEST" || -L "$SOURCE_MANIFEST" ]]; then
+    validate_source_manifest
     return
+  fi
+  if [[ -e "$APP_ROOT/deploy/scripts/deploy-release.py" || \
+        -L "$APP_ROOT/deploy/scripts/deploy-release.py" ]]; then
+    die "existing application root has no current source manifest: $APP_ROOT"
   fi
   local temporary
   local -a existing=()
@@ -864,10 +966,12 @@ seed_release_tree() {
     rm -rf --one-file-system -- "$temporary"
     die 'trusted release checkout does not contain the deployment helper'
   fi
+  write_seed_source_manifest "$temporary"
   rmdir -- "$APP_ROOT"
   mv -- "$temporary" "$APP_ROOT"
   chown root:root "$APP_ROOT"
   chmod 0755 "$APP_ROOT"
+  validate_source_manifest
 }
 
 ensure_runtime_paths() {
@@ -926,6 +1030,7 @@ check_runtime_paths() {
   assert_regular_file "$PRODUCTION_ENV"
   assert_root_controlled "$PRODUCTION_ENV"
   assert_mode "$PRODUCTION_ENV" '600'
+  validate_source_manifest
   check_database_files
 }
 
@@ -1020,7 +1125,6 @@ if [[ "$MODE" == 'apply' ]]; then
   assert_root_controlled "$HELPER_DIR"
   install_control_plane_bundle >/dev/null
   atomic_install "$WRAPPER_SOURCE" "$WRAPPER" 0755
-  remove_legacy_control_plane_layout
   install_sudoers_policy
   install_sshd_policy
   release_bootstrap_control_plane_lock

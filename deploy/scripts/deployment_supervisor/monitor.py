@@ -112,7 +112,6 @@ def wait_for_worker(
                     paths.supervisor,
                     paths.source_archive,
                     paths.image_archive,
-                    paths.retired_files,
                 )
             )
             if worker_state_exists:

@@ -255,7 +255,7 @@ mod tests {
         let lobby_html = dioxus_ssr::render_element(p2p_ui_shell::initializing_lobby_element());
         let renderer =
             WebShellRenderer::from_template(include_str!("../../web/index.html"), &lobby_html)
-                .expect("production template and shared lobby must remain compatible");
+                .expect("production template and shared lobby must remain structurally aligned");
 
         assert!(renderer.html().contains(p2p_ui_shell::LOBBY_TITLE));
         assert!(renderer.html().contains(p2p_ui_shell::RESTORING_ROOM_COPY));
@@ -288,7 +288,7 @@ mod tests {
         let critical_restore_style = renderer
             .html()
             .find(".boot-room-restore { display: none; }")
-            .expect("the room restore state needs inline critical CSS for old service workers");
+            .expect("the room restore state needs inline critical CSS before first paint");
         let restore_reference =
             format!("<script src=\"/shell/room-restore.js?v={release}\"></script>");
         let restore_script = renderer

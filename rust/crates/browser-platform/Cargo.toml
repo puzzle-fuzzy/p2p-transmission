@@ -26,6 +26,7 @@ web-sys = { workspace = true, features = [
   "Blob",
   "BlobPropertyBag",
   "CloseEvent",
+  "Crypto",
   "Document",
   "DomStringList",
   "DomException",

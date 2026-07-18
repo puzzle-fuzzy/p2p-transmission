@@ -1,5 +1,7 @@
 #[cfg(target_arch = "wasm32")]
 use p2p_protocol::ErrorEnvelope;
+#[cfg(any(target_arch = "wasm32", test))]
+use p2p_protocol::ProtocolVersion;
 use p2p_protocol::{
     CURRENT_PROTOCOL, CreateInviteRequest, CreateInviteResponse, CreateRoomRequest,
     CreateRoomResponse, CreateSessionRequest, DecideJoinRequest, JoinDecisionRequest,
@@ -9,6 +11,49 @@ use p2p_protocol::{
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::BrowserPlatformError;
+
+#[cfg(any(target_arch = "wasm32", test))]
+trait ProtocolResponse {
+    fn protocol_version(&self) -> ProtocolVersion;
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+macro_rules! impl_protocol_response {
+    ($($response:ty),+ $(,)?) => {
+        $(
+            impl ProtocolResponse for $response {
+                fn protocol_version(&self) -> ProtocolVersion {
+                    self.version
+                }
+            }
+        )+
+    };
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+impl_protocol_response!(
+    SessionResponse,
+    CreateRoomResponse,
+    CreateInviteResponse,
+    JoinRequestResponse,
+    RoomBootstrapResponse,
+    RoomMutationResponse,
+    RtcConfigResponse,
+);
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn decode_success_response<ResponseBody>(text: &str) -> Result<ResponseBody, BrowserPlatformError>
+where
+    ResponseBody: DeserializeOwned + ProtocolResponse,
+{
+    let response = serde_json::from_str::<ResponseBody>(text)
+        .map_err(|error| BrowserPlatformError::Decode(error.to_string()))?;
+    response
+        .protocol_version()
+        .validate()
+        .map_err(|error| BrowserPlatformError::Decode(error.to_string()))?;
+    Ok(response)
+}
 
 pub async fn fetch_rtc_config() -> Result<RtcConfigResponse, BrowserPlatformError> {
     request_json::<(), RtcConfigResponse>("GET", "/api/rtc/config", None).await
@@ -140,7 +185,7 @@ async fn request_json<RequestBody, ResponseBody>(
 ) -> Result<ResponseBody, BrowserPlatformError>
 where
     RequestBody: Serialize,
-    ResponseBody: DeserializeOwned,
+    ResponseBody: DeserializeOwned + ProtocolResponse,
 {
     use wasm_bindgen::{JsCast, JsValue};
     use wasm_bindgen_futures::JsFuture;
@@ -191,7 +236,7 @@ where
             retryable: envelope.error.retryable,
         });
     }
-    serde_json::from_str(&text).map_err(|error| BrowserPlatformError::Decode(error.to_string()))
+    decode_success_response(&text)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -205,4 +250,24 @@ where
     ResponseBody: DeserializeOwned,
 {
     Err(BrowserPlatformError::UnsupportedTarget)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn successful_http_responses_require_the_current_protocol() {
+        let current = r#"{"version":{"major":5,"minor":0},"session_id":"session_1","display_name":"Alice","expires_at_ms":1}"#;
+        let decoded = decode_success_response::<SessionResponse>(current)
+            .expect("current response should decode");
+        assert_eq!(decoded.version, CURRENT_PROTOCOL);
+
+        let previous = current.replace(r#""major":5"#, r#""major":4"#);
+        assert!(matches!(
+            decode_success_response::<SessionResponse>(&previous),
+            Err(BrowserPlatformError::Decode(message))
+                if message == "protocol version 4.0 is unsupported"
+        ));
+    }
 }

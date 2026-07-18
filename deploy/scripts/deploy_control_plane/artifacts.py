@@ -18,7 +18,6 @@ from .common import (
     ARTIFACT_SNAPSHOT_PREFIX,
     IMAGE_ARCHIVE_RE,
     MAX_RUNTIME_CONFIG_BYTES,
-    RETIRED_FILES_RE,
     SOURCE_ARCHIVE_RE,
     SOURCE_MANIFEST,
     TRACKED_RUNTIME_CONFIG_HASHES,
@@ -39,10 +38,9 @@ class ReleaseArtifactSnapshot:
     root: Path
     source_archive: Path
     image_archive: Path
-    retired_files: Path
 
     def cleanup(self) -> None:
-        for path in (self.source_archive, self.image_archive, self.retired_files):
+        for path in (self.source_archive, self.image_archive):
             try:
                 metadata = path.lstat()
             except FileNotFoundError:
@@ -153,12 +151,10 @@ def copy_bound_artifact(
 def snapshot_release_artifacts(
     source_archive: Path,
     image_archive: Path,
-    retired_files: Path,
 ) -> ReleaseArtifactSnapshot:
     specifications = (
         (source_archive, SOURCE_ARCHIVE_RE, 'source archive'),
         (image_archive, IMAGE_ARCHIVE_RE, 'image archive'),
-        (retired_files, RETIRED_FILES_RE, 'retired source file list'),
     )
     opened: list[tuple[Path, BinaryIO, os.stat_result, str]] = []
     snapshot: Optional[ReleaseArtifactSnapshot] = None
@@ -197,7 +193,6 @@ def snapshot_release_artifacts(
             root=stage_root,
             source_archive=destinations[0],
             image_archive=destinations[1],
-            retired_files=destinations[2],
         )
         return snapshot
     finally:
@@ -303,19 +298,6 @@ def read_source_file_list(path: Path) -> set[str]:
         raise SystemExit(f'source file list must be a JSON string array: {path}')
     return {normalize_source_path(item) for item in payload}
 
-def validate_retired_files(
-    path: Path,
-    *,
-    trusted_root: Optional[Path] = None,
-) -> tuple[Path, set[str]]:
-    resolved = artifact_file(
-        path,
-        RETIRED_FILES_RE,
-        'retired source file list',
-        trusted_root,
-    )
-    return resolved, read_source_file_list(resolved)
-
 def source_path_is_protected(path: str) -> bool:
     parts = PurePosixPath(path).parts
     if not parts:
@@ -345,10 +327,32 @@ def write_source_manifest(files: set[str]) -> None:
     payload = (json.dumps(sorted(files), ensure_ascii=False, indent=2) + '\n').encode('utf-8')
     atomic_write_bytes(SOURCE_MANIFEST, payload, 0o600)
 
-def remove_retired_source_files(current_files: set[str], bootstrap_files: set[str]) -> int:
-    previous_files = (
-        read_source_file_list(SOURCE_MANIFEST) if SOURCE_MANIFEST.is_file() else bootstrap_files
-    )
+def read_source_manifest() -> set[str]:
+    try:
+        metadata = SOURCE_MANIFEST.lstat()
+    except OSError as error:
+        raise SystemExit(
+            'current production source manifest is missing; clean bootstrap is required'
+        ) from error
+    effective_uid = getattr(os, 'geteuid', lambda: metadata.st_uid)()
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_nlink != 1
+        or (
+            os.name != 'nt'
+            and (
+                metadata.st_uid != effective_uid
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+            )
+        )
+    ):
+        raise SystemExit('current production source manifest is unsafe')
+    return read_source_file_list(SOURCE_MANIFEST)
+
+
+def remove_retired_source_files(current_files: set[str]) -> int:
+    previous_files = read_source_manifest()
     retired = previous_files - current_files
     parent_directories: set[Path] = set()
     removed = 0

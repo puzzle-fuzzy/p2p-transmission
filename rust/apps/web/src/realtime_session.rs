@@ -7,7 +7,7 @@ use p2p_protocol::{
 };
 
 use crate::app_state::{
-    AppModel, RealtimePhase, RoomRole, RtcPhase, Screen, StoredRoomSession, TransferState,
+    AppModel, RealtimePhase, RoomRole, Screen, StoredRoomSession, TransferState,
 };
 use crate::browser_errors::friendly_error;
 use crate::browser_lifecycle::complete_lifecycle_recovery;
@@ -26,6 +26,7 @@ use crate::realtime_runtime::{LifecycleState, RealtimeSessionRuntime, RtcRuntime
 use crate::realtime_target::{RealtimeTarget, RealtimeTargetKind, member_target};
 use crate::room_session::persist_room_session;
 use crate::rtc_session::{accept_rtc_signal, remove_rtc_peer, reset_all_rtc_peers, sync_rtc_peers};
+use crate::rtc_transition::{deactivate_rtc_config, refresh_aggregate_rtc};
 
 const AVATAR_ENTRY_HOLD_MS: u32 = 700;
 
@@ -93,16 +94,19 @@ pub(super) fn return_to_lobby(
         invite_capability: None,
     };
     state.realtime = RealtimePhase::Disconnected;
-    state.rtc = RtcPhase::Inactive;
+    deactivate_rtc_config(&mut state);
     state.transfer = TransferState::Idle;
     state.pending_signals.clear();
-    state.rtc_by_peer.clear();
+    state.rtc_peer_states.clear();
+    state.rtc_error = None;
     state.transfers_by_peer.clear();
     state.decision_request_id = None;
     state.busy = false;
+    state.lobby_action_error = None;
     state.error = None;
     state.notice = notice;
     state.entering_receivers.clear();
+    refresh_aggregate_rtc(&mut state);
 }
 
 fn complete_attachment(
@@ -122,7 +126,7 @@ fn complete_attachment(
     }
     drop(state);
     if member {
-        sync_rtc_peers(model, rtc.connection, rtc.peers, rtc.config);
+        sync_rtc_peers(model, rtc.connection, rtc.peers, rtc.config, &target_scope);
     }
 }
 
@@ -157,7 +161,10 @@ pub(super) fn apply_authoritative_snapshot(
         Some(PendingAttachment::JoinWatch) if mark_realtime_connected(connection, lease) => {
             complete_attachment(model, rtc, lifecycle_state, lease, false);
         }
-        _ => sync_rtc_peers(model, rtc.connection, rtc.peers, rtc.config),
+        _ => {
+            let target_scope = lease.target_scope();
+            sync_rtc_peers(model, rtc.connection, rtc.peers, rtc.config, &target_scope);
+        }
     }
     Some(entering)
 }
@@ -294,9 +301,14 @@ fn handle_server_message(
         }
         ServerRealtimeMessage::Signal {
             from_peer_id,
+            negotiation_id,
             signal,
             ..
-        } => apply_realtime_effects(runtime, lease, reduce_signal(from_peer_id, signal)),
+        } => apply_realtime_effects(
+            runtime,
+            lease,
+            reduce_signal(from_peer_id, negotiation_id, signal),
+        ),
     }
 }
 
@@ -394,12 +406,16 @@ fn apply_realtime_effects(
                 return_to_lobby(runtime.model, runtime.target, Some(notice.to_owned()));
                 return;
             }
-            RealtimeEffect::SyncRtcPeers => sync_rtc_peers(
-                runtime.model,
-                runtime.rtc.connection,
-                runtime.rtc.peers,
-                runtime.rtc.config,
-            ),
+            RealtimeEffect::SyncRtcPeers => {
+                let target_scope = lease.target_scope();
+                sync_rtc_peers(
+                    runtime.model,
+                    runtime.rtc.connection,
+                    runtime.rtc.peers,
+                    runtime.rtc.config,
+                    &target_scope,
+                );
+            }
             RealtimeEffect::RefreshRoomSnapshot => {
                 refresh_room_snapshot(runtime, lease.clone());
             }
@@ -432,15 +448,21 @@ fn apply_realtime_effects(
             }
             RealtimeEffect::AcceptRtcSignal {
                 from_peer_id,
+                negotiation_id,
                 signal,
-            } => accept_rtc_signal(
-                runtime.model,
-                runtime.rtc.connection,
-                runtime.rtc.peers,
-                runtime.rtc.config,
-                from_peer_id,
-                signal,
-            ),
+            } => {
+                let target_scope = lease.target_scope();
+                accept_rtc_signal(
+                    runtime.model,
+                    runtime.rtc.connection,
+                    runtime.rtc.peers,
+                    runtime.rtc.config,
+                    &target_scope,
+                    from_peer_id,
+                    negotiation_id,
+                    signal,
+                );
+            }
         }
     }
 }
@@ -449,12 +471,13 @@ fn suppress_realtime_connection(mut runtime: RealtimeSessionRuntime, lease: Real
     if !suppress_realtime_lease(runtime.connection, &lease) {
         return;
     }
-    reset_all_rtc_peers(runtime.rtc.peers);
+    reset_all_rtc_peers(runtime.model, runtime.rtc.peers);
     runtime.rtc.config.set(None);
     {
         let mut model = runtime.model.write();
         model.realtime = RealtimePhase::Superseded;
-        model.rtc = RtcPhase::Inactive;
+        deactivate_rtc_config(&mut model);
+        model.pending_signals.clear();
         model.notice = Some("此房间已在另一个标签页中打开，本页面已停止重连".to_owned());
         model.error = None;
     }

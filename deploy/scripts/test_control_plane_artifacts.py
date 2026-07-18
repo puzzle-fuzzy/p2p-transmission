@@ -113,11 +113,9 @@ class ControlPlaneArtifactTests(unittest.TestCase):
             commit = 'b' * 40
             source = uploads / f'p2p-transmission-{commit}.tar.gz'
             image = uploads / f'p2p-transmission-image-{commit}.tar.gz'
-            retired = uploads / f'p2p-transmission-retired-{commit}.json'
             source.write_bytes(b'original-source')
             image.write_bytes(b'original-image')
-            retired.write_text('[]\n', encoding='utf-8')
-            for path in (source, image, retired):
+            for path in (source, image):
                 path.chmod(0o600)
 
             with (
@@ -129,7 +127,6 @@ class ControlPlaneArtifactTests(unittest.TestCase):
                 snapshot = artifacts.snapshot_release_artifacts(
                     source,
                     image,
-                    retired,
                 )
                 cleanup_count = 0
                 try:
@@ -145,13 +142,6 @@ class ControlPlaneArtifactTests(unittest.TestCase):
                             trusted_root=snapshot.root,
                         ),
                         snapshot.image_archive.resolve(),
-                    )
-                    self.assertEqual(
-                        artifacts.validate_retired_files(
-                            snapshot.retired_files,
-                            trusted_root=snapshot.root,
-                        )[1],
-                        set(),
                     )
                     with self.assertRaisesRegex(SystemExit, 'escaped'):
                         artifacts.validate_image_archive(
@@ -184,10 +174,15 @@ class ControlPlaneArtifactTests(unittest.TestCase):
             artifacts.APP_DIR = root
             common.APP_DIR = root
             artifacts.SOURCE_MANIFEST = root / 'deploy/production/source-files.json'
+            artifacts.SOURCE_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
+            artifacts.SOURCE_MANIFEST.write_text(
+                json.dumps(['deploy/production/.env', 'retired/frontend/client.js']),
+                encoding='utf-8',
+            )
+            artifacts.SOURCE_MANIFEST.chmod(0o600)
             try:
                 removed = artifacts.remove_retired_source_files(
                     {'rust/apps/server/src/main.rs'},
-                    {'retired/frontend/client.js', 'deploy/production/.env'},
                 )
                 artifacts.write_source_manifest({'rust/apps/server/src/main.rs'})
                 self.assertEqual(removed, 1)
@@ -206,7 +201,7 @@ class ControlPlaneArtifactTests(unittest.TestCase):
                     artifacts.SOURCE_MANIFEST,
                 ) = original_values
 
-    def test_existing_source_manifest_wins_over_bootstrap_diff(self) -> None:
+    def test_source_manifest_is_the_only_retirement_authority(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             stale = root / 'retired/service/src/main.rs'
@@ -228,8 +223,9 @@ class ControlPlaneArtifactTests(unittest.TestCase):
                 json.dumps(['retired/service/src/main.rs']),
                 encoding='utf-8',
             )
+            artifacts.SOURCE_MANIFEST.chmod(0o600)
             try:
-                artifacts.remove_retired_source_files(set(), {'docs/keep.md'})
+                artifacts.remove_retired_source_files(set())
                 self.assertFalse(stale.exists())
                 self.assertTrue(bootstrap_only.is_file())
             finally:
@@ -262,9 +258,15 @@ class ControlPlaneArtifactTests(unittest.TestCase):
             artifacts.APP_DIR = root
             common.APP_DIR = root
             artifacts.SOURCE_MANIFEST = root / 'deploy/production/source-files.json'
+            artifacts.SOURCE_MANIFEST.parent.mkdir(parents=True)
+            artifacts.SOURCE_MANIFEST.write_text(
+                json.dumps(['linked/victim.txt']),
+                encoding='utf-8',
+            )
+            artifacts.SOURCE_MANIFEST.chmod(0o600)
             try:
                 with self.assertRaises(SystemExit):
-                    artifacts.remove_retired_source_files(set(), {'linked/victim.txt'})
+                    artifacts.remove_retired_source_files(set())
                 self.assertEqual(victim.read_text(encoding='utf-8'), 'must survive')
             finally:
                 (
@@ -272,6 +274,20 @@ class ControlPlaneArtifactTests(unittest.TestCase):
                     common.APP_DIR,
                     artifacts.SOURCE_MANIFEST,
                 ) = original_values
+
+    def test_retired_source_cleanup_rejects_a_missing_current_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with (
+                patch.object(artifacts, 'APP_DIR', root),
+                patch.object(
+                    artifacts,
+                    'SOURCE_MANIFEST',
+                    root / 'deploy/production/source-files.json',
+                ),
+                self.assertRaisesRegex(SystemExit, 'clean bootstrap is required'),
+            ):
+                artifacts.remove_retired_source_files(set())
 
 
 if __name__ == '__main__':

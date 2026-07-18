@@ -44,7 +44,6 @@ class OperationPaths:
     operation_lock: Path
     source_archive: Path
     image_archive: Path
-    retired_files: Path
 
     def cleanup_targets(self) -> tuple[Path, ...]:
         return (
@@ -54,7 +53,6 @@ class OperationPaths:
             self.pid,
             self.source_archive,
             self.image_archive,
-            self.retired_files,
             self.supervisor,
         )
 
@@ -106,7 +104,6 @@ def operation_paths(operation_id: str) -> OperationPaths:
         operation_lock=TMP_ROOT / f'{prefix}-worker.lock',
         source_archive=TMP_ROOT / f'p2p-transmission-{operation_id}.tar.gz',
         image_archive=TMP_ROOT / f'p2p-transmission-image-{operation_id}.tar.gz',
-        retired_files=TMP_ROOT / f'p2p-transmission-retired-{operation_id}.json',
     )
 
 def parse_backup_log(text: str, version: str) -> BackupResult:

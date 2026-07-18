@@ -124,21 +124,18 @@ class ControlPlaneCapacityTests(unittest.TestCase):
             commit = 'a' * 40
             source = uploads / f'p2p-transmission-{commit}.tar.gz'
             image = uploads / f'p2p-transmission-image-{commit}.tar.gz'
-            retired = uploads / f'p2p-transmission-retired-{commit}.json'
-            for path in (source, image, retired):
+            for path in (source, image):
                 path.touch()
             private_root = root / 'private-artifacts'
             private_root.mkdir()
             private_source = private_root / source.name
             private_image = private_root / image.name
-            private_retired = private_root / retired.name
-            for path in (private_source, private_image, private_retired):
+            for path in (private_source, private_image):
                 path.touch()
             snapshot = artifacts.ReleaseArtifactSnapshot(
                 root=private_root,
                 source_archive=private_source,
                 image_archive=private_image,
-                retired_files=private_retired,
             )
             with (
                 patch.object(artifacts, 'UPLOAD_ROOT', uploads),
@@ -158,12 +155,8 @@ class ControlPlaneCapacityTests(unittest.TestCase):
                     'validate_image_archive',
                     return_value=private_image,
                 ),
-                patch.object(
-                    artifacts,
-                    'validate_retired_files',
-                    return_value=(private_retired, set()),
-                ),
                 patch.object(artifacts, 'source_archive_files', return_value=set()),
+                patch.object(artifacts, 'read_source_manifest', return_value=set()),
                 patch.object(
                     capacity,
                     'require_stage_disk_capacity',
@@ -172,13 +165,12 @@ class ControlPlaneCapacityTests(unittest.TestCase):
                 patch.object(runtime, 'preflight_production') as preflight,
                 self.assertRaisesRegex(SystemExit, 'insufficient disk space'),
             ):
-                cli.deploy(source, '2.0.1-test', image, retired)
+                cli.deploy(source, '2.0.1-test', image)
 
             require_capacity.assert_called_once_with(private_source, private_image)
             preflight.assert_not_called()
             self.assertFalse(source.exists())
             self.assertFalse(image.exists())
-            self.assertFalse(retired.exists())
             self.assertFalse(private_root.exists())
 
     def test_docker_root_discovery_requires_valid_json_absolute_existing_directory(self) -> None:

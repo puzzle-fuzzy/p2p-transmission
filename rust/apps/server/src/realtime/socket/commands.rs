@@ -63,9 +63,21 @@ pub(super) async fn handle_client_message(
         ClientRealtimeMessage::Signal {
             room_code,
             to_peer_id,
+            negotiation_id,
             signal,
             ..
-        } => relay_signal(state, connection_id, session, room_code, to_peer_id, signal).await,
+        } => {
+            relay_signal(
+                state,
+                connection_id,
+                session,
+                room_code,
+                to_peer_id,
+                negotiation_id,
+                signal,
+            )
+            .await
+        }
         ClientRealtimeMessage::Heartbeat { .. } | ClientRealtimeMessage::AckEvent { .. } => {
             Ok(SocketAction::Continue)
         }
@@ -273,6 +285,7 @@ async fn relay_signal(
     session: &Session,
     room_code: String,
     to_peer_id: String,
+    negotiation_id: String,
     signal: Signal,
 ) -> Result<SocketAction, SocketCommandError> {
     let room_code = RoomCode::parse(room_code).map_err(|_| SocketCommandError::invalid())?;
@@ -305,6 +318,7 @@ async fn relay_signal(
                 version: CURRENT_PROTOCOL,
                 event_id: event_id(),
                 from_peer_id: attachment.peer_id.to_string(),
+                negotiation_id,
                 signal,
             },
         )

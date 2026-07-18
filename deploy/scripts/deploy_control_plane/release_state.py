@@ -26,7 +26,6 @@ from .common import (
     PRODUCTION_BACKUPS,
     PRODUCTION_COMPOSE,
     PRODUCTION_ROLLBACK,
-    RETIRED_FILES_RE,
     SOURCE_ARCHIVE_RE,
     VERSION_RE,
     atomic_write_bytes,
@@ -120,7 +119,7 @@ def cleanup_abandoned_release_artifacts() -> int:
 
     rollback_root = ensure_rollback_directory()
     effective_uid = getattr(os, 'geteuid', lambda: 0)()
-    patterns = (SOURCE_ARCHIVE_RE, IMAGE_ARCHIVE_RE, RETIRED_FILES_RE)
+    patterns = (SOURCE_ARCHIVE_RE, IMAGE_ARCHIVE_RE)
     removed = 0
     try:
         candidates = tuple(rollback_root.iterdir())

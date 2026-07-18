@@ -11,6 +11,7 @@
   --ink-strong: rgba(255, 248, 231, 0.9);
   --ink-on-accent: rgba(255, 255, 255, 0.9);
   --ink-muted: rgba(255, 255, 255, 0.56);
+  --ink-muted-elevated: rgba(255, 255, 255, 0.6);
   --ink-dim: rgba(255, 255, 255, 0.2);
   --border: rgba(255, 251, 235, 0.15);
   --border-subtle: rgba(255, 251, 235, 0.08);
@@ -177,12 +178,20 @@ h1 {
   background: var(--surface-hover);
 }
 
-.room-code-input:focus {
+.room-code-input:focus,
+.room-code-input:focus-visible {
+  outline: none;
+  border-width: 2px;
   border-color: var(--accent-visible);
 }
 
 .room-code-input[aria-invalid="true"] {
   border-color: var(--ink-muted);
+}
+
+.room-code-input[aria-invalid="true"]:focus,
+.room-code-input[aria-invalid="true"]:focus-visible {
+  border-color: var(--accent-visible);
 }
 
 .room-code-input:disabled {
@@ -459,7 +468,7 @@ html[data-p2p-room-restore="pending"] #boot-fallback .boot-room-restore {
 }
 
 .room-view {
-  width: calc(100vw - 32px);
+  width: 100%;
   max-width: 576px;
 }
 
@@ -1099,7 +1108,7 @@ html[data-p2p-room-restore="pending"] #boot-fallback .boot-room-restore {
 .request-summary p,
 .request-summary span {
   margin: 0;
-  color: var(--ink-muted);
+  color: var(--ink-muted-elevated);
   font-size: 0.78rem;
   line-height: 1.6;
 }
@@ -1107,7 +1116,7 @@ html[data-p2p-room-restore="pending"] #boot-fallback .boot-room-restore {
 .request-summary span {
   display: block;
   margin-top: 4px;
-  color: var(--ink-muted);
+  color: var(--ink-muted-elevated);
   font-size: 0.75rem;
 }
 
@@ -1182,7 +1191,7 @@ html[data-p2p-room-restore="pending"] #boot-fallback .boot-room-restore {
   padding: 14px 16px;
   border-radius: 8px;
   background: var(--surface-hover);
-  color: var(--ink-muted);
+  color: var(--ink-muted-elevated);
   font-size: 0.75rem;
 }
 
@@ -1274,9 +1283,6 @@ html[data-p2p-room-restore="pending"] #boot-fallback .boot-room-restore {
   .avatar {
     width: 40px;
     height: 40px;
-  }
-
-  .avatar {
     padding: 7px;
   }
 

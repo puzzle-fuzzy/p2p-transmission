@@ -14,7 +14,7 @@ pub const INITIALIZING_COPY: &str = "正在初始化安全会话，稍候即可�
 pub const RESTORING_ROOM_COPY: &str = "正在恢复上次房间，请稍候";
 pub const JOIN_REQUEST_LABEL: &str = "请求加入";
 pub const CREATE_ROOM_LABEL: &str = "创建房间";
-pub const ABOUT_LABEL: &str = "关于 P2P Transmission";
+pub const ABOUT_LABEL: &str = "关于";
 pub const GITHUB_LABEL: &str = "GitHub";
 pub const PRIVACY_COPY: &str = "文件和文本正文通过加密的 WebRTC 通道传输，优先尝试设备直连，必要时经加密中继转发；应用服务器只协调连接，不保存传输内容。接收完成的文件会暂存在当前页面中，关闭结果或退出房间后释放。";
 pub const NOSCRIPT_COPY: &str = "传输工作区需要浏览器启用 JavaScript 和 WebAssembly。";
@@ -28,6 +28,8 @@ pub enum LobbyFeedback {
     #[default]
     Empty,
     Status(String),
+    JoinError(String),
+    CreateError(String),
     Error(String),
 }
 
@@ -40,6 +42,16 @@ impl LobbyFeedback {
     #[must_use]
     pub fn error(message: impl Into<String>) -> Self {
         Self::Error(message.into())
+    }
+
+    #[must_use]
+    pub fn join_error(message: impl Into<String>) -> Self {
+        Self::JoinError(message.into())
+    }
+
+    #[must_use]
+    pub fn create_error(message: impl Into<String>) -> Self {
+        Self::CreateError(message.into())
     }
 }
 
@@ -62,8 +74,11 @@ pub fn LobbyShell(
     #[props(default)] on_submit: EventHandler<FormEvent>,
     #[props(default)] on_create: EventHandler<MouseEvent>,
 ) -> Element {
-    let feedback_description =
-        (!matches!(&feedback, LobbyFeedback::Empty)).then_some("lobby-feedback");
+    let (primary_description, secondary_description) = match &feedback {
+        LobbyFeedback::JoinError(_) => (Some("room-code-error"), None),
+        LobbyFeedback::CreateError(_) => (None, Some("create-room-error")),
+        LobbyFeedback::Empty | LobbyFeedback::Status(_) | LobbyFeedback::Error(_) => (None, None),
+    };
 
     rsx! {
         div {
@@ -98,7 +113,7 @@ pub fn LobbyShell(
                         class: "primary-button",
                         r#type: "submit",
                         disabled: primary_disabled,
-                        aria_describedby: feedback_description,
+                        aria_describedby: primary_description,
                         {primary_label}
                     }
                     div { class: "divider", aria_hidden: "true",
@@ -110,7 +125,7 @@ pub fn LobbyShell(
                         class: "secondary-button",
                         r#type: "button",
                         disabled: secondary_disabled,
-                        aria_describedby: feedback_description,
+                        aria_describedby: secondary_description,
                         onclick: move |event| {
                             if !secondary_disabled {
                                 on_create.call(event);
@@ -177,9 +192,19 @@ fn LobbyFeedbackRow(feedback: LobbyFeedback) -> Element {
                 p { {message} }
             }
         },
-        LobbyFeedback::Error(message) => rsx! {
+        LobbyFeedback::JoinError(message) => rsx! {
             div { id: "lobby-feedback", class: "form-message",
                 p { id: "room-code-error", role: "alert", {message} }
+            }
+        },
+        LobbyFeedback::CreateError(message) => rsx! {
+            div { id: "lobby-feedback", class: "form-message",
+                p { id: "create-room-error", role: "alert", {message} }
+            }
+        },
+        LobbyFeedback::Error(message) => rsx! {
+            div { id: "lobby-feedback", class: "form-message",
+                p { id: "lobby-error", role: "alert", {message} }
             }
         },
     }
@@ -267,6 +292,43 @@ mod tests {
             LobbyFeedback::error("房间不存在"),
             LobbyFeedback::Error("房间不存在".to_owned())
         );
+        assert_eq!(
+            LobbyFeedback::join_error("房间不存在"),
+            LobbyFeedback::JoinError("房间不存在".to_owned())
+        );
+        assert_eq!(
+            LobbyFeedback::create_error("暂时无法创建房间"),
+            LobbyFeedback::CreateError("暂时无法创建房间".to_owned())
+        );
+    }
+
+    #[test]
+    fn error_descriptions_target_only_the_related_action() {
+        let join_html = render_feedback_lobby_for_test(LobbyFeedback::join_error("房间不存在"));
+        assert!(join_html.contains("id=\"room-code-error\""));
+        assert_eq!(
+            join_html
+                .matches("aria-describedby=\"room-code-error\"")
+                .count(),
+            1
+        );
+        assert!(!join_html.contains("create-room-error"));
+
+        let create_html =
+            render_feedback_lobby_for_test(LobbyFeedback::create_error("暂时无法创建房间"));
+        assert!(create_html.contains("id=\"create-room-error\""));
+        assert_eq!(
+            create_html
+                .matches("aria-describedby=\"create-room-error\"")
+                .count(),
+            1
+        );
+        assert!(!create_html.contains("room-code-error"));
+
+        let system_html =
+            render_feedback_lobby_for_test(LobbyFeedback::error("安全会话初始化失败"));
+        assert!(system_html.contains("id=\"lobby-error\""));
+        assert!(!system_html.contains("aria-describedby"));
     }
 
     #[test]
@@ -291,5 +353,20 @@ mod tests {
 
     fn render_initializing_lobby_for_test() -> String {
         dioxus_ssr::render_element(initializing_lobby_element())
+    }
+
+    fn render_feedback_lobby_for_test(feedback: LobbyFeedback) -> String {
+        dioxus_ssr::render_element(rsx! { FeedbackLobbyForTest { feedback } })
+    }
+
+    #[component]
+    fn FeedbackLobbyForTest(feedback: LobbyFeedback) -> Element {
+        rsx! {
+            LobbyShell {
+                room_code: rsx! { span {} },
+                footer: rsx! { span {} },
+                feedback,
+            }
+        }
     }
 }

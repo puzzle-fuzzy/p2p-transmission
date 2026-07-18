@@ -2,7 +2,6 @@
 
 import json
 import os
-import secrets
 import time
 import urllib.request
 from pathlib import Path
@@ -60,16 +59,13 @@ from .release_state import (
 def build_production_env(
     existing: dict[str, str],
     version: str,
-    *,
-    capability_secret: Optional[str] = None,
 ) -> dict[str, str]:
     if not VERSION_RE.fullmatch(version):
         raise ValueError('release version is not a valid Docker tag')
 
     turn_urls = existing.get('P2P_TURN_URLS', '')
     turn_secret = existing.get('P2P_TURN_SECRET', '')
-    generated_capability = capability_secret or secrets.token_urlsafe(48)
-    capability = existing.get('P2P_CAPABILITY_SECRET') or generated_capability
+    capability = existing.get('P2P_CAPABILITY_SECRET', '')
     ice_urls = existing.get('P2P_ICE_URLS') or 'stun:stun.l.google.com:19302'
 
     if not turn_urls:
@@ -77,7 +73,7 @@ def build_production_env(
     if len(turn_secret) < 16:
         raise ValueError('P2P_TURN_SECRET is missing or too short')
     if len(capability) < 32:
-        raise ValueError('P2P_CAPABILITY_SECRET is too short')
+        raise ValueError('P2P_CAPABILITY_SECRET is missing or too short')
 
     return {
         'P2P_IMAGE_TAG': version,

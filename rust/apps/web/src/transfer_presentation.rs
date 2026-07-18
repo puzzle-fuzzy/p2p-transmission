@@ -1,7 +1,7 @@
 use p2p_browser_platform::{TransferDirection, TransferFile};
 use p2p_protocol::{CancelReason, StreamPauseReason, TransferMode};
 
-use crate::app_state::{RoomRole, RtcPhase, TransferLinkState, TransferState};
+use crate::app_state::{RoomRole, RtcConfigPhase, RtcPhase, TransferLinkState, TransferState};
 
 pub(super) fn transfer_is_active(transfer: &TransferState) -> bool {
     matches!(
@@ -204,13 +204,15 @@ pub(super) fn receiver_transfer_status(transfer: Option<&TransferState>) -> Stri
 pub(super) fn owner_transfer_panel_copy(
     receiver_count: usize,
     selected_count: usize,
-    ready_count: usize,
+    rtc_config_phase: RtcConfigPhase,
+    selected_rtc_phases: &[RtcPhase],
     transfers: &[TransferState],
 ) -> (String, String) {
     if transfers.len() == 1 {
         return transfer_panel_copy(
             RoomRole::Owner,
             receiver_count,
+            rtc_config_phase,
             RtcPhase::Ready,
             &transfers[0],
         );
@@ -318,6 +320,33 @@ pub(super) fn owner_transfer_panel_copy(
             "至少选择一位接收者后才能发送文件。".to_owned(),
         );
     }
+    if let Some(copy) = rtc_config_phase_copy(rtc_config_phase) {
+        return copy;
+    }
+    let failed_count = selected_rtc_phases
+        .iter()
+        .filter(|phase| **phase == RtcPhase::Failed)
+        .count();
+    if failed_count > 0 {
+        return (
+            "点对点连接失败".to_owned(),
+            format!("有 {failed_count} 位接收者连接失败，请检查双方网络后重新进入房间。"),
+        );
+    }
+    let disconnected_count = selected_rtc_phases
+        .iter()
+        .filter(|phase| **phase == RtcPhase::Disconnected)
+        .count();
+    if disconnected_count > 0 {
+        return (
+            "点对点连接已断开".to_owned(),
+            format!("有 {disconnected_count} 位接收者连接已断开，正在尝试恢复。"),
+        );
+    }
+    let ready_count = selected_rtc_phases
+        .iter()
+        .filter(|phase| **phase == RtcPhase::Ready)
+        .count();
     if ready_count < selected_count {
         return (
             "正在建立点对点连接".to_owned(),
@@ -374,7 +403,8 @@ pub(super) fn transfer_is_streamed(transfer: &TransferState) -> bool {
 pub(super) fn transfer_panel_copy(
     role: RoomRole,
     receiver_count: usize,
-    rtc: RtcPhase,
+    rtc_config_phase: RtcConfigPhase,
+    aggregate_rtc: RtcPhase,
     transfer: &TransferState,
 ) -> (String, String) {
     match transfer {
@@ -494,7 +524,10 @@ pub(super) fn transfer_panel_copy(
                     "一个房间一次只向一位在线接收者发送文件。".to_owned(),
                 );
             }
-            match rtc {
+            if let Some(copy) = rtc_config_phase_copy(rtc_config_phase) {
+                return copy;
+            }
+            match aggregate_rtc {
                 RtcPhase::Ready if role == RoomRole::Owner => (
                     "选择要发送的文件".to_owned(),
                     "文件通过加密的 WebRTC DataChannel 直接发送。".to_owned(),
@@ -517,6 +550,24 @@ pub(super) fn transfer_panel_copy(
                 ),
             }
         }
+    }
+}
+
+fn rtc_config_phase_copy(phase: RtcConfigPhase) -> Option<(String, String)> {
+    match phase {
+        RtcConfigPhase::Inactive => Some((
+            "等待房间连接".to_owned(),
+            "房间连接建立后会自动准备点对点传输。".to_owned(),
+        )),
+        RtcConfigPhase::Loading => Some((
+            "正在准备点对点连接".to_owned(),
+            "正在获取连接配置，请稍候。".to_owned(),
+        )),
+        RtcConfigPhase::Failed => Some((
+            "无法准备点对点连接".to_owned(),
+            "获取连接配置失败，请检查网络后重新进入房间。".to_owned(),
+        )),
+        RtcConfigPhase::Ready => None,
     }
 }
 
@@ -575,7 +626,13 @@ mod tests {
         ];
 
         assert_eq!(
-            owner_transfer_panel_copy(2, 2, 2, &transfers),
+            owner_transfer_panel_copy(
+                2,
+                2,
+                RtcConfigPhase::Ready,
+                &[RtcPhase::Ready, RtcPhase::Ready],
+                &transfers,
+            ),
             (
                 "本次发送已结束".to_owned(),
                 "完成 1 · 拒绝 1 · 取消 0 · 失败 0".to_owned(),
@@ -755,7 +812,13 @@ mod tests {
         assert_eq!(transfer_progress(&transfer), (50, 100, 50.0));
         assert_eq!(receiver_transfer_status(Some(&transfer)), "等待重连");
         assert_eq!(
-            transfer_panel_copy(RoomRole::Owner, 1, RtcPhase::Failed, &transfer),
+            transfer_panel_copy(
+                RoomRole::Owner,
+                1,
+                RtcConfigPhase::Failed,
+                RtcPhase::Failed,
+                &transfer,
+            ),
             (
                 "自动重连已暂停".to_owned(),
                 "暂时无法恢复连接，可以重新连接或取消传输。".to_owned(),
@@ -780,7 +843,13 @@ mod tests {
         assert_eq!(transfer_progress(&transfer), (50, 100, 50.0));
         assert_eq!(receiver_transfer_status(Some(&transfer)), "接收方暂停");
         assert_eq!(
-            transfer_panel_copy(RoomRole::Receiver, 1, RtcPhase::Ready, &transfer),
+            transfer_panel_copy(
+                RoomRole::Receiver,
+                1,
+                RtcConfigPhase::Ready,
+                RtcPhase::Ready,
+                &transfer,
+            ),
             (
                 "存储空间不足".to_owned(),
                 "已保留最后一个校验检查点，释放空间后可以继续接收。".to_owned(),
@@ -810,11 +879,138 @@ mod tests {
         };
 
         assert_eq!(
-            owner_transfer_panel_copy(2, 2, 2, &[paused, completed]),
+            owner_transfer_panel_copy(
+                2,
+                2,
+                RtcConfigPhase::Ready,
+                &[RtcPhase::Ready, RtcPhase::Ready],
+                &[paused, completed],
+            ),
             (
                 "接收方已暂停".to_owned(),
                 "部分接收方需要处理保存位置，其他接收方不受影响。".to_owned(),
             )
+        );
+    }
+
+    #[test]
+    fn owner_connection_failure_is_not_presented_as_connecting() {
+        assert_eq!(
+            owner_transfer_panel_copy(
+                2,
+                2,
+                RtcConfigPhase::Ready,
+                &[RtcPhase::Ready, RtcPhase::Failed],
+                &[],
+            ),
+            (
+                "点对点连接失败".to_owned(),
+                "有 1 位接收者连接失败，请检查双方网络后重新进入房间。".to_owned(),
+            )
+        );
+    }
+
+    #[test]
+    fn owner_disconnected_peer_is_not_presented_as_connecting() {
+        assert_eq!(
+            owner_transfer_panel_copy(1, 1, RtcConfigPhase::Ready, &[RtcPhase::Disconnected], &[],),
+            (
+                "点对点连接已断开".to_owned(),
+                "有 1 位接收者连接已断开，正在尝试恢复。".to_owned(),
+            )
+        );
+    }
+
+    #[test]
+    fn owner_connecting_summary_keeps_ready_progress() {
+        assert_eq!(
+            owner_transfer_panel_copy(
+                2,
+                2,
+                RtcConfigPhase::Ready,
+                &[RtcPhase::Ready, RtcPhase::Connecting],
+                &[],
+            ),
+            (
+                "正在建立点对点连接".to_owned(),
+                "已连接 1 / 2 位接收者。".to_owned(),
+            )
+        );
+    }
+
+    #[test]
+    fn rtc_config_copy_is_used_only_while_transfer_is_idle() {
+        for (phase, title, description) in [
+            (
+                RtcConfigPhase::Inactive,
+                "等待房间连接",
+                "房间连接建立后会自动准备点对点传输。",
+            ),
+            (
+                RtcConfigPhase::Loading,
+                "正在准备点对点连接",
+                "正在获取连接配置，请稍候。",
+            ),
+            (
+                RtcConfigPhase::Failed,
+                "无法准备点对点连接",
+                "获取连接配置失败，请检查网络后重新进入房间。",
+            ),
+        ] {
+            assert_eq!(
+                transfer_panel_copy(
+                    RoomRole::Receiver,
+                    1,
+                    phase,
+                    RtcPhase::Failed,
+                    &TransferState::Idle,
+                ),
+                (title.to_owned(), description.to_owned()),
+            );
+        }
+
+        let offering = TransferState::Offering {
+            transfer_id: "transfer_pending".to_owned(),
+            file: file(),
+            files: vec![file()],
+        };
+        assert_eq!(
+            transfer_panel_copy(
+                RoomRole::Owner,
+                1,
+                RtcConfigPhase::Failed,
+                RtcPhase::Failed,
+                &offering,
+            ),
+            (
+                "等待接收者确认".to_owned(),
+                "接收者确认后才会开始传输文件。".to_owned(),
+            ),
+        );
+    }
+
+    #[test]
+    fn owner_setup_prompts_precede_rtc_config_failure() {
+        assert_eq!(
+            owner_transfer_panel_copy(0, 0, RtcConfigPhase::Failed, &[], &[]),
+            (
+                "等待接收者加入".to_owned(),
+                "分享房间邀请，接收者加入后会显示在上方。".to_owned(),
+            ),
+        );
+        assert_eq!(
+            owner_transfer_panel_copy(1, 0, RtcConfigPhase::Failed, &[], &[]),
+            (
+                "选择接收者".to_owned(),
+                "至少选择一位接收者后才能发送文件。".to_owned(),
+            ),
+        );
+        assert_eq!(
+            owner_transfer_panel_copy(1, 1, RtcConfigPhase::Failed, &[], &[]),
+            (
+                "无法准备点对点连接".to_owned(),
+                "获取连接配置失败，请检查网络后重新进入房间。".to_owned(),
+            ),
         );
     }
 }

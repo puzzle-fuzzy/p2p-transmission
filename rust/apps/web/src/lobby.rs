@@ -5,7 +5,7 @@ use p2p_ui_shell::{
 };
 
 use crate::about::FooterLinks;
-use crate::app_state::{AppModel, Screen};
+use crate::app_state::{AppModel, LobbyActionError, Screen};
 use crate::realtime_target::RealtimeTarget;
 use crate::room_code_input::RoomCodeInput;
 use crate::room_entry::{submit_create_room, submit_join};
@@ -25,11 +25,10 @@ pub(super) fn LobbyView(
     };
     let can_join =
         room_code.len() == ROOM_CODE_LENGTH && !snapshot.busy && snapshot.session.is_some();
-    let feedback = snapshot
-        .error
-        .clone()
-        .map(LobbyFeedback::error)
-        .unwrap_or_default();
+    let (feedback, room_code_invalid) = lobby_feedback(
+        snapshot.lobby_action_error.as_ref(),
+        snapshot.error.as_deref(),
+    );
     let primary_label = if snapshot.busy {
         "申请中…"
     } else if invite_capability.is_some() {
@@ -49,14 +48,19 @@ pub(super) fn LobbyView(
                 RoomCodeInput {
                     value: room_code,
                     disabled: snapshot.busy,
-                    invalid: snapshot.error.is_some(),
+                    invalid: room_code_invalid,
                     on_change: move |value| {
                         let mut state = model.write();
                         if let Screen::Lobby { room_code, invite_capability } = &mut state.screen {
                             *room_code = value;
                             *invite_capability = None;
                         }
-                        state.error = None;
+                        if matches!(
+                            state.lobby_action_error.as_ref(),
+                            Some(LobbyActionError::Join(_))
+                        ) {
+                            state.lobby_action_error = None;
+                        }
                     }
                 }
             },
@@ -88,5 +92,48 @@ pub(super) fn LobbyView(
                 submit_create_room(model, realtime_target);
             },
         }
+    }
+}
+
+fn lobby_feedback(
+    action_error: Option<&LobbyActionError>,
+    system_error: Option<&str>,
+) -> (LobbyFeedback, bool) {
+    match action_error {
+        Some(LobbyActionError::Join(message)) => (LobbyFeedback::join_error(message.clone()), true),
+        Some(LobbyActionError::Create(message)) => {
+            (LobbyFeedback::create_error(message.clone()), false)
+        }
+        None => (
+            system_error.map(LobbyFeedback::error).unwrap_or_default(),
+            false,
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_join_errors_invalidate_the_room_code() {
+        let join_error = LobbyActionError::Join("房间不存在".to_owned());
+        let create_error = LobbyActionError::Create("暂时无法创建房间".to_owned());
+
+        assert_eq!(
+            lobby_feedback(Some(&join_error), None),
+            (LobbyFeedback::JoinError("房间不存在".to_owned()), true)
+        );
+        assert_eq!(
+            lobby_feedback(Some(&create_error), None),
+            (
+                LobbyFeedback::CreateError("暂时无法创建房间".to_owned()),
+                false
+            )
+        );
+        assert_eq!(
+            lobby_feedback(None, Some("安全会话初始化失败")),
+            (LobbyFeedback::Error("安全会话初始化失败".to_owned()), false)
+        );
     }
 }

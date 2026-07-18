@@ -2,23 +2,47 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use dioxus::prelude::*;
 use p2p_browser_platform::{
-    BrowserPlatformError, RealtimeConnection, RtcConnectionPhase, RtcEvent, RtcPeer, sleep_ms,
+    BrowserPlatformError, RealtimeConnection, RtcConnectionPhase, RtcEvent, RtcPeer,
+    SignalAcceptance, sleep_ms,
 };
 use p2p_protocol::{
-    CURRENT_PROTOCOL, ClientRealtimeMessage, ParticipantRoleWire, RtcConfigResponse,
-    Signal as ProtocolSignal,
+    CURRENT_PROTOCOL, ClientRealtimeMessage, ParticipantRoleWire, Signal as ProtocolSignal,
 };
 
-use crate::app_state::{AppModel, RoomRole, RtcPhase, Screen, TransferLinkState, TransferState};
+use crate::app_state::{
+    AppModel, PeerRtcState, PendingRtcSignal, RoomRole, RtcPhase, Screen, TransferLinkState,
+    TransferState,
+};
 use crate::browser_errors::{friendly_error, friendly_transfer_error};
+use crate::realtime_runtime::ScopedRtcConfig;
+use crate::realtime_target::RealtimeTargetScope;
 use crate::rtc_orchestration::{
-    refresh_aggregate_rtc, schedule_passive_recovery_timeout, set_peer_transfer_link_state,
-    start_rtc_offer,
+    schedule_disconnected_recovery, schedule_passive_recovery_timeout, start_rtc_offer,
 };
 use crate::rtc_transfer_events::handle_transfer_event;
+use crate::rtc_transition::{
+    RtcRecoveryAction, begin_outgoing_recovery, clear_peer_rtc_error, finish_outgoing_recovery,
+    mark_data_channel_ready, mark_peer_start_failed, reduce_connection_state,
+    refresh_aggregate_rtc, set_peer_rtc_error,
+};
 
-pub(super) fn reset_all_rtc_peers(mut rtc_peers: Signal<BTreeMap<String, RtcPeer>>) {
+pub(super) fn reset_all_rtc_peers(
+    mut model: Signal<AppModel>,
+    mut rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+) {
     let peers = std::mem::take(&mut *rtc_peers.write());
+    {
+        let mut state = model.write();
+        if let Some(peer_id) = state
+            .rtc_error
+            .as_ref()
+            .map(|rtc_error| rtc_error.peer_id.clone())
+        {
+            clear_peer_rtc_error(&mut state, &peer_id);
+        }
+        state.rtc_peer_states.clear();
+        refresh_aggregate_rtc(&mut state);
+    }
     for peer in peers.into_values() {
         peer.reset();
     }
@@ -46,9 +70,17 @@ pub(super) fn sync_rtc_peers(
     mut model: Signal<AppModel>,
     connection: Signal<Option<RealtimeConnection>>,
     rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
-    rtc_config: Signal<Option<RtcConfigResponse>>,
+    rtc_config: Signal<Option<ScopedRtcConfig>>,
+    target_scope: &RealtimeTargetScope,
 ) {
-    let Some(config) = rtc_config.read().clone() else {
+    let config = {
+        let scoped_config = rtc_config.read();
+        scoped_config
+            .as_ref()
+            .and_then(|config| config.for_scope(target_scope))
+            .cloned()
+    };
+    let Some(config) = config else {
         return;
     };
     let Some((role, desired_peer_ids)) = remote_peer_ids(&model.read()) else {
@@ -77,27 +109,36 @@ pub(super) fn sync_rtc_peers(
             continue;
         };
         if role == RoomRole::Owner {
-            let phase = model.read().rtc_by_peer.get(&peer_id).copied();
+            let peer_state = model.read().rtc_peer_states.get(&peer_id).copied();
+            let phase = peer_state.map(|peer_state| peer_state.phase);
             if phase == Some(RtcPhase::WaitingPeer) {
-                {
+                let restore_generation = {
                     let mut state = model.write();
-                    state
-                        .rtc_by_peer
-                        .insert(peer_id.clone(), RtcPhase::Connecting);
-                    refresh_aggregate_rtc(&mut state);
+                    begin_outgoing_recovery(&mut state, &peer_id)
+                };
+                start_rtc_offer(model, rtc_peers, peer.clone(), peer_id.clone());
+                if let Some(restore_generation) = restore_generation {
+                    spawn(async move {
+                        let restore_result = peer.restore_outgoing_transfer(&peer_id).await;
+                        let still_current = rtc_peers
+                            .peek()
+                            .get(&peer_id)
+                            .is_some_and(|current| current.ptr_eq(&peer));
+                        let generation_is_current = rtc_peer_generation_is_current(
+                            &model.peek(),
+                            &peer_id,
+                            restore_generation,
+                        );
+                        if still_current && generation_is_current {
+                            let mut state = model.write();
+                            let recovery_finished =
+                                finish_outgoing_recovery(&mut state, &peer_id, restore_generation);
+                            if recovery_finished && let Err(error) = restore_result {
+                                state.error = Some(friendly_transfer_error(&error));
+                            }
+                        }
+                    });
                 }
-                spawn(async move {
-                    if let Err(error) = peer.restore_outgoing_transfer(&peer_id).await {
-                        model.write().error = Some(friendly_transfer_error(&error));
-                    }
-                    let still_current = rtc_peers
-                        .peek()
-                        .get(&peer_id)
-                        .is_some_and(|current| current.ptr_eq(&peer));
-                    if still_current {
-                        start_rtc_offer(model, rtc_peers, peer, peer_id, 0);
-                    }
-                });
             } else if phase != Some(RtcPhase::Ready)
                 && !matches!(
                     model.read().transfers_by_peer.get(&peer_id),
@@ -107,8 +148,15 @@ pub(super) fn sync_rtc_peers(
                     })
                 )
             {
-                start_rtc_offer(model, rtc_peers, peer, peer_id, 0);
+                start_rtc_offer(model, rtc_peers, peer, peer_id);
             }
+        } else if model
+            .read()
+            .rtc_peer_states
+            .get(&peer_id)
+            .is_some_and(|peer_state| peer_state.phase == RtcPhase::WaitingPeer)
+        {
+            schedule_passive_recovery_timeout(model, rtc_peers, peer, peer_id);
         }
     }
     refresh_aggregate_rtc(&mut model.write());
@@ -118,37 +166,38 @@ fn ensure_rtc_peer(
     mut model: Signal<AppModel>,
     connection: Signal<Option<RealtimeConnection>>,
     mut rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
-    config: &RtcConfigResponse,
+    config: &p2p_browser_platform::RtcConfigLease,
     peer_id: String,
 ) -> Option<RtcPeer> {
     if let Some(peer) = rtc_peers.read().get(&peer_id).cloned() {
         return Some(peer);
     }
     let callback_peer_id = peer_id.clone();
+    let peer_generation = {
+        let mut state = model.write();
+        allocate_rtc_peer_generation(&mut state, &peer_id)
+    };
     let on_rtc_event = Callback::new(move |event| {
         handle_rtc_event(
             model,
             connection,
             rtc_peers,
             callback_peer_id.clone(),
+            peer_generation,
             event,
         );
     });
     match RtcPeer::new(config.clone(), on_rtc_event.into_closure()) {
         Ok(peer) => {
-            rtc_peers.write().insert(peer_id.clone(), peer.clone());
+            rtc_peers.write().insert(peer_id, peer.clone());
             let mut state = model.write();
-            state
-                .rtc_by_peer
-                .entry(peer_id)
-                .or_insert(RtcPhase::WaitingPeer);
             refresh_aggregate_rtc(&mut state);
             Some(peer)
         }
         Err(error) => {
             let mut state = model.write();
-            state.error = Some(friendly_error(&error));
-            state.rtc = RtcPhase::Failed;
+            mark_peer_start_failed(&mut state, &peer_id, peer_generation);
+            set_peer_rtc_error(&mut state, &peer_id, friendly_error(&error));
             None
         }
     }
@@ -159,11 +208,10 @@ pub(super) fn remove_rtc_peer(
     mut rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
     peer_id: &str,
 ) {
-    if let Some(peer) = rtc_peers.write().remove(peer_id) {
-        peer.reset();
-    }
+    let peer = rtc_peers.write().remove(peer_id);
     let mut state = model.write();
-    state.rtc_by_peer.remove(peer_id);
+    clear_peer_rtc_error(&mut state, peer_id);
+    state.rtc_peer_states.remove(peer_id);
     state.transfers_by_peer.remove(peer_id);
     if matches!(
         state.screen,
@@ -175,33 +223,71 @@ pub(super) fn remove_rtc_peer(
         state.transfer = TransferState::Idle;
     }
     refresh_aggregate_rtc(&mut state);
+    drop(state);
+    if let Some(peer) = peer {
+        peer.reset();
+    }
 }
 
 pub(super) fn accept_rtc_signal(
     mut model: Signal<AppModel>,
     connection: Signal<Option<RealtimeConnection>>,
     rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
-    rtc_config: Signal<Option<RtcConfigResponse>>,
+    rtc_config: Signal<Option<ScopedRtcConfig>>,
+    target_scope: &RealtimeTargetScope,
     from_peer_id: String,
+    negotiation_id: String,
     signal: ProtocolSignal,
 ) {
-    let Some(config) = rtc_config.read().clone() else {
+    let config = {
+        let scoped_config = rtc_config.read();
+        scoped_config
+            .as_ref()
+            .and_then(|config| config.for_scope(target_scope))
+            .cloned()
+    };
+    let Some(config) = config else {
         let mut state = model.write();
         if state.pending_signals.len() < 64 {
-            state.pending_signals.push((from_peer_id, signal));
+            state.pending_signals.push(PendingRtcSignal {
+                from_peer_id,
+                negotiation_id,
+                signal,
+            });
         } else {
             state.error = Some("点对点协商消息过多，请重新进入房间".to_owned());
         }
         return;
     };
-    let allowed = remote_peer_ids(&model.read())
-        .is_some_and(|(_, peer_ids)| peer_ids.contains(&from_peer_id));
-    if !allowed {
+    let Some((role, remote_peer_ids)) = remote_peer_ids(&model.read()) else {
+        return;
+    };
+    if !remote_peer_ids.contains(&from_peer_id) {
         return;
     }
+    let arm_passive_deadline =
+        role == RoomRole::Receiver && matches!(&signal, ProtocolSignal::Offer { .. });
     if let Some(peer) = ensure_rtc_peer(model, connection, rtc_peers, &config, from_peer_id.clone())
     {
-        peer.accept_signal(from_peer_id, signal);
+        let signal_accepted = match peer.accept_signal(from_peer_id.clone(), negotiation_id, signal)
+        {
+            Ok(signal_accepted) => signal_accepted,
+            Err(error) => {
+                let mut state = model.write();
+                let instance_generation = state
+                    .rtc_peer_states
+                    .get(&from_peer_id)
+                    .map(|peer_state| peer_state.instance_generation);
+                if let Some(instance_generation) = instance_generation {
+                    mark_peer_start_failed(&mut state, &from_peer_id, instance_generation);
+                }
+                set_peer_rtc_error(&mut state, &from_peer_id, friendly_transfer_error(&error));
+                return;
+            }
+        };
+        if arm_passive_deadline && signal_accepted == SignalAcceptance::Scheduled {
+            schedule_passive_recovery_timeout(model, rtc_peers, peer, from_peer_id);
+        }
     }
 }
 
@@ -210,10 +296,18 @@ fn handle_rtc_event(
     connection: Signal<Option<RealtimeConnection>>,
     rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
     peer_id: String,
+    peer_generation: u64,
     event: RtcEvent,
 ) {
+    if !rtc_peer_generation_is_current(&model.peek(), &peer_id, peer_generation) {
+        return;
+    }
     match event {
-        RtcEvent::OutboundSignal { to_peer_id, signal } => {
+        RtcEvent::OutboundSignal {
+            to_peer_id,
+            negotiation_id,
+            signal,
+        } => {
             let room_code = match &model.read().screen {
                 Screen::Room { snapshot, .. } => snapshot.room_code.clone(),
                 _ => return,
@@ -229,86 +323,132 @@ fn handle_rtc_event(
                         version: CURRENT_PROTOCOL,
                         room_code,
                         to_peer_id,
+                        negotiation_id,
                         signal,
                     })
                 },
             );
             if let Err(error) = result {
-                model.write().error = Some(friendly_transfer_error(&error));
+                let mut state = model.write();
+                set_peer_rtc_error(&mut state, &peer_id, friendly_transfer_error(&error));
             }
         }
         RtcEvent::ConnectionState(phase) => {
-            let should_reconnect = matches!(
-                phase,
-                RtcConnectionPhase::Failed | RtcConnectionPhase::Closed
-            );
-            let phase = match phase {
-                RtcConnectionPhase::New | RtcConnectionPhase::Connecting => RtcPhase::Connecting,
-                RtcConnectionPhase::Connected => RtcPhase::Connecting,
-                RtcConnectionPhase::Disconnected | RtcConnectionPhase::Closed => {
-                    RtcPhase::Disconnected
-                }
-                RtcConnectionPhase::Failed => RtcPhase::Failed,
+            let role = match &model.read().screen {
+                Screen::Room { role, .. } => *role,
+                _ => return,
             };
-            let owner = matches!(
-                model.read().screen,
-                Screen::Room {
-                    role: RoomRole::Owner,
-                    ..
-                }
-            );
-            {
+            let Some(peer) = rtc_peers.read().get(&peer_id).cloned() else {
+                return;
+            };
+            let connected_channel_ready =
+                phase == RtcConnectionPhase::Connected && peer.data_channel_ready();
+            let recovery = {
                 let mut state = model.write();
-                state.rtc_by_peer.insert(peer_id.clone(), phase);
-                if should_reconnect {
-                    set_peer_transfer_link_state(&mut state, &peer_id, TransferLinkState::Waiting);
+                let recovery = reduce_connection_state(&mut state, &peer_id, role, phase);
+                if connected_channel_ready {
+                    let recovered_stream = mark_data_channel_ready(&mut state, &peer_id);
+                    if recovered_stream {
+                        state.notice = Some("连接已恢复，传输将从最后检查点继续".to_owned());
+                    }
+                    RtcRecoveryAction::None
+                } else {
+                    recovery
                 }
-                refresh_aggregate_rtc(&mut state);
-            }
-            if should_reconnect {
-                let peer = rtc_peers.read().get(&peer_id).cloned();
-                if let Some(peer) = peer {
+            };
+            match recovery {
+                RtcRecoveryAction::None => {}
+                RtcRecoveryAction::ArmPassiveDeadline => {
+                    schedule_passive_recovery_timeout(model, rtc_peers, peer, peer_id);
+                }
+                RtcRecoveryAction::WaitForReconnect { token } => {
+                    schedule_disconnected_recovery(model, rtc_peers, peer, peer_id, role, token);
+                }
+                RtcRecoveryAction::RestartOffer => {
                     spawn(async move {
                         sleep_ms(0).await;
                         let still_current = rtc_peers
                             .peek()
                             .get(&peer_id)
                             .is_some_and(|current| current.ptr_eq(&peer));
+                        let generation_is_current = rtc_peer_generation_is_current(
+                            &model.peek(),
+                            &peer_id,
+                            peer_generation,
+                        );
                         if !still_current
-                            || owner
-                                && model.peek().rtc_by_peer.get(&peer_id)
-                                    == Some(&RtcPhase::Connecting)
+                            || !generation_is_current
+                            || matches!(
+                                model
+                                    .peek()
+                                    .rtc_peer_states
+                                    .get(&peer_id)
+                                    .map(|peer_state| peer_state.phase),
+                                Some(RtcPhase::Connecting | RtcPhase::Ready)
+                            )
                         {
                             return;
                         }
                         peer.prepare_reconnect();
-                        if owner {
-                            start_rtc_offer(model, rtc_peers, peer, peer_id, 0);
-                        } else {
-                            schedule_passive_recovery_timeout(model, rtc_peers, peer, peer_id);
-                        }
+                        start_rtc_offer(model, rtc_peers, peer, peer_id);
                     });
                 }
             }
         }
         RtcEvent::DataChannelReady => {
             let mut state = model.write();
-            let recovered_stream = matches!(
-                state.transfers_by_peer.get(&peer_id),
-                Some(TransferState::Active {
-                    streamed: true,
-                    link_state: TransferLinkState::Waiting | TransferLinkState::Paused,
-                    storage_pause: None,
-                    ..
-                })
-            );
-            state.rtc_by_peer.insert(peer_id, RtcPhase::Ready);
-            refresh_aggregate_rtc(&mut state);
-            state.error = None;
+            let recovered_stream = mark_data_channel_ready(&mut state, &peer_id);
             if recovered_stream {
                 state.notice = Some("连接已恢复，传输将从最后检查点继续".to_owned());
             }
         }
+        RtcEvent::NegotiationFailed { message } => {
+            let mut state = model.write();
+            set_peer_rtc_error(&mut state, &peer_id, message);
+        }
         event => handle_transfer_event(model, peer_id, event),
+    }
+}
+
+fn allocate_rtc_peer_generation(model: &mut AppModel, peer_id: &str) -> u64 {
+    model.rtc_peer_generation = model.rtc_peer_generation.wrapping_add(1);
+    let generation = model.rtc_peer_generation;
+    model
+        .rtc_peer_states
+        .insert(peer_id.to_owned(), PeerRtcState::new(generation));
+    generation
+}
+
+fn rtc_peer_generation_is_current(model: &AppModel, peer_id: &str, generation: u64) -> bool {
+    model
+        .rtc_peer_states
+        .get(peer_id)
+        .is_some_and(|peer_state| peer_state.instance_generation == generation)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replaced_peer_rejects_events_from_the_previous_generation() {
+        let mut model = AppModel::default();
+        let first = allocate_rtc_peer_generation(&mut model, "peer");
+        let second = allocate_rtc_peer_generation(&mut model, "peer");
+
+        assert_ne!(first, second);
+        assert!(!rtc_peer_generation_is_current(&model, "peer", first));
+        assert!(rtc_peer_generation_is_current(&model, "peer", second));
+    }
+
+    #[test]
+    fn generation_counter_survives_target_state_cleanup() {
+        let mut model = AppModel::default();
+        let first = allocate_rtc_peer_generation(&mut model, "peer");
+        model.rtc_peer_states.clear();
+        let second = allocate_rtc_peer_generation(&mut model, "peer");
+
+        assert!(second > first);
+        assert!(!rtc_peer_generation_is_current(&model, "peer", first));
     }
 }

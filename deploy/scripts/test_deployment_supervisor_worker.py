@@ -32,8 +32,6 @@ class DeploymentSupervisorWorkerTests(SupervisorTestCase):
                 str(paths.source_archive),
                 '--image-archive',
                 str(paths.image_archive),
-                '--retired-files',
-                str(paths.retired_files),
                 '--version',
                 VERSION,
                 '--expected-control-plane-sha256',
@@ -80,7 +78,7 @@ class DeploymentSupervisorWorkerTests(SupervisorTestCase):
 
     def test_worker_uses_only_fixed_sudo_wrapper_command_and_writes_status(self) -> None:
         paths = state.operation_paths(OPERATION_ID)
-        for artifact in (paths.source_archive, paths.image_archive, paths.retired_files):
+        for artifact in (paths.source_archive, paths.image_archive):
             self.write_owned(artifact)
         backup_path = (
             '/opt/p2p-transmission/deploy/production/backups/'
@@ -122,8 +120,6 @@ class DeploymentSupervisorWorkerTests(SupervisorTestCase):
             str(paths.source_archive),
             '--image-archive',
             str(paths.image_archive),
-            '--retired-files',
-            str(paths.retired_files),
             '--version',
             VERSION,
             '--expected-control-plane-sha256',
@@ -203,7 +199,7 @@ class DeploymentSupervisorWorkerTests(SupervisorTestCase):
 
     def test_signal_returncode_becomes_a_valid_failed_terminal_status(self) -> None:
         paths = state.operation_paths(OPERATION_ID)
-        for artifact in (paths.source_archive, paths.image_archive, paths.retired_files):
+        for artifact in (paths.source_archive, paths.image_archive):
             self.write_owned(artifact)
         security.atomic_write_json(
             paths.launch_state,

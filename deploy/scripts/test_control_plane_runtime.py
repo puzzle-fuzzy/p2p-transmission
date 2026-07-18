@@ -40,11 +40,11 @@ class ControlPlaneRuntimeTests(unittest.TestCase):
     def test_builds_production_env_from_existing_turn_settings(self) -> None:
         values = runtime.build_production_env(
             {
+                'P2P_CAPABILITY_SECRET': 'capability-secret-0123456789abcdef0123456789',
                 'P2P_TURN_URLS': 'turn:turn.p2p.yxswy.com:3478?transport=udp',
                 'P2P_TURN_SECRET': 'turn-secret-0123456789abcdef',
             },
             '2.0.0-abcdef0',
-            capability_secret='capability-secret-0123456789abcdef0123456789',
         )
         self.assertEqual(values['P2P_ALLOWED_ORIGINS'], 'https://p2p.yxswy.com')
         self.assertEqual(values['P2P_BIND_IP'], '127.0.0.1')
@@ -59,13 +59,22 @@ class ControlPlaneRuntimeTests(unittest.TestCase):
                 'P2P_TURN_URLS': 'turns:existing.example:5349',
             },
             '2.0.0-abcdef1',
-            capability_secret='unused-capability-secret-0123456789012345',
         )
         self.assertEqual(
             values['P2P_CAPABILITY_SECRET'],
             'existing-capability-secret-0123456789',
         )
         self.assertEqual(values['P2P_TURN_SECRET'], 'existing-turn-secret')
+
+    def test_rejects_an_environment_without_the_current_capability_secret(self) -> None:
+        with self.assertRaisesRegex(ValueError, 'missing or too short'):
+            runtime.build_production_env(
+                {
+                    'P2P_TURN_SECRET': 'existing-turn-secret',
+                    'P2P_TURN_URLS': 'turns:existing.example:5349',
+                },
+                '2.0.1-current',
+            )
 
     def test_rejects_newlines_in_env_values(self) -> None:
         with self.assertRaises(ValueError):

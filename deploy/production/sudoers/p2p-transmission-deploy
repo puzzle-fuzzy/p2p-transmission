@@ -2,7 +2,7 @@
 # The fixed helper validates every path and release identifier. Keep sudo's
 # command surface limited to the five deployment protocol operations.
 Cmnd_Alias P2P_TRANSMISSION_DEPLOY = \
-    /usr/local/sbin/p2p-transmission-deploy stage --archive * --image-archive * --retired-files * --version * --expected-control-plane-sha256 *, \
+    /usr/local/sbin/p2p-transmission-deploy stage --archive * --image-archive * --version * --expected-control-plane-sha256 *, \
     /usr/local/sbin/p2p-transmission-deploy finalize --version *, \
     /usr/local/sbin/p2p-transmission-deploy rollback --version *, \
     /usr/local/sbin/p2p-transmission-deploy maintenance, \

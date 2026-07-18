@@ -2,10 +2,9 @@ use std::collections::BTreeMap;
 
 use dioxus::prelude::*;
 use p2p_browser_platform::{
-    RealtimeConnection, RealtimeEvent, RtcPeer, activate_app_mount, fetch_rtc_config,
-    mark_app_interactive,
+    RealtimeConnection, RealtimeEvent, RtcPeer, activate_app_mount, mark_app_interactive,
 };
-use p2p_protocol::{RoomBootstrapResponse, RtcConfigResponse};
+use p2p_protocol::RoomBootstrapResponse;
 
 mod about;
 mod app_bootstrap;
@@ -25,9 +24,11 @@ mod room_code_input;
 mod room_entry;
 mod room_session;
 mod room_view;
+mod rtc_config;
 mod rtc_orchestration;
 mod rtc_session;
 mod rtc_transfer_events;
+mod rtc_transition;
 mod share_dialog;
 mod transfer_actions;
 mod transfer_panel;
@@ -36,24 +37,20 @@ mod waiting_room;
 
 use about::AboutDialog;
 use app_bootstrap::initialize;
-use app_state::{AppModel, RtcPhase, Screen, TransferState};
-use browser_errors::friendly_error;
+use app_state::{AppModel, Screen};
 use browser_lifecycle::{sync_lifecycle_recovery_target, use_browser_lifecycle};
 use lobby::LobbyView;
-use realtime_connection::{
-    RealtimeLease, current_realtime_target_scope, realtime_target_is_suppressed,
-    realtime_target_scope_is_current, use_realtime_connection,
-};
+use realtime_connection::{RealtimeLease, use_realtime_connection};
 use realtime_runtime::{
     LifecycleState, RealtimeConnectionRuntime, RealtimeConnectionState, RealtimeSessionRuntime,
-    RtcRuntime,
+    RtcRuntime, ScopedRtcConfig,
 };
 use realtime_session::{
     apply_authoritative_snapshot, handle_realtime_event, schedule_avatar_cleanup,
 };
 use realtime_target::{RealtimeTarget, RealtimeTargetScope};
 use room_view::RoomView;
-use rtc_session::{accept_rtc_signal, reset_all_rtc_peers, sync_rtc_peers};
+use rtc_config::use_rtc_config_session;
 use waiting_room::WaitingView;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -88,7 +85,7 @@ fn main() {
 
 #[allow(non_snake_case)]
 fn App() -> Element {
-    let mut model = use_signal(AppModel::default);
+    let model = use_signal(AppModel::default);
     let realtime_target = use_signal(|| None::<RealtimeTarget>);
     let connection = use_signal(|| None::<RealtimeConnection>);
     let realtime_connection = RealtimeConnectionRuntime {
@@ -96,7 +93,7 @@ fn App() -> Element {
         state: use_signal(RealtimeConnectionState::default),
     };
     let rtc_peers = use_signal(BTreeMap::<String, RtcPeer>::new);
-    let mut rtc_config = use_signal(|| None::<RtcConfigResponse>);
+    let rtc_config = use_signal(|| None::<ScopedRtcConfig>);
     let lifecycle_state = use_signal(LifecycleState::default);
     let rtc_runtime = RtcRuntime {
         connection,
@@ -151,47 +148,7 @@ fn App() -> Element {
         mark_app_interactive();
     });
 
-    use_effect(move || {
-        let target = realtime_target.read().clone();
-        reset_all_rtc_peers(rtc_peers);
-        rtc_config.set(None);
-        if !target.as_ref().is_some_and(RealtimeTarget::is_member) {
-            let mut state = model.write();
-            state.rtc = RtcPhase::Inactive;
-            state.transfer = TransferState::Idle;
-            state.pending_signals.clear();
-            state.rtc_by_peer.clear();
-            state.transfers_by_peer.clear();
-            return;
-        }
-        let Some(target_scope) = current_realtime_target_scope(realtime_target) else {
-            return;
-        };
-        model.write().rtc = RtcPhase::WaitingPeer;
-        spawn(async move {
-            let config_result = fetch_rtc_config().await;
-            if !realtime_target_scope_is_current(&target_scope, realtime_target)
-                || realtime_target_is_suppressed(realtime_connection, realtime_target)
-            {
-                return;
-            }
-            let config = match config_result {
-                Ok(config) => config,
-                Err(error) => {
-                    let mut state = model.write();
-                    state.rtc = RtcPhase::Failed;
-                    state.error = Some(friendly_error(&error));
-                    return;
-                }
-            };
-            rtc_config.set(Some(config));
-            sync_rtc_peers(model, connection, rtc_peers, rtc_config);
-            let pending = std::mem::take(&mut model.write().pending_signals);
-            for (from_peer, signal) in pending {
-                accept_rtc_signal(model, connection, rtc_peers, rtc_config, from_peer, signal);
-            }
-        });
-    });
+    use_rtc_config_session(realtime_runtime);
 
     let (route, about_open, _) = *app_shell.read();
     rsx! {
@@ -222,6 +179,7 @@ fn App() -> Element {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_state::TransferState;
 
     #[test]
     fn app_shell_selector_ignores_transfer_only_updates() {

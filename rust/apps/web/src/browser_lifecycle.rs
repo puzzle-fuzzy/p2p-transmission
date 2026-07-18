@@ -4,7 +4,7 @@ use p2p_browser_platform::{
 };
 use p2p_protocol::RoomBootstrapResponse;
 
-use crate::app_state::{AppModel, RealtimePhase, RtcPhase, Screen};
+use crate::app_state::{AppModel, RealtimePhase, Screen};
 use crate::browser_errors::friendly_error;
 use crate::realtime_connection::{
     RealtimeLease, current_realtime_lease, current_realtime_target_scope,
@@ -15,7 +15,7 @@ use crate::realtime_runtime::{
     LifecycleRecovery, LifecycleState, RealtimeSessionRuntime, RtcRuntime,
 };
 use crate::realtime_target::RealtimeTargetScope;
-use crate::rtc_orchestration::{mark_streamed_transfers_waiting, refresh_aggregate_rtc};
+use crate::rtc_transition::{mark_streamed_transfers_waiting, reset_peer_waiting};
 
 const BACKGROUND_CONTROL_RECOVERY_MS: u64 = 15_000;
 
@@ -246,14 +246,15 @@ pub(super) fn complete_lifecycle_recovery(
         .filter(|(_, peer)| peer.resumable_transfer_active() || !peer.data_channel_ready())
         .map(|(peer_id, peer)| (peer_id.clone(), peer.clone()))
         .collect::<Vec<_>>();
-    for (_, peer) in &peers {
+    {
+        let mut state = model.write();
+        for (peer_id, _) in &peers {
+            reset_peer_waiting(&mut state, peer_id);
+        }
+    }
+    for (_, peer) in peers {
         peer.prepare_reconnect();
     }
-    let mut state = model.write();
-    for (peer_id, _) in peers {
-        state.rtc_by_peer.insert(peer_id, RtcPhase::WaitingPeer);
-    }
-    refresh_aggregate_rtc(&mut state);
     true
 }
 

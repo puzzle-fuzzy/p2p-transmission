@@ -9,6 +9,7 @@ use crate::{
 const MAX_PUBLIC_ERROR_MESSAGE_BYTES: usize = 512;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateSessionRequest {
     pub version: ProtocolVersion,
     pub display_name: String,
@@ -22,6 +23,7 @@ impl Validate for CreateSessionRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct SessionResponse {
     pub version: ProtocolVersion,
     pub session_id: String,
@@ -30,12 +32,14 @@ pub struct SessionResponse {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateRoomRequest {
     pub version: ProtocolVersion,
     pub request_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateRoomResponse {
     pub version: ProtocolVersion,
     pub room_id: String,
@@ -52,6 +56,7 @@ impl Validate for CreateRoomRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RequestJoinRequest {
     pub version: ProtocolVersion,
     pub request_id: String,
@@ -81,6 +86,7 @@ pub enum JoinDecisionRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct DecideJoinRequest {
     pub version: ProtocolVersion,
     pub request_id: String,
@@ -97,6 +103,7 @@ impl Validate for DecideJoinRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct LeaveRoomRequest {
     pub version: ProtocolVersion,
     pub request_id: String,
@@ -122,6 +129,7 @@ pub enum JoinRequestStateWire {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct JoinRequestResponse {
     pub version: ProtocolVersion,
     pub room_id: String,
@@ -132,6 +140,7 @@ pub struct JoinRequestResponse {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RoomMutationResponse {
     pub version: ProtocolVersion,
     pub room_id: String,
@@ -139,6 +148,7 @@ pub struct RoomMutationResponse {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateInviteRequest {
     pub version: ProtocolVersion,
     pub request_id: String,
@@ -152,6 +162,7 @@ impl Validate for CreateInviteRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateInviteResponse {
     pub version: ProtocolVersion,
     pub room_code: String,
@@ -160,6 +171,7 @@ pub struct CreateInviteResponse {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RoomBootstrapResponse {
     pub version: ProtocolVersion,
     pub room_id: String,
@@ -171,6 +183,7 @@ pub struct RoomBootstrapResponse {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct IceServer {
     pub urls: Vec<String>,
     pub username: Option<String>,
@@ -178,10 +191,12 @@ pub struct IceServer {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RtcConfigResponse {
     pub version: ProtocolVersion,
     pub ice_servers: Vec<IceServer>,
     pub expires_at_ms: u64,
+    pub ttl_ms: u64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -198,6 +213,7 @@ pub enum ApiErrorCode {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ApiErrorBody {
     pub code: ApiErrorCode,
     pub message: String,
@@ -220,6 +236,7 @@ impl Validate for ApiErrorBody {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ErrorEnvelope {
     pub error: ApiErrorBody,
 }
@@ -271,7 +288,7 @@ mod tests {
 
     #[test]
     fn requests_reject_invalid_names_versions_and_room_codes() {
-        let blank = br#"{"version":{"major":2,"minor":0},"display_name":"  "}"#;
+        let blank = br#"{"version":{"major":5,"minor":0},"display_name":"  "}"#;
         assert_eq!(
             parse_http_body::<CreateSessionRequest>(blank),
             Err(ProtocolError::EmptyField {
@@ -279,10 +296,16 @@ mod tests {
             })
         );
 
-        let future = br#"{"version":{"major":3,"minor":0},"request_id":"request_1"}"#;
+        let previous = br#"{"version":{"major":2,"minor":0},"request_id":"request_1"}"#;
+        assert_eq!(
+            parse_http_body::<CreateRoomRequest>(previous),
+            Err(ProtocolError::UnsupportedVersion { major: 2, minor: 0 })
+        );
+
+        let future = br#"{"version":{"major":6,"minor":0},"request_id":"request_1"}"#;
         assert_eq!(
             parse_http_body::<CreateRoomRequest>(future),
-            Err(ProtocolError::UnsupportedVersion { major: 3, minor: 0 })
+            Err(ProtocolError::UnsupportedVersion { major: 6, minor: 0 })
         );
 
         let invalid_room = RequestJoinRequest {
@@ -296,6 +319,28 @@ mod tests {
             invalid_room.validate(),
             Err(ProtocolError::InvalidField { field: "room_code" })
         );
+    }
+
+    #[test]
+    fn requests_reject_unknown_fields() {
+        let unknown =
+            br#"{"version":{"major":5,"minor":0},"request_id":"request_1","unsupported":true}"#;
+        assert!(matches!(
+            parse_http_body::<CreateRoomRequest>(unknown),
+            Err(ProtocolError::InvalidJson(_))
+        ));
+    }
+
+    #[test]
+    fn rtc_config_response_requires_a_relative_ttl() {
+        let current = r#"{"version":{"major":5,"minor":0},"ice_servers":[],"expires_at_ms":600000,"ttl_ms":600000}"#;
+        let response = serde_json::from_str::<RtcConfigResponse>(current)
+            .expect("RTC config with a relative TTL");
+        assert_eq!(response.ttl_ms, 600_000);
+
+        let missing_ttl =
+            r#"{"version":{"major":5,"minor":0},"ice_servers":[],"expires_at_ms":600000}"#;
+        assert!(serde_json::from_str::<RtcConfigResponse>(missing_ttl).is_err());
     }
 
     #[test]

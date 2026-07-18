@@ -184,7 +184,6 @@ class DeploymentSupervisorMonitorTests(SupervisorTestCase):
             paths.supervisor,
             paths.source_archive,
             paths.image_archive,
-            paths.retired_files,
         )
         for artifact in artifacts:
             self.write_owned(artifact)
@@ -236,7 +235,6 @@ class DeploymentSupervisorMonitorTests(SupervisorTestCase):
                     paths.supervisor,
                     paths.source_archive,
                     paths.image_archive,
-                    paths.retired_files,
                 )
                 for artifact in artifacts:
                     self.write_owned(artifact)
@@ -274,7 +272,6 @@ class DeploymentSupervisorMonitorTests(SupervisorTestCase):
             paths.supervisor,
             paths.source_archive,
             paths.image_archive,
-            paths.retired_files,
         )
         self.write_owned(paths.launch_state, '{')
         for artifact in fixed_files[1:]:
@@ -320,7 +317,6 @@ class DeploymentSupervisorMonitorTests(SupervisorTestCase):
                     paths.supervisor,
                     paths.source_archive,
                     paths.image_archive,
-                    paths.retired_files,
                 )
                 self.write_owned(paths.launch_state, '{')
                 for artifact in fixed_files[1:]:

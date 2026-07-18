@@ -1,8 +1,20 @@
-use p2p_protocol::ClientRealtimeMessage;
 #[cfg(target_arch = "wasm32")]
-use p2p_protocol::{CURRENT_PROTOCOL, ServerRealtimeMessage};
+use p2p_protocol::CURRENT_PROTOCOL;
+use p2p_protocol::ClientRealtimeMessage;
+#[cfg(any(target_arch = "wasm32", test))]
+use p2p_protocol::{ServerRealtimeMessage, Validate};
 
 use crate::{BrowserPlatformError, RealtimeEvent};
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn decode_server_message(text: &str) -> Result<ServerRealtimeMessage, BrowserPlatformError> {
+    let message = serde_json::from_str::<ServerRealtimeMessage>(text)
+        .map_err(|error| BrowserPlatformError::Decode(error.to_string()))?;
+    message
+        .validate()
+        .map_err(|error| BrowserPlatformError::Decode(error.to_string()))?;
+    Ok(message)
+}
 
 #[cfg(target_arch = "wasm32")]
 pub struct RealtimeConnection {
@@ -97,7 +109,7 @@ pub fn connect_realtime(
             ));
             return;
         };
-        match serde_json::from_str::<ServerRealtimeMessage>(&text) {
+        match decode_server_message(&text) {
             Ok(message) => message_callback.borrow_mut()(RealtimeEvent::Message(message)),
             Err(error) => message_callback.borrow_mut()(RealtimeEvent::Error(error.to_string())),
         }
@@ -166,4 +178,22 @@ pub fn new_client_id(prefix: &str) -> String {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn new_client_id(prefix: &str) -> String {
     format!("{prefix}_unsupported")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_realtime_messages_require_the_current_protocol() {
+        let current = r#"{"type":"error","version":{"major":5,"minor":0},"code":"unavailable","message":"Try again","retryable":true}"#;
+        assert!(decode_server_message(current).is_ok());
+
+        let previous = current.replace(r#""major":5"#, r#""major":4"#);
+        assert!(matches!(
+            decode_server_message(&previous),
+            Err(BrowserPlatformError::Decode(message))
+                if message == "protocol version 4.0 is unsupported"
+        ));
+    }
 }

@@ -9,7 +9,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Signal {
     Offer {
         sdp: String,
@@ -44,7 +44,7 @@ impl Validate for Signal {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ClientRealtimeMessage {
     AttachRoom {
         version: ProtocolVersion,
@@ -66,6 +66,7 @@ pub enum ClientRealtimeMessage {
         version: ProtocolVersion,
         room_code: String,
         to_peer_id: String,
+        negotiation_id: String,
         signal: Signal,
     },
     Heartbeat {
@@ -109,11 +110,13 @@ impl Validate for ClientRealtimeMessage {
             Self::Signal {
                 room_code,
                 to_peer_id,
+                negotiation_id,
                 signal,
                 ..
             } => {
                 validate_room_code(room_code)?;
                 validate_token(to_peer_id, "to_peer_id")?;
+                validate_token(negotiation_id, "negotiation_id")?;
                 signal.validate()
             }
             Self::Heartbeat { nonce, .. } => validate_token(nonce, "nonce"),
@@ -143,6 +146,7 @@ pub enum ParticipantRoleWire {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ParticipantSnapshot {
     pub session_id: String,
     pub display_name: String,
@@ -159,6 +163,7 @@ pub enum JoinDecisionWire {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct JoinRequestSnapshot {
     pub request_id: String,
     pub session_id: String,
@@ -167,7 +172,7 @@ pub struct JoinRequestSnapshot {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ServerRealtimeMessage {
     Attached {
         version: ProtocolVersion,
@@ -222,6 +227,7 @@ pub enum ServerRealtimeMessage {
         version: ProtocolVersion,
         event_id: String,
         from_peer_id: String,
+        negotiation_id: String,
         signal: Signal,
     },
     RoomExpired {
@@ -257,11 +263,13 @@ impl Validate for ServerRealtimeMessage {
             Self::Signal {
                 event_id,
                 from_peer_id,
+                negotiation_id,
                 signal,
                 ..
             } => {
                 validate_token(event_id, "event_id")?;
                 validate_token(from_peer_id, "from_peer_id")?;
+                validate_token(negotiation_id, "negotiation_id")?;
                 signal.validate()
             }
             Self::Error { code, message, .. } => {
@@ -296,16 +304,60 @@ mod tests {
 
     #[test]
     fn unsupported_versions_and_large_frames_are_rejected_before_use() {
-        let future = r#"{"type":"heartbeat","version":{"major":3,"minor":0},"nonce":"n_1"}"#;
+        let previous = r#"{"type":"heartbeat","version":{"major":4,"minor":0},"nonce":"n_1"}"#;
+        assert_eq!(
+            parse_client_message(previous),
+            Err(ProtocolError::UnsupportedVersion { major: 4, minor: 0 })
+        );
+        let future = r#"{"type":"heartbeat","version":{"major":6,"minor":0},"nonce":"n_1"}"#;
         assert_eq!(
             parse_client_message(future),
-            Err(ProtocolError::UnsupportedVersion { major: 3, minor: 0 })
+            Err(ProtocolError::UnsupportedVersion { major: 6, minor: 0 })
         );
         let oversized = "x".repeat(MAX_JSON_FRAME_BYTES + 1);
         assert!(matches!(
             parse_client_message(&oversized),
             Err(ProtocolError::FrameTooLarge { .. })
         ));
+    }
+
+    #[test]
+    fn realtime_messages_and_nested_signals_reject_unknown_fields() {
+        let unknown_message = r#"{"type":"heartbeat","version":{"major":5,"minor":0},"nonce":"n_1","unsupported":true}"#;
+        assert!(matches!(
+            parse_client_message(unknown_message),
+            Err(ProtocolError::InvalidJson(_))
+        ));
+
+        let unknown_signal = r#"{"type":"signal","version":{"major":5,"minor":0},"room_code":"AB12CD","to_peer_id":"peer_1","negotiation_id":"neg_1","signal":{"kind":"offer","sdp":"v=0","unsupported":true}}"#;
+        assert!(matches!(
+            parse_client_message(unknown_signal),
+            Err(ProtocolError::InvalidJson(_))
+        ));
+    }
+
+    #[test]
+    fn signal_negotiation_id_is_required_and_validated() {
+        let valid = r#"{"type":"signal","version":{"major":5,"minor":0},"room_code":"AB12CD","to_peer_id":"peer_1","negotiation_id":"neg_1","signal":{"kind":"offer","sdp":"v=0"}}"#;
+        assert!(matches!(
+            parse_client_message(valid),
+            Ok(ClientRealtimeMessage::Signal { negotiation_id, .. })
+                if negotiation_id == "neg_1"
+        ));
+
+        let missing = r#"{"type":"signal","version":{"major":5,"minor":0},"room_code":"AB12CD","to_peer_id":"peer_1","signal":{"kind":"offer","sdp":"v=0"}}"#;
+        assert!(matches!(
+            parse_client_message(missing),
+            Err(ProtocolError::InvalidJson(_))
+        ));
+
+        let invalid = r#"{"type":"signal","version":{"major":5,"minor":0},"room_code":"AB12CD","to_peer_id":"peer_1","negotiation_id":"neg 1","signal":{"kind":"offer","sdp":"v=0"}}"#;
+        assert_eq!(
+            parse_client_message(invalid),
+            Err(ProtocolError::InvalidField {
+                field: "negotiation_id"
+            })
+        );
     }
 
     #[test]

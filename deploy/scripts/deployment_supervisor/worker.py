@@ -26,8 +26,6 @@ def worker_command(
         str(paths.source_archive),
         '--image-archive',
         str(paths.image_archive),
-        '--retired-files',
-        str(paths.retired_files),
         '--version',
         state.require_version(version),
         '--expected-control-plane-sha256',

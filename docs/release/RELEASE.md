@@ -1,6 +1,6 @@
 # Rust 发布手册
 
-当前是独立的 Rust 正式版本，不读取 1.x 数据库，也不兼容 1.x API 或实时协议。前端静态资源和 Axum 控制面由同一个容器、正式域名 `https://p2p.yxswy.com` 提供。
+当前是独立的 Rust 正式版本，协议固定为 `5.0`，不读取或迁移任何旧应用数据库格式、客户端会话，也不兼容旧 API 或实时协议。前端静态资源和 Axum 控制面由同一个容器、正式域名 `https://p2p.yxswy.com` 提供。
 
 ## 发布前门禁
 
@@ -13,7 +13,7 @@ python -X utf8 -m unittest discover -s deploy/scripts -p "test_*.py"
 cargo audit --deny warnings
 ```
 
-发布分支必须通过 native/wasm Clippy、Rust 全量测试、release 构建、Chromium 桌面与移动端 E2E，以及 Firefox 兼容性用例。Windows 版 Playwright WebKit 不提供 `RTCPeerConnection`，因此本机跳过；Linux CI 继续执行 WebKit 项目。
+发布分支必须通过 native/wasm Clippy、Rust 全量测试、release 构建、Chromium 桌面与移动端 E2E，以及 Firefox/WebKit 跨浏览器用例。Windows 版 Playwright WebKit 不提供 `RTCPeerConnection`，因此本机跳过；Linux CI 继续执行 WebKit 项目。
 
 ## 准备生产环境
 

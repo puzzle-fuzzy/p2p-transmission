@@ -24,11 +24,20 @@ def main() -> None:
         action="store_true",
         help="run the lightweight Chromium performance contracts",
     )
+    parser.add_argument(
+        "--interop",
+        action="store_true",
+        help="run the lightweight Firefox and WebKit peer-connection contract",
+    )
     parser.add_argument("--capture-room", action="store_true")
     parser.add_argument("--capture-transfer", action="store_true")
     args = parser.parse_args()
     if args.performance and (args.full or args.capture_room or args.capture_transfer):
         parser.error("--performance cannot be combined with full or capture modes")
+    if args.interop and (
+        args.full or args.performance or args.capture_room or args.capture_transfer
+    ):
+        parser.error("--interop cannot be combined with other test modes")
 
     environment = os.environ.copy()
     if args.capture_room:
@@ -37,9 +46,13 @@ def main() -> None:
         environment["CAPTURE_TRANSFER"] = "1"
     run_full = args.full or args.capture_room or args.capture_transfer
     script = (
-        "e2e:performance"
-        if args.performance
-        else ("e2e:full" if run_full else "e2e")
+        "e2e:interop"
+        if args.interop
+        else (
+            "e2e:performance"
+            if args.performance
+            else ("e2e:full" if run_full else "e2e")
+        )
     )
     command = [
         "bun",

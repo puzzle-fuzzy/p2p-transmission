@@ -15,9 +15,14 @@ class ControlPlaneWorkflowContractTests(unittest.TestCase):
     def test_compose_build_release_matches_the_image_tag(self) -> None:
         compose = PRODUCTION_COMPOSE.read_text(encoding='utf-8')
         self.assertIn(
-            'P2P_RELEASE_VERSION: ${P2P_IMAGE_TAG:-2.0.1}',
+            'P2P_RELEASE_VERSION: ${P2P_IMAGE_TAG:?set the exact release image tag}',
             compose,
         )
+        self.assertIn(
+            'image: p2p-transmission:${P2P_IMAGE_TAG:?set the exact release image tag}',
+            compose,
+        )
+        self.assertNotIn('P2P_IMAGE_TAG:-', compose)
         self.assertIn('user: "10001:10001"', compose)
 
     def test_production_workflow_uses_the_v3_digest_bound_supervisor(self) -> None:
@@ -55,7 +60,7 @@ class ControlPlaneWorkflowContractTests(unittest.TestCase):
         self.assertIn('--output "$SUPERVISOR_BUNDLE"', workflow)
         local_private_modes = workflow.index(
             'chmod 600 "$SUPERVISOR_BUNDLE" "$SOURCE_ARCHIVE" '
-            '"$IMAGE_ARCHIVE" "$RETIRED_FILES"'
+            '"$IMAGE_ARCHIVE"'
         )
         first_supervisor_upload = workflow.index(
             '"$SUPERVISOR_BUNDLE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/$SUPERVISOR"'
@@ -63,9 +68,10 @@ class ControlPlaneWorkflowContractTests(unittest.TestCase):
         self.assertLess(local_private_modes, first_supervisor_upload)
         self.assertIn(
             '"chmod 600 /tmp/$SUPERVISOR /tmp/$SOURCE_ARCHIVE '
-            '/tmp/$IMAGE_ARCHIVE /tmp/$RETIRED_FILES"',
+            '/tmp/$IMAGE_ARCHIVE"',
             workflow,
         )
+        self.assertNotIn('retired-files', workflow.lower())
         self.assertGreaterEqual(
             workflow.count('/usr/bin/python3 -I -B -X utf8 /tmp/$SUPERVISOR'),
             4,

@@ -14,6 +14,7 @@ pub(super) fn friendly_error(error: &BrowserPlatformError) -> String {
         BrowserPlatformError::Api { status: 409, .. } => "房间状态刚刚发生变化，请重试".to_owned(),
         BrowserPlatformError::Api { status: 429, .. } => "操作过于频繁，请稍后再试".to_owned(),
         BrowserPlatformError::Request(_) => "网络连接失败，请检查网络后重试".to_owned(),
+        BrowserPlatformError::RtcConfigExpired => "点对点连接配置已过期，正在重新获取".to_owned(),
         _ => "暂时无法完成操作，请稍后重试".to_owned(),
     }
 }
@@ -108,6 +109,14 @@ mod tests {
         assert_eq!(
             friendly_transfer_error(&storage_error(BrowserStorageErrorKind::InvalidState)),
             "文件当前无法读写，请关闭占用程序后重试"
+        );
+    }
+
+    #[test]
+    fn expired_rtc_config_has_actionable_recovery_copy() {
+        assert_eq!(
+            friendly_transfer_error(&BrowserPlatformError::RtcConfigExpired),
+            "点对点连接配置已过期，正在重新获取"
         );
     }
 }

@@ -1,32 +1,26 @@
 use crate::{BrowserPlatformError, LaunchIntent};
 
 #[cfg(any(target_arch = "wasm32", test))]
-fn launch_intent_from_location(search: &str, hash: &str) -> Option<LaunchIntent> {
-    let parameter = |value: &str, target: &str| {
-        value
-            .trim_start_matches(['?', '#'])
-            .split('&')
-            .filter_map(|pair| pair.split_once('='))
-            .find_map(|(name, value)| (name == target).then(|| value.to_owned()))
-    };
-    let hash_room = parameter(hash, "room").map(|room| room.to_ascii_uppercase());
-    let hash_capability = parameter(hash, "capability");
-    if let Some(room_code) = hash_room {
-        return Some(LaunchIntent::JoinRoom {
-            room_code,
-            capability: hash_capability,
-        });
+fn launch_intent_from_fragment(hash: &str) -> Option<LaunchIntent> {
+    let mut fields = hash.strip_prefix('#')?.split('&');
+    let room_code = fields.next()?.strip_prefix("room=")?;
+    let capability = fields.next()?.strip_prefix("capability=")?;
+    if fields.next().is_some()
+        || room_code.len() != 6
+        || !room_code
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || matches!(byte, b'2'..=b'9'))
+        || capability.len() != 64
+        || !capability
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return None;
     }
-
-    if parameter(search, "intent").as_deref() == Some("create") {
-        return Some(LaunchIntent::CreateRoom);
-    }
-    parameter(search, "room")
-        .map(|room| room.to_ascii_uppercase())
-        .map(|room_code| LaunchIntent::JoinRoom {
-            room_code,
-            capability: None,
-        })
+    Some(LaunchIntent::JoinRoom {
+        room_code: room_code.to_owned(),
+        capability: capability.to_owned(),
+    })
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -38,14 +32,8 @@ pub fn take_launch_intent() -> Result<Option<LaunchIntent>, BrowserPlatformError
     let hash = location
         .hash()
         .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?;
-    let search = location
-        .search()
-        .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?;
-    let intent = launch_intent_from_location(&search, &hash);
-    let path = location
-        .pathname()
-        .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?;
-    if intent.is_some() || path != "/" {
+    let intent = launch_intent_from_fragment(&hash);
+    if intent.is_some() {
         window
             .history()
             .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?
@@ -85,39 +73,43 @@ pub fn build_invite_url(
 
 #[cfg(test)]
 mod tests {
-    use super::{LaunchIntent, invite_url_from_origin, launch_intent_from_location};
+    use super::{LaunchIntent, invite_url_from_origin, launch_intent_from_fragment};
 
     #[test]
-    fn parses_root_application_launch_intents() {
+    fn accepts_only_the_canonical_invite_fragment() {
+        let capability = "0123456789abcdef".repeat(4);
         assert_eq!(
-            launch_intent_from_location("?intent=create", ""),
-            Some(LaunchIntent::CreateRoom)
-        );
-        assert_eq!(
-            launch_intent_from_location("?room=ab23cd", ""),
-            Some(LaunchIntent::JoinRoom {
-                room_code: "AB23CD".to_owned(),
-                capability: None,
-            })
-        );
-        assert_eq!(
-            launch_intent_from_location(
-                "?intent=create",
-                "#room=XY45ZT&capability=0123456789abcdef"
-            ),
+            launch_intent_from_fragment(&format!("#room=XY45ZT&capability={capability}")),
             Some(LaunchIntent::JoinRoom {
                 room_code: "XY45ZT".to_owned(),
-                capability: Some("0123456789abcdef".to_owned()),
+                capability: capability.clone(),
             })
         );
-        assert_eq!(launch_intent_from_location("", ""), None);
+
+        for invalid in [
+            String::new(),
+            "?room=XY45ZT".to_owned(),
+            "#room=XY45ZT".to_owned(),
+            format!("#room=XY45ZT&invite={capability}"),
+            format!("#capability={capability}&room=XY45ZT"),
+            format!("#room=xy45zt&capability={capability}"),
+            format!(
+                "#room=XY45ZT&capability={}",
+                capability.to_ascii_uppercase()
+            ),
+            format!("#room=XY45ZT&capability={capability}&source=share"),
+            format!("#room=XY45ZT&capability={capability}&room=AB23CD"),
+        ] {
+            assert_eq!(launch_intent_from_fragment(&invalid), None, "{invalid}");
+        }
     }
 
     #[test]
     fn invite_links_always_use_the_canonical_root_path() {
+        let capability = "0123456789abcdef".repeat(4);
         assert_eq!(
-            invite_url_from_origin("https://p2p.example", "AB23CD", "secret"),
-            "https://p2p.example/#room=AB23CD&capability=secret"
+            invite_url_from_origin("https://p2p.example", "AB23CD", &capability),
+            format!("https://p2p.example/#room=AB23CD&capability={capability}")
         );
     }
 }

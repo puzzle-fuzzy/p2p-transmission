@@ -1,75 +1,152 @@
 use std::collections::BTreeMap;
 
 use dioxus::prelude::*;
-use p2p_browser_platform::{RtcPeer, sleep_ms};
+use p2p_browser_platform::{OfferStart, RtcPeer, sleep_ms};
 
-use crate::app_state::{AppModel, RoomRole, RtcPhase, Screen, TransferLinkState, TransferState};
+use crate::app_state::{AppModel, RoomRole, TransferLinkState};
+use crate::browser_errors::friendly_transfer_error;
+use crate::rtc_transition::{
+    OwnerTimeoutStep, PassiveDeadlineStep, RtcWorkToken, advance_owner_timeout, begin_owner_offer,
+    begin_passive_deadline, claim_disconnected_deadline, claim_owner_retry, claim_passive_deadline,
+    clear_peer_rtc_error, mark_data_channel_ready, mark_peer_start_failed, set_peer_rtc_error,
+    set_peer_transfer_link_state,
+};
 
 const RTC_NEGOTIATION_TIMEOUT_MS: u32 = 3_000;
+const RTC_DISCONNECTED_GRACE_MS: u32 = 5_000;
 const RTC_PASSIVE_RECOVERY_TIMEOUT_MS: u32 = 30_000;
 const RTC_RETRY_DELAYS_MS: [u32; 4] = [500, 1_000, 2_000, 4_000];
 
 pub(super) fn start_rtc_offer(
+    model: Signal<AppModel>,
+    rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+    peer: RtcPeer,
+    target_peer: String,
+) {
+    let Some(instance_generation) = model
+        .peek()
+        .rtc_peer_states
+        .get(&target_peer)
+        .map(|peer_state| peer_state.instance_generation)
+    else {
+        return;
+    };
+    start_owner_offer_attempt(
+        model,
+        rtc_peers,
+        peer,
+        target_peer,
+        instance_generation,
+        0,
+        false,
+    );
+}
+
+fn start_owner_offer_attempt(
     mut model: Signal<AppModel>,
     rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
     peer: RtcPeer,
     target_peer: String,
+    instance_generation: u64,
     attempt: u8,
+    already_active_is_failure: bool,
 ) {
-    if !peer.start_offer(target_peer.clone()) {
-        return;
+    match peer.start_offer(target_peer.clone()) {
+        Ok(OfferStart::Started) => {}
+        Ok(OfferStart::AlreadyActive) if !already_active_is_failure => return,
+        Ok(OfferStart::AlreadyActive) => {
+            let mut state = model.write();
+            if mark_peer_start_failed(&mut state, &target_peer, instance_generation).is_some() {
+                set_peer_rtc_error(
+                    &mut state,
+                    &target_peer,
+                    "点对点连接重试状态异常，请稍后重试".to_owned(),
+                );
+            }
+            return;
+        }
+        Err(error) => {
+            let mut state = model.write();
+            if mark_peer_start_failed(&mut state, &target_peer, instance_generation).is_some() {
+                set_peer_rtc_error(&mut state, &target_peer, friendly_transfer_error(&error));
+            }
+            return;
+        }
     }
-    {
+
+    let token = {
         let mut state = model.write();
-        state
-            .rtc_by_peer
-            .insert(target_peer.clone(), RtcPhase::Connecting);
-        set_peer_transfer_link_state(&mut state, &target_peer, TransferLinkState::Waiting);
-        refresh_aggregate_rtc(&mut state);
-    }
+        begin_owner_offer(&mut state, &target_peer, instance_generation, attempt)
+    };
+    let Some(token) = token else {
+        peer.prepare_reconnect();
+        return;
+    };
+
     spawn(async move {
         sleep_ms(RTC_NEGOTIATION_TIMEOUT_MS).await;
-        let still_current = rtc_peers
-            .peek()
-            .get(&target_peer)
-            .is_some_and(|current| current.ptr_eq(&peer));
-        if !still_current || model.peek().rtc_by_peer.get(&target_peer) == Some(&RtcPhase::Ready) {
+        if !runtime_peer_is_current(rtc_peers, &target_peer, &peer) {
             return;
         }
         if peer.data_channel_ready() {
-            let mut state = model.write();
-            state
-                .rtc_by_peer
-                .insert(target_peer.clone(), RtcPhase::Ready);
-            refresh_aggregate_rtc(&mut state);
+            mark_ready_from_runtime(&mut model, &target_peer);
             return;
         }
-        let Some(delay_ms) = rtc_retry_delay_ms(attempt) else {
+
+        let step = {
             let mut state = model.write();
-            state
-                .rtc_by_peer
-                .insert(target_peer.clone(), RtcPhase::Failed);
-            let transfer_paused =
-                set_peer_transfer_link_state(&mut state, &target_peer, TransferLinkState::Paused);
-            refresh_aggregate_rtc(&mut state);
-            if !transfer_paused {
-                state.error = Some("有接收者的点对点连接失败，可以等待其重新连接".to_owned());
-            }
-            return;
+            advance_owner_timeout(
+                &mut state,
+                &target_peer,
+                token,
+                attempt,
+                rtc_retry_delay_ms(attempt),
+            )
         };
-        peer.prepare_reconnect();
-        sleep_ms(delay_ms).await;
-        let still_current = rtc_peers
-            .peek()
-            .get(&target_peer)
-            .is_some_and(|current| current.ptr_eq(&peer));
-        if !still_current
-            || model.peek().rtc_by_peer.get(&target_peer) == Some(&RtcPhase::Ready)
-            || peer.data_channel_ready()
-        {
-            return;
+        match step {
+            OwnerTimeoutStep::Ignore => {}
+            OwnerTimeoutStep::Failed { transfer_paused } => {
+                if !transfer_paused {
+                    let mut state = model.write();
+                    set_peer_rtc_error(
+                        &mut state,
+                        &target_peer,
+                        "有接收者的点对点连接失败，可以等待其重新连接".to_owned(),
+                    );
+                }
+            }
+            OwnerTimeoutStep::Retry {
+                token,
+                next_attempt,
+                delay_ms,
+            } => {
+                sleep_ms(delay_ms).await;
+                if !runtime_peer_is_current(rtc_peers, &target_peer, &peer) {
+                    return;
+                }
+                if peer.data_channel_ready() {
+                    mark_ready_from_runtime(&mut model, &target_peer);
+                    return;
+                }
+                let retry_claimed = {
+                    let mut state = model.write();
+                    claim_owner_retry(&mut state, &target_peer, token, next_attempt)
+                };
+                if !retry_claimed {
+                    return;
+                }
+                peer.prepare_reconnect();
+                start_owner_offer_attempt(
+                    model,
+                    rtc_peers,
+                    peer,
+                    target_peer,
+                    token.instance_generation(),
+                    next_attempt,
+                    true,
+                );
+            }
         }
-        start_rtc_offer(model, rtc_peers, peer, target_peer, attempt + 1);
     });
 }
 
@@ -79,22 +156,68 @@ pub(super) fn schedule_passive_recovery_timeout(
     peer: RtcPeer,
     peer_id: String,
 ) {
+    let token = {
+        let mut state = model.write();
+        begin_passive_deadline(&mut state, &peer_id)
+    };
+    let Some(token) = token else {
+        return;
+    };
     spawn(async move {
         sleep_ms(RTC_PASSIVE_RECOVERY_TIMEOUT_MS).await;
-        let still_current = rtc_peers
-            .peek()
-            .get(&peer_id)
-            .is_some_and(|current| current.ptr_eq(&peer));
-        if !still_current
-            || peer.data_channel_ready()
-            || model.peek().rtc_by_peer.get(&peer_id) == Some(&RtcPhase::Ready)
-        {
+        if !runtime_peer_is_current(rtc_peers, &peer_id, &peer) {
             return;
         }
-        let mut state = model.write();
-        if set_peer_transfer_link_state(&mut state, &peer_id, TransferLinkState::Paused) {
-            state.rtc_by_peer.insert(peer_id, RtcPhase::Failed);
-            refresh_aggregate_rtc(&mut state);
+        if peer.data_channel_ready() {
+            mark_ready_from_runtime(&mut model, &peer_id);
+            return;
+        }
+        let step = {
+            let mut state = model.write();
+            claim_passive_deadline(&mut state, &peer_id, token)
+        };
+        if let PassiveDeadlineStep::Failed { transfer_paused } = step
+            && !transfer_paused
+        {
+            let mut state = model.write();
+            set_peer_rtc_error(
+                &mut state,
+                &peer_id,
+                "点对点连接超时，请检查双方网络后重新进入房间".to_owned(),
+            );
+        }
+    });
+}
+
+pub(super) fn schedule_disconnected_recovery(
+    mut model: Signal<AppModel>,
+    rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+    peer: RtcPeer,
+    peer_id: String,
+    role: RoomRole,
+    token: RtcWorkToken,
+) {
+    spawn(async move {
+        sleep_ms(RTC_DISCONNECTED_GRACE_MS).await;
+        if !runtime_peer_is_current(rtc_peers, &peer_id, &peer) {
+            return;
+        }
+        if peer.data_channel_ready() {
+            mark_ready_from_runtime(&mut model, &peer_id);
+            return;
+        }
+        let deadline_claimed = {
+            let mut state = model.write();
+            claim_disconnected_deadline(&mut state, &peer_id, token)
+        };
+        if !deadline_claimed {
+            return;
+        }
+        if role == RoomRole::Owner {
+            peer.prepare_reconnect();
+            start_rtc_offer(model, rtc_peers, peer, peer_id);
+        } else {
+            schedule_passive_recovery_timeout(model, rtc_peers, peer, peer_id);
         }
     });
 }
@@ -109,91 +232,28 @@ pub(super) fn reconnect_paused_transfer(
     {
         let mut state = model.write();
         set_peer_transfer_link_state(&mut state, &peer_id, TransferLinkState::Waiting);
-        state.error = None;
+        clear_peer_rtc_error(&mut state, &peer_id);
     }
-    start_rtc_offer(model, rtc_peers, peer, peer_id, 0);
+    start_rtc_offer(model, rtc_peers, peer, peer_id);
 }
 
-pub(super) fn mark_streamed_transfers_waiting(model: &mut AppModel) -> bool {
-    let peer_ids = model.transfers_by_peer.keys().cloned().collect::<Vec<_>>();
-    let mut updated = false;
-    for peer_id in peer_ids {
-        updated |= set_peer_transfer_link_state(model, &peer_id, TransferLinkState::Waiting);
+fn mark_ready_from_runtime(model: &mut Signal<AppModel>, peer_id: &str) {
+    let mut state = model.write();
+    let recovered_stream = mark_data_channel_ready(&mut state, peer_id);
+    if recovered_stream {
+        state.notice = Some("连接已恢复，传输将从最后检查点继续".to_owned());
     }
-    updated
 }
 
-pub(super) fn set_peer_transfer_link_state(
-    model: &mut AppModel,
+fn runtime_peer_is_current(
+    rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
     peer_id: &str,
-    link_state: TransferLinkState,
+    peer: &RtcPeer,
 ) -> bool {
-    let updated = model
-        .transfers_by_peer
-        .get_mut(peer_id)
-        .and_then(|transfer| {
-            if let TransferState::Active {
-                streamed: true,
-                link_state: current,
-                ..
-            } = transfer
-            {
-                *current = link_state;
-                Some(transfer.clone())
-            } else {
-                None
-            }
-        });
-    if let Some(transfer) = updated {
-        if matches!(
-            model.screen,
-            Screen::Room {
-                role: RoomRole::Receiver,
-                ..
-            }
-        ) {
-            model.transfer = transfer;
-        }
-        true
-    } else {
-        false
-    }
-}
-
-pub(super) fn refresh_aggregate_rtc(model: &mut AppModel) {
-    model.rtc = if model.rtc_by_peer.is_empty() {
-        if matches!(model.screen, Screen::Room { .. }) {
-            RtcPhase::WaitingPeer
-        } else {
-            RtcPhase::Inactive
-        }
-    } else if model
-        .rtc_by_peer
-        .values()
-        .any(|phase| *phase == RtcPhase::Ready)
-    {
-        RtcPhase::Ready
-    } else if model
-        .rtc_by_peer
-        .values()
-        .any(|phase| *phase == RtcPhase::Connecting)
-    {
-        RtcPhase::Connecting
-    } else if model
-        .rtc_by_peer
-        .values()
-        .any(|phase| *phase == RtcPhase::Disconnected)
-    {
-        RtcPhase::Disconnected
-    } else if model
-        .rtc_by_peer
-        .values()
-        .any(|phase| *phase == RtcPhase::Failed)
-    {
-        RtcPhase::Failed
-    } else {
-        RtcPhase::WaitingPeer
-    };
+    rtc_peers
+        .peek()
+        .get(peer_id)
+        .is_some_and(|current| current.ptr_eq(peer))
 }
 
 fn rtc_retry_delay_ms(attempt: u8) -> Option<u32> {
@@ -203,21 +263,6 @@ fn rtc_retry_delay_ms(attempt: u8) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn aggregate_stays_ready_when_one_of_multiple_peers_is_ready() {
-        let mut model = AppModel::default();
-        model
-            .rtc_by_peer
-            .insert("peer_ready".to_owned(), RtcPhase::Ready);
-        model
-            .rtc_by_peer
-            .insert("peer_connecting".to_owned(), RtcPhase::Connecting);
-
-        refresh_aggregate_rtc(&mut model);
-
-        assert_eq!(model.rtc, RtcPhase::Ready);
-    }
 
     #[test]
     fn retry_backoff_is_bounded_and_increases() {

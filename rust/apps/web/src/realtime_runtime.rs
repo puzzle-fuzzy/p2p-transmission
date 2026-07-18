@@ -1,11 +1,40 @@
 use std::{collections::BTreeMap, rc::Rc};
 
 use dioxus::prelude::Signal;
-use p2p_browser_platform::{RealtimeConnection, RtcPeer};
-use p2p_protocol::RtcConfigResponse;
+use p2p_browser_platform::{RealtimeConnection, RtcConfigLease, RtcPeer};
 
 use crate::app_state::AppModel;
 use crate::realtime_target::{RealtimeTarget, RealtimeTargetScope};
+
+#[derive(Clone, Debug)]
+pub(super) struct ScopedRtcConfig {
+    target_scope: RealtimeTargetScope,
+    lease: RtcConfigLease,
+}
+
+impl ScopedRtcConfig {
+    pub(super) fn new(target_scope: RealtimeTargetScope, lease: RtcConfigLease) -> Self {
+        Self {
+            target_scope,
+            lease,
+        }
+    }
+
+    pub(super) fn for_scope(&self, target_scope: &RealtimeTargetScope) -> Option<&RtcConfigLease> {
+        self.target_scope
+            .is_same_instance(target_scope)
+            .then_some(&self.lease)
+            .filter(|lease| lease.is_valid())
+    }
+
+    pub(super) fn matches(
+        &self,
+        target_scope: &RealtimeTargetScope,
+        lease: &RtcConfigLease,
+    ) -> bool {
+        self.target_scope.is_same_instance(target_scope) && self.lease.ptr_eq(lease)
+    }
+}
 
 #[derive(Clone, Debug)]
 pub(super) struct SuppressedTarget {
@@ -44,7 +73,7 @@ pub(super) struct RealtimeConnectionRuntime {
 pub(super) struct RtcRuntime {
     pub(super) connection: Signal<Option<RealtimeConnection>>,
     pub(super) peers: Signal<BTreeMap<String, RtcPeer>>,
-    pub(super) config: Signal<Option<RtcConfigResponse>>,
+    pub(super) config: Signal<Option<ScopedRtcConfig>>,
 }
 
 #[derive(Clone, Debug)]

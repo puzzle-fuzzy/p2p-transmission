@@ -234,49 +234,8 @@ jobs:
       - name: Create source release archive
         if: steps.release_head.outputs.current == 'true'
         env:
-          BEFORE_SHA: ${{ github.event.before }}
           GITHUB_SHA: ${{ github.sha }}
-        run: |
-          git archive --format=tar.gz --output="p2p-transmission-$GITHUB_SHA.tar.gz" "$GITHUB_SHA"
-          python3 - <<'PY'
-          import json
-          import os
-          import re
-          import subprocess
-          from pathlib import Path
-
-          before = os.environ['BEFORE_SHA']
-          current = os.environ['GITHUB_SHA']
-          retired: list[str] = []
-          if re.fullmatch(r'[0-9a-f]{40}', before) and before != '0' * 40:
-              subprocess.run(
-                  ['git', 'cat-file', '-e', f'{before}^{{commit}}'],
-                  check=True,
-              )
-              output = subprocess.check_output(
-                  [
-                      'git',
-                      'diff',
-                      '--name-only',
-                      '--diff-filter=D',
-                      '--no-renames',
-                      '-z',
-                      before,
-                      current,
-                  ]
-              )
-              retired = [
-                  name.decode('utf-8')
-                  for name in output.split(b'\0')
-                  if name
-              ]
-          target = Path(f'p2p-transmission-retired-{current}.json')
-          target.write_text(
-              json.dumps(retired, ensure_ascii=False, indent=2) + '\n',
-              encoding='utf-8',
-          )
-          print(f'bootstrap retired source files: {len(retired)}')
-          PY
+        run: git archive --format=tar.gz --output="p2p-transmission-$GITHUB_SHA.tar.gz" "$GITHUB_SHA"
 
       - name: Stage the Rust image and retain rollback state
         id: stage
@@ -290,22 +249,21 @@ jobs:
         run: |
           SOURCE_ARCHIVE="p2p-transmission-$GITHUB_SHA.tar.gz"
           IMAGE_ARCHIVE="p2p-transmission-image-$GITHUB_SHA.tar.gz"
-          RETIRED_FILES="p2p-transmission-retired-$GITHUB_SHA.json"
           SUPERVISOR="p2p-transmission-deploy-$GITHUB_SHA-supervisor.py"
           SUPERVISOR_BUNDLE="$RUNNER_TEMP/$SUPERVISOR"
           python3 -I -B -X utf8 deploy/scripts/build_deployment_supervisor.py \
             --output "$SUPERVISOR_BUNDLE"
-          chmod 600 "$SUPERVISOR_BUNDLE" "$SOURCE_ARCHIVE" "$IMAGE_ARCHIVE" "$RETIRED_FILES"
+          chmod 600 "$SUPERVISOR_BUNDLE" "$SOURCE_ARCHIVE" "$IMAGE_ARCHIVE"
           scp -o BatchMode=yes -o ConnectTimeout=10 \
             -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
             "$SUPERVISOR_BUNDLE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/$SUPERVISOR"
           scp -o BatchMode=yes -o ConnectTimeout=10 \
             -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
-            "$SOURCE_ARCHIVE" "$IMAGE_ARCHIVE" "$RETIRED_FILES" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/"
+            "$SOURCE_ARCHIVE" "$IMAGE_ARCHIVE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/"
           ssh -o BatchMode=yes -o ConnectTimeout=10 \
             -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "chmod 600 /tmp/$SUPERVISOR /tmp/$SOURCE_ARCHIVE /tmp/$IMAGE_ARCHIVE /tmp/$RETIRED_FILES"
+            "chmod 600 /tmp/$SUPERVISOR /tmp/$SOURCE_ARCHIVE /tmp/$IMAGE_ARCHIVE"
           # The unprivileged supervisor detaches and tracks the fixed
           # sudo-approved stage wrapper. An SSH disconnect can therefore
           # never race rollback against an unfinished runtime switch.
@@ -480,7 +438,6 @@ jobs:
             "/tmp/p2p-transmission-deploy-$GITHUB_SHA-worker.pid" \
             "/tmp/p2p-transmission-$GITHUB_SHA.tar.gz" \
             "/tmp/p2p-transmission-image-$GITHUB_SHA.tar.gz" \
-            "/tmp/p2p-transmission-retired-$GITHUB_SHA.json" \
             "/opt/p2p-transmission/deploy/production/rollback/pending.json" \
             "/opt/p2p-transmission/deploy/production/rollback/ (protected snapshots referenced by pending.json)" \
             "Do not delete these files; inspect only the snapshot/backup paths in pending.json without printing its environment payload."

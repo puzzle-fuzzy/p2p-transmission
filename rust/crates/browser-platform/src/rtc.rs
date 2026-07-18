@@ -7,10 +7,55 @@ mod manifest;
 #[cfg(any(target_arch = "wasm32", test))]
 mod wire;
 
+use std::rc::Rc;
+
 use p2p_protocol::{CancelReason, RtcConfigResponse, Signal, StreamPauseReason};
 pub use p2p_transfer::{TransferDirection, TransferFile};
 
-use crate::{BrowserPlatformError, StreamingFileWriter};
+use crate::{BrowserPlatformError, StreamingFileWriter, monotonic_millis};
+
+#[derive(Clone, Debug)]
+pub struct RtcConfigLease {
+    inner: Rc<RtcConfigLeaseInner>,
+}
+
+#[derive(Debug)]
+struct RtcConfigLeaseInner {
+    response: RtcConfigResponse,
+    valid_until_ms: u64,
+}
+
+impl RtcConfigLease {
+    pub fn from_request_start(response: RtcConfigResponse, request_started_at_ms: u64) -> Self {
+        let ttl_ms = response.ttl_ms;
+        Self {
+            inner: Rc::new(RtcConfigLeaseInner {
+                response,
+                valid_until_ms: rtc_config_deadline_ms(request_started_at_ms, ttl_ms),
+            }),
+        }
+    }
+
+    pub fn response(&self) -> &RtcConfigResponse {
+        &self.inner.response
+    }
+
+    pub fn remaining_ms(&self) -> u64 {
+        self.inner.valid_until_ms.saturating_sub(monotonic_millis())
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.remaining_ms() > 0
+    }
+
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
+fn rtc_config_deadline_ms(received_at_ms: u64, valid_for_ms: u64) -> u64 {
+    received_at_ms.saturating_add(valid_for_ms)
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RtcConnectionPhase {
@@ -22,14 +67,31 @@ pub enum RtcConnectionPhase {
     Closed,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OfferStart {
+    Started,
+    AlreadyActive,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SignalAcceptance {
+    Scheduled,
+    Deferred,
+    Ignored,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum RtcEvent {
     OutboundSignal {
         to_peer_id: String,
+        negotiation_id: String,
         signal: Signal,
     },
     ConnectionState(RtcConnectionPhase),
     DataChannelReady,
+    NegotiationFailed {
+        message: String,
+    },
     OutgoingOffered {
         transfer_id: String,
         file: TransferFile,
@@ -131,7 +193,7 @@ mod native {
 
     impl RtcPeer {
         pub fn new(
-            _rtc_config: RtcConfigResponse,
+            _rtc_config: RtcConfigLease,
             _on_event: impl FnMut(RtcEvent) + 'static,
         ) -> Result<Self, BrowserPlatformError> {
             Err(BrowserPlatformError::UnsupportedTarget)
@@ -156,19 +218,36 @@ mod native {
             false
         }
 
+        pub fn replace_reconnect_rtc_config(
+            &self,
+            _rtc_config: RtcConfigLease,
+        ) -> Result<(), BrowserPlatformError> {
+            Err(BrowserPlatformError::UnsupportedTarget)
+        }
+
         pub fn resumable_transfer_active(&self) -> bool {
             false
         }
 
-        pub fn start_offer(&self, _target_peer: String) -> bool {
-            false
+        pub fn start_offer(
+            &self,
+            _target_peer: String,
+        ) -> Result<OfferStart, BrowserPlatformError> {
+            Err(BrowserPlatformError::UnsupportedTarget)
         }
 
         pub fn ptr_eq(&self, _other: &Self) -> bool {
             true
         }
 
-        pub fn accept_signal(&self, _from_peer: String, _signal: Signal) {}
+        pub fn accept_signal(
+            &self,
+            _from_peer: String,
+            _negotiation_id: String,
+            _signal: Signal,
+        ) -> Result<SignalAcceptance, BrowserPlatformError> {
+            Err(BrowserPlatformError::UnsupportedTarget)
+        }
 
         pub fn offer_files(
             &self,
@@ -236,3 +315,18 @@ pub use native::{
     BrowserFile, RtcPeer, browser_files_from_input, choose_persistent_source_files,
     persistent_source_file_support,
 };
+
+#[cfg(test)]
+mod lease_tests {
+    use super::rtc_config_deadline_ms;
+
+    #[test]
+    fn rtc_config_deadline_is_relative_to_local_receipt() {
+        assert_eq!(rtc_config_deadline_ms(1_000, 600_000), 601_000);
+    }
+
+    #[test]
+    fn rtc_config_deadline_saturates_instead_of_wrapping() {
+        assert_eq!(rtc_config_deadline_ms(u64::MAX - 5, 10), u64::MAX);
+    }
+}

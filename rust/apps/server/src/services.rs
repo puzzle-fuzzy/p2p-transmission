@@ -306,6 +306,7 @@ impl AppServices {
             version: CURRENT_PROTOCOL,
             ice_servers,
             expires_at_ms: expires_at.value(),
+            ttl_ms: expires_at.value().saturating_sub(now.value()),
         })
     }
 
@@ -619,6 +620,7 @@ mod tests {
         );
         assert!(response.expires_at_ms > now.value());
         assert!(response.expires_at_ms <= now.value() + 60_000);
+        assert_eq!(response.ttl_ms, 60_000);
 
         services.storage.close().await;
         std::fs::remove_dir_all(directory).expect("remove test directory");

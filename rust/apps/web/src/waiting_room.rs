@@ -5,7 +5,32 @@ use crate::app_state::{AppModel, RealtimePhase, Screen};
 use crate::browser_errors::friendly_error;
 use crate::participant_presence::Avatar;
 use crate::realtime_session::return_to_lobby;
-use crate::realtime_target::RealtimeTarget;
+use crate::realtime_target::{RealtimeTarget, RealtimeTargetScope};
+
+#[derive(Clone)]
+struct WaitingCancelScope {
+    room_code: String,
+    request_id: String,
+    target: Option<RealtimeTargetScope>,
+}
+
+impl WaitingCancelScope {
+    fn is_current(&self, state: &AppModel, target: Option<&RealtimeTarget>) -> bool {
+        let same_request = matches!(
+            &state.screen,
+            Screen::Waiting {
+                room_code,
+                request_id,
+                ..
+            } if room_code == &self.room_code && request_id == &self.request_id
+        );
+        same_request
+            && match &self.target {
+                Some(scope) => scope.is_current(target),
+                None => target.is_none(),
+            }
+    }
+}
 
 #[component]
 pub(super) fn WaitingView(
@@ -61,21 +86,35 @@ fn submit_cancel_waiting(
     mut model: Signal<AppModel>,
     realtime_target: Signal<Option<RealtimeTarget>>,
 ) {
-    let (room_code, revision) = {
+    let (room_code, request_id, revision) = {
         let state = model.read();
         let Screen::Waiting {
             room_code,
+            request_id,
             revision,
             ..
         } = &state.screen
         else {
             return;
         };
-        (room_code.clone(), *revision)
+        (room_code.clone(), request_id.clone(), *revision)
+    };
+    let cancel_scope = WaitingCancelScope {
+        room_code: room_code.clone(),
+        request_id,
+        target: realtime_target
+            .read()
+            .as_ref()
+            .cloned()
+            .map(RealtimeTargetScope::new),
     };
     model.write().busy = true;
     spawn(async move {
-        match leave_room(&room_code, &new_client_id("cancel_join"), Some(revision)).await {
+        let result = leave_room(&room_code, &new_client_id("cancel_join"), Some(revision)).await;
+        if !cancel_scope.is_current(&model.read(), realtime_target.read().as_ref()) {
+            return;
+        }
+        match result {
             Ok(_) => return_to_lobby(model, realtime_target, None),
             Err(error) => {
                 let mut state = model.write();
@@ -84,4 +123,45 @@ fn submit_cancel_waiting(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::realtime_target::join_watch_target;
+
+    fn waiting_model() -> AppModel {
+        AppModel {
+            screen: Screen::Waiting {
+                room_code: "ABC234".to_owned(),
+                request_id: "request-1".to_owned(),
+                peer_id: "peer-receiver".to_owned(),
+                revision: 1,
+                expires_at_ms: 1_000,
+            },
+            ..AppModel::default()
+        }
+    }
+
+    #[test]
+    fn cancel_scope_rejects_a_replacement_join_request_target() {
+        let mut model = waiting_model();
+        let target = join_watch_target("ABC234".to_owned(), "request-1".to_owned(), 1);
+        let scope = WaitingCancelScope {
+            room_code: "ABC234".to_owned(),
+            request_id: "request-1".to_owned(),
+            target: Some(RealtimeTargetScope::new(target.clone())),
+        };
+
+        assert!(scope.is_current(&model, Some(&target)));
+
+        let replacement = join_watch_target("ABC234".to_owned(), "request-1".to_owned(), 1);
+        assert!(!scope.is_current(&model, Some(&replacement)));
+
+        model.screen = Screen::Lobby {
+            room_code: String::new(),
+            invite_capability: None,
+        };
+        assert!(!scope.is_current(&model, Some(&target)));
+    }
 }

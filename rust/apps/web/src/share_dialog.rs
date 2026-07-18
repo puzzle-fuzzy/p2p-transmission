@@ -1,10 +1,7 @@
 use std::fmt::Write as _;
 
 use dioxus::prelude::*;
-use p2p_browser_platform::{
-    BrowserPlatformError, NativeShareOutcome, build_invite_url, close_modal_dialog, copy_text,
-    native_share_supported, share_url, show_modal_dialog,
-};
+use p2p_browser_platform::{build_invite_url, close_modal_dialog, copy_text, show_modal_dialog};
 
 use crate::app_state::AppModel;
 
@@ -46,7 +43,6 @@ pub(super) fn ShareDialog(
     let mut share_error = use_signal(|| None::<String>);
     let invite_url = build_invite_url(&room_code, &capability).ok();
     let qr_code = invite_url.as_deref().and_then(invite_qr_code);
-    let has_native_share = native_share_supported();
     use_effect(|| {
         let _ = show_modal_dialog("share-dialog");
     });
@@ -89,41 +85,25 @@ pub(super) fn ShareDialog(
                         let room_code = room_code.clone();
                         let capability = capability.clone();
                         spawn(async move {
-                            let result = async {
-                                let url = build_invite_url(&room_code, &capability)?;
-                                match share_url(
-                                    "P2P Transmission 房间邀请",
-                                    "打开邀请链接加入临时点对点传输房间",
-                                    &url,
-                                ).await {
-                                    Ok(NativeShareOutcome::Shared) => {
-                                        Ok::<_, BrowserPlatformError>(Some("邀请链接已分享"))
-                                    }
-                                    Ok(NativeShareOutcome::Cancelled) => {
-                                        Ok::<_, BrowserPlatformError>(None)
-                                    }
-                                    Ok(NativeShareOutcome::Unsupported) | Err(_) => {
-                                        copy_text(&url).await?;
-                                        Ok(Some("邀请链接已复制"))
-                                    }
-                                }
-                            }.await;
+                            let result = match build_invite_url(&room_code, &capability) {
+                                Ok(url) => copy_text(&url).await,
+                                Err(error) => Err(error),
+                            };
                             match result {
-                                Ok(Some(notice)) => {
-                                    model.write().notice = Some(notice.to_owned());
+                                Ok(()) => {
+                                    model.write().notice = Some("邀请链接已复制".to_owned());
                                     let _ = close_modal_dialog("share-dialog");
                                     share_open.set(false);
                                 }
-                                Ok(None) => {}
                                 Err(_) => {
                                     if let Ok(mut error) = share_error.try_write() {
-                                        *error = Some("无法自动分享，请改用房间码加入".to_owned());
+                                        *error = Some("无法复制邀请链接，请改用房间码加入".to_owned());
                                     }
                                 }
                             }
                         });
                     },
-                    if has_native_share { "分享邀请链接" } else { "复制邀请链接" }
+                    "复制邀请链接"
                 }
                 if let Some(error) = share_error() {
                     p { class: "dialog-error", role: "alert", "{error}" }

@@ -19,7 +19,8 @@ test('two browsers can create, approve, connect, and restore a room', async ({
         notificationPermissionRequests: Number(
           sessionStorage.getItem('test-notification-permission-requests') ?? '0',
         ),
-        sharedInvite: null as ShareData | null,
+        copiedInvite: null as string | null,
+        nativeShareCalls: 0,
       }
       class TestNotification {
         static permission: NotificationPermission = 'default'
@@ -39,10 +40,19 @@ test('two browsers can create, approve, connect, and restore a room', async ({
         configurable: true,
         value: TestNotification,
       })
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: {
+          writeText: async (value: string) => {
+            state.copiedInvite = value
+          },
+        },
+      })
       Object.defineProperty(navigator, 'share', {
         configurable: true,
-        value: async (data: ShareData) => {
-          state.sharedInvite = data
+        value: async () => {
+          state.nativeShareCalls += 1
+          throw new Error('native share must not be used')
         },
       })
     })
@@ -62,7 +72,7 @@ test('two browsers can create, approve, connect, and restore a room', async ({
     await expect(roomCodeButton).toBeVisible()
     const roomCode = (await roomCodeButton.textContent())?.trim() ?? ''
     expect(roomCode).toMatch(/^[A-Z2-9]{6}$/)
-    await expect(owner.getByText('房间已创建，可以分享邀请链接', { exact: true })).toBeVisible()
+    await expect(owner.getByText('房间已创建，可以复制邀请链接', { exact: true })).toBeVisible()
 
     const ownerPeerFlow = owner.locator('.peer-flow')
     await expect(ownerPeerFlow.locator('.avatar')).toHaveCount(1)
@@ -83,18 +93,21 @@ test('two browsers can create, approve, connect, and restore a room', async ({
     await expect(shareButton).toBeFocused()
 
     await shareButton.click()
-    await shareDialog.getByRole('button', { name: '分享邀请链接' }).click()
+    await shareDialog.getByRole('button', { name: '复制邀请链接' }).click()
     await expect(shareDialog).toBeHidden()
-    await expect(owner.getByText('邀请链接已分享', { exact: true })).toBeVisible()
-    const sharedInvite = await owner.evaluate(() => (
+    await expect(owner.getByText('邀请链接已复制', { exact: true })).toBeVisible()
+    const clipboardState = await owner.evaluate(() => (
       window as unknown as {
-        __browserCapabilityState: { sharedInvite: ShareData | null }
+        __browserCapabilityState: { copiedInvite: string | null; nativeShareCalls: number }
       }
-    ).__browserCapabilityState.sharedInvite)
-    expect(sharedInvite?.url).toContain(`#room=${roomCode}&capability=`)
-    expect(new URL(sharedInvite?.url ?? 'http://invalid/').pathname).toBe('/')
+    ).__browserCapabilityState)
+    expect(clipboardState.copiedInvite).toContain(`#room=${roomCode}&capability=`)
+    expect(new URL(clipboardState.copiedInvite ?? 'http://invalid/').pathname).toBe('/')
+    expect(clipboardState.nativeShareCalls).toBe(0)
 
-    await receiver.goto(`/?room=${roomCode}`)
+    await receiver.goto('/')
+    await enterRoomCode(receiver, roomCode)
+    await receiver.keyboard.press('Enter')
     await expect(receiver.getByRole('heading', { name: '等待发送者确认' })).toBeVisible()
     await expect(receiver.getByRole('status')).toContainText('等待确认')
 
@@ -145,7 +158,7 @@ test('two browsers can create, approve, connect, and restore a room', async ({
     await owner.reload()
     await expect(owner.getByText('发送者', { exact: true })).toBeVisible()
     await expect(owner.getByRole('heading', { name: '选择要发送的文件' })).toBeVisible({ timeout: peerReadyTimeout })
-    await expect(owner.getByText('房间已创建，可以分享邀请链接', { exact: true })).toBeVisible()
+    await expect(owner.getByText('房间已创建，可以复制邀请链接', { exact: true })).toBeVisible()
     await expect(owner.locator('.avatar-entering')).toHaveCount(0)
     await expect(owner.locator('html')).not.toHaveAttribute('data-p2p-room-restore', /.+/u)
   } finally {

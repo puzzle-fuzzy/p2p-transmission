@@ -1,1 +1,1 @@
-{"type":"manifest","version":{"major":2,"minor":0},"transfer_id":"transfer_1","mode":"buffered","files":[{"file_id":"file_1","name":"hello.txt","mime":"text/plain","size_bytes":5}]}
+{"type":"manifest","version":{"major":5,"minor":0},"transfer_id":"transfer_1","mode":"buffered","files":[{"file_id":"file_1","name":"hello.txt","mime":"text/plain","size_bytes":5}]}

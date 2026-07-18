@@ -66,7 +66,7 @@ class ControlPlaneRuntimeMaintenanceTests(unittest.TestCase):
                         shutil,
                         'disk_usage',
                         return_value=SimpleNamespace(
-                            free=common.MAINTENANCE_MIN_FREE_BYTES
+                    free=common.DISK_SAFETY_MARGIN_BYTES
                             + 16 * 1024 * 1024
                         ),
                     ),
@@ -147,7 +147,7 @@ class ControlPlaneRuntimeMaintenanceTests(unittest.TestCase):
                         shutil,
                         'disk_usage',
                         return_value=SimpleNamespace(
-                            free=common.MAINTENANCE_MIN_FREE_BYTES
+                    free=common.DISK_SAFETY_MARGIN_BYTES
                             + 16 * 1024 * 1024
                         ),
                     ),

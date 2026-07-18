@@ -16,7 +16,7 @@ export default defineConfig({
     'transfer-resume.spec.ts',
     'transfer-reload.spec.ts',
     'transfer-limits.spec.ts',
-    'compat.spec.ts',
+    'browser-interop.spec.ts',
   ],
   fullyParallel: false,
   workers: 1,
@@ -31,12 +31,12 @@ export default defineConfig({
   projects: [
     {
       name: 'desktop-chromium',
-      testIgnore: ['compat.spec.ts'],
+      testIgnore: ['browser-interop.spec.ts'],
       use: { browserName: 'chromium', viewport: { width: 1440, height: 960 } },
     },
     {
       name: 'mobile-chromium',
-      testIgnore: ['compat.spec.ts'],
+      testIgnore: ['browser-interop.spec.ts'],
       use: {
         browserName: 'chromium',
         viewport: { width: 390, height: 844 },
@@ -46,12 +46,12 @@ export default defineConfig({
     },
     {
       name: 'desktop-firefox',
-      testMatch: ['compat.spec.ts'],
+      testMatch: ['browser-interop.spec.ts'],
       use: { browserName: 'firefox', viewport: { width: 1440, height: 960 } },
     },
     {
       name: 'desktop-webkit',
-      testMatch: ['compat.spec.ts'],
+      testMatch: ['browser-interop.spec.ts'],
       use: { browserName: 'webkit', viewport: { width: 1440, height: 960 } },
     },
   ],

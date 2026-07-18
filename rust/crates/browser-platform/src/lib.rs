@@ -24,7 +24,7 @@ pub use api::{
     join_request_status, leave_room, request_join,
 };
 pub use capabilities::{
-    copy_text, native_share_supported, prime_notification_permission, send_notification, share_url,
+    copy_text, epoch_millis, monotonic_millis, prime_notification_permission, send_notification,
     sleep_ms,
 };
 pub use lifecycle::{
@@ -33,8 +33,9 @@ pub use lifecycle::{
 pub use navigation::{build_invite_url, take_launch_intent};
 pub use realtime::{RealtimeConnection, connect_realtime, new_client_id};
 pub use rtc::{
-    BrowserFile, RtcConnectionPhase, RtcEvent, RtcPeer, TransferDirection, TransferFile,
-    browser_files_from_input, choose_persistent_source_files, persistent_source_file_support,
+    BrowserFile, OfferStart, RtcConfigLease, RtcConnectionPhase, RtcEvent, RtcPeer,
+    SignalAcceptance, TransferDirection, TransferFile, browser_files_from_input,
+    choose_persistent_source_files, persistent_source_file_support,
 };
 pub use session_storage::{clear_room_session, load_room_session, save_room_session};
 pub use stream_storage::{
@@ -140,24 +141,18 @@ pub enum BrowserPlatformError {
     },
     #[error("response could not be decoded: {0}")]
     Decode(String),
+    #[error("RTC connection configuration has expired")]
+    RtcConfigExpired,
     #[error("realtime message could not be encoded: {0}")]
     RealtimeEncode(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LaunchIntent {
-    CreateRoom,
     JoinRoom {
         room_code: String,
-        capability: Option<String>,
+        capability: String,
     },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum NativeShareOutcome {
-    Shared,
-    Cancelled,
-    Unsupported,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

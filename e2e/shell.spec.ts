@@ -100,13 +100,16 @@ test('an invalid stored room is cleared without a navigation trap', async ({ pag
   await page.goto('/')
   await page.evaluate(() => {
     window.localStorage.setItem(
-      'p2p_room_session',
+      'p2p_room_session_v5',
       JSON.stringify({
-        room_code: 'ABC234',
-        role: 'receiver',
-        join_request_id: 'join_pending',
-        invite_request_id: null,
-        peer_id: null,
+        schema_version: 5,
+        session: {
+          room_code: 'ABC234',
+          role: 'receiver',
+          join_request_id: 'join_pending',
+          invite_request_id: null,
+          peer_id: null,
+        },
       }),
     )
   })
@@ -120,20 +123,23 @@ test('an invalid stored room is cleared without a navigation trap', async ({ pag
   await expect.poll(() => page.evaluate(() => window.location.pathname)).toBe('/')
   await expect(page.getByRole('heading', { name: '加入房间' })).toBeVisible()
   await expect.poll(() => page.evaluate(
-    () => window.localStorage.getItem('p2p_room_session'),
+    () => window.localStorage.getItem('p2p_room_session_v5'),
   )).toBeNull()
 })
 
 test('a valid stored room selects the restoration shell before the first paint', async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem(
-      'p2p_room_session',
+      'p2p_room_session_v5',
       JSON.stringify({
-        room_code: 'ABC234',
-        role: 'receiver',
-        join_request_id: 'join_restoring',
-        invite_request_id: null,
-        peer_id: 'peer_restoring',
+        schema_version: 5,
+        session: {
+          room_code: 'ABC234',
+          role: 'receiver',
+          join_request_id: 'join_restoring',
+          invite_request_id: null,
+          peer_id: 'peer_restoring',
+        },
       }),
     )
   })
@@ -174,7 +180,7 @@ test('the root keeps a useful anonymous lobby when WebAssembly is blocked', { ta
   await expect(shell.getByRole('button', { name: '请求加入' })).toBeDisabled()
   await expect(shell.getByRole('button', { name: '创建房间' })).toBeDisabled()
   await expect(shell.getByRole('textbox')).toHaveCount(0)
-  await expect(shell.locator('.footer-links')).toContainText('关于 P2P Transmission')
+  await expect(shell.locator('.footer-links .text-link').first()).toHaveText('关于')
   await expect(shell.locator(
     'a[href], input:not(:disabled), button:not(:disabled), [tabindex]:not([tabindex="-1"])',
   )).toHaveCount(0)
@@ -225,7 +231,7 @@ test('the installed PWA keeps the root workspace available offline', async ({ co
   }
 })
 
-test('unknown routes, removed legacy routes, and missing assets return 404', async ({ request }) => {
+test('unknown routes, removed historical routes, and missing assets return 404', async ({ request }) => {
   for (const path of [
     '/unknown-route',
     '/assets/missing.js',

@@ -494,6 +494,7 @@ mod tests {
                 version: CURRENT_PROTOCOL,
                 room_code: server.room_code.to_string(),
                 to_peer_id: "peer_owner".to_owned(),
+                negotiation_id: "neg_offer_1".to_owned(),
                 signal: Signal::Offer {
                     sdp: "v=0\r\n".to_owned(),
                 },
@@ -506,8 +507,11 @@ mod tests {
         .await;
         assert!(matches!(
             signal,
-            ServerRealtimeMessage::Signal { from_peer_id, .. }
-                if from_peer_id == "peer_receiver"
+            ServerRealtimeMessage::Signal {
+                from_peer_id,
+                negotiation_id,
+                ..
+            } if from_peer_id == "peer_receiver" && negotiation_id == "neg_offer_1"
         ));
 
         send_message(
@@ -516,6 +520,7 @@ mod tests {
                 version: CURRENT_PROTOCOL,
                 room_code: server.room_code.to_string(),
                 to_peer_id: "peer_missing".to_owned(),
+                negotiation_id: "neg_offer_2".to_owned(),
                 signal: Signal::Offer {
                     sdp: "v=0\r\n".to_owned(),
                 },
@@ -660,7 +665,7 @@ mod tests {
                     )
                     .body(Body::from(
                         json!({
-                            "version": { "major": 2, "minor": 0 },
+                            "version": { "major": 5, "minor": 0 },
                             "request_id": "join_event_1",
                             "room_code": server.room_code.to_string(),
                             "expected_revision": 4
@@ -723,7 +728,7 @@ mod tests {
                 )
                 .body(Body::from(
                     json!({
-                        "version": { "major": 2, "minor": 0 },
+                        "version": { "major": 5, "minor": 0 },
                         "request_id": "join_event_1",
                         "decision": "reject",
                         "expected_revision": 5

@@ -39,10 +39,6 @@ class DeploymentSupervisorStateTests(SupervisorTestCase):
             f'p2p-transmission-image-{OPERATION_ID}.tar.gz',
         )
         self.assertEqual(
-            paths.retired_files.name,
-            f'p2p-transmission-retired-{OPERATION_ID}.json',
-        )
-        self.assertEqual(
             paths.operation_lock.name,
             f'p2p-transmission-deploy-{OPERATION_ID}-worker.lock',
         )

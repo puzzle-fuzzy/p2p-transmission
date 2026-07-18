@@ -145,10 +145,11 @@ class ControlPlaneManifestBootstrapTests(unittest.TestCase):
     def test_stage_sudoers_requires_the_bound_control_plane_digest(self) -> None:
         sudoers = DEPLOY_SUDOERS.read_text(encoding='utf-8')
         self.assertIn(
-            'stage --archive * --image-archive * --retired-files * --version * '
+            'stage --archive * --image-archive * --version * '
             '--expected-control-plane-sha256 *',
             sudoers,
         )
+        self.assertNotIn('--retired-files', sudoers)
         self.assertNotIn('p2p-transmission-deploy stage *,', sudoers)
 
     def test_bootstrap_atomically_installs_the_read_only_module_bundle(self) -> None:
@@ -201,6 +202,11 @@ class ControlPlaneManifestBootstrapTests(unittest.TestCase):
             bootstrap,
         )
         self.assertIn('control-plane-status --expected-sha256 "$digest"', bootstrap)
+        self.assertIn('unsupported standalone control-plane entry exists', bootstrap)
+        self.assertNotIn('remove_legacy_control_plane_layout', bootstrap)
+        self.assertIn('validate_source_manifest', bootstrap)
+        self.assertIn('write_seed_source_manifest "$temporary"', bootstrap)
+        self.assertIn('existing application root has no current source manifest', bootstrap)
         acquire = bootstrap.index('  acquire_bootstrap_control_plane_lock\n')
         pending_guard = bootstrap.index(
             '  assert_no_pending_release_for_control_plane_update\n'

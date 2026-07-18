@@ -133,7 +133,11 @@ pub(super) fn format_binary_id(prefix: &str, bytes: &[u8; 16]) -> String {
 
 pub(super) fn parse_binary_id(value: &str, prefix: &str) -> Option<[u8; 16]> {
     let hex = value.strip_prefix(&format!("{prefix}_"))?;
-    if hex.len() != 32 {
+    if hex.len() != 32
+        || !hex
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
         return None;
     }
     let mut bytes = [0_u8; 16];
@@ -189,7 +193,7 @@ mod tests {
     }
 
     #[test]
-    fn binary_ids_round_trip_and_preserve_uppercase_compatibility() {
+    fn binary_ids_round_trip_and_reject_noncanonical_hex() {
         let bytes = [
             0x0a, 0xbc, 0xde, 0xf0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
         ];
@@ -198,7 +202,7 @@ mod tests {
         assert_eq!(parse_binary_id(&id, "file"), Some(bytes));
         assert_eq!(
             parse_binary_id("file_0ABCDEF00102030405060708090A0B0C", "file"),
-            Some(bytes)
+            None
         );
         assert_eq!(parse_binary_id(&id, "transfer"), None);
         assert_eq!(parse_binary_id("file_01", "file"), None);

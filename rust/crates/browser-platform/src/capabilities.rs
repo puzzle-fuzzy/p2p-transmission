@@ -1,4 +1,4 @@
-use crate::{BrowserPlatformError, NativeShareOutcome};
+use crate::BrowserPlatformError;
 
 #[cfg(target_arch = "wasm32")]
 pub async fn copy_text(value: &str) -> Result<(), BrowserPlatformError> {
@@ -107,80 +107,42 @@ pub fn send_notification(
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn native_share_supported() -> bool {
-    use wasm_bindgen::JsValue;
-
-    web_sys::window().is_some_and(|window| {
-        js_sys::Reflect::get(window.navigator().as_ref(), &JsValue::from_str("share"))
-            .is_ok_and(|value| value.is_function())
-    })
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn native_share_supported() -> bool {
-    false
-}
-
-#[cfg(target_arch = "wasm32")]
-pub async fn share_url(
-    title: &str,
-    text: &str,
-    url: &str,
-) -> Result<NativeShareOutcome, BrowserPlatformError> {
-    use wasm_bindgen::{JsCast, JsValue};
-    use wasm_bindgen_futures::JsFuture;
-
-    let window = web_sys::window().ok_or(BrowserPlatformError::MissingWindow)?;
-    let navigator = window.navigator();
-    let share = js_sys::Reflect::get(navigator.as_ref(), &JsValue::from_str("share"))
-        .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?;
-    if !share.is_function() {
-        return Ok(NativeShareOutcome::Unsupported);
-    }
-
-    let data = js_sys::Object::new();
-    for (key, value) in [("title", title), ("text", text), ("url", url)] {
-        js_sys::Reflect::set(
-            data.as_ref(),
-            &JsValue::from_str(key),
-            &JsValue::from_str(value),
-        )
-        .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?;
-    }
-    let promise = share
-        .dyn_into::<js_sys::Function>()
-        .map_err(|_| BrowserPlatformError::Browser("navigator.share is unavailable".to_owned()))?
-        .call1(navigator.as_ref(), data.as_ref())
-        .map(|value| js_sys::Promise::resolve(&value))
-        .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?;
-    match JsFuture::from(promise).await {
-        Ok(_) => Ok(NativeShareOutcome::Shared),
-        Err(error)
-            if js_sys::Reflect::get(&error, &JsValue::from_str("name"))
-                .ok()
-                .and_then(|value| value.as_string())
-                .as_deref()
-                == Some("AbortError") =>
-        {
-            Ok(NativeShareOutcome::Cancelled)
-        }
-        Err(error) => Err(BrowserPlatformError::Browser(format!("{error:?}"))),
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub async fn share_url(
-    _title: &str,
-    _text: &str,
-    _url: &str,
-) -> Result<NativeShareOutcome, BrowserPlatformError> {
-    Err(BrowserPlatformError::UnsupportedTarget)
-}
-
-#[cfg(target_arch = "wasm32")]
 pub async fn sleep_ms(milliseconds: u32) {
     gloo_timers::future::TimeoutFuture::new(milliseconds).await;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn sleep_ms(_milliseconds: u32) {}
+
+#[cfg(target_arch = "wasm32")]
+pub fn monotonic_millis() -> u64 {
+    web_sys::window()
+        .and_then(|window| window.performance())
+        .map_or_else(
+            || js_sys::Date::now().max(0.0) as u64,
+            |performance| performance.now().max(0.0) as u64,
+        )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn monotonic_millis() -> u64 {
+    use std::sync::OnceLock;
+    use std::time::Instant;
+
+    static ORIGIN: OnceLock<Instant> = OnceLock::new();
+    ORIGIN.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn epoch_millis() -> u64 {
+    js_sys::Date::now().max(0.0) as u64
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn epoch_millis() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis() as u64)
+}

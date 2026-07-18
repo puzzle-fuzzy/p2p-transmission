@@ -34,8 +34,6 @@ class ControlPlaneCliBindingTests(unittest.TestCase):
             '/tmp/p2p-transmission-' + 'b' * 40 + '.tar.gz',
             '--image-archive',
             '/tmp/p2p-transmission-image-' + 'b' * 40 + '.tar.gz',
-            '--retired-files',
-            '/tmp/p2p-transmission-retired-' + 'b' * 40 + '.json',
             '--version',
             '2.0.1-test',
             '--expected-control-plane-sha256',

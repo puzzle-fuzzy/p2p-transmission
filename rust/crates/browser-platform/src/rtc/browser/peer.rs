@@ -10,8 +10,8 @@ use web_sys::{
 };
 
 use super::super::{
-    BrowserPlatformError, RtcConfigResponse, RtcEvent, Signal, StreamPauseReason,
-    StreamingFileWriter, TransferFile, manifest::IncomingOffer,
+    BrowserPlatformError, RtcConfigLease, RtcEvent, Signal, StreamPauseReason, StreamingFileWriter,
+    TransferFile, manifest::IncomingOffer,
 };
 use crate::{
     stream_recovery::{OutgoingRecoveryRecord, StreamRecoveryRecord},
@@ -27,15 +27,18 @@ pub struct RtcPeer {
 
 pub(super) struct Inner {
     pub(super) callback: EventCallback,
-    pub(super) rtc_config: RtcConfigResponse,
+    pub(super) rtc_config: RtcConfigLease,
     pub(super) peer_connection: Option<RtcPeerConnection>,
     pub(super) data_channel: Option<RtcDataChannel>,
     pub(super) target_peer: Option<String>,
+    pub(super) negotiation_id: Option<String>,
+    pub(super) connection_epoch: u64,
     pub(super) negotiating: bool,
     pub(super) local_description_announced: bool,
+    pub(super) remote_description_pending: bool,
     pub(super) remote_description_set: bool,
     pub(super) pending_local_candidates: Vec<Signal>,
-    pub(super) pending_remote_candidates: Vec<(String, Signal)>,
+    pub(super) pending_remote_candidates: Vec<(String, String, Signal)>,
     pub(super) outgoing: Option<OutgoingState>,
     pub(super) pending_outgoing_recovery: Option<OutgoingRecoveryRecord>,
     pub(super) restoring_outgoing: bool,
@@ -150,10 +153,17 @@ impl Drop for Inner {
 
 impl RtcPeer {
     pub fn new(
-        rtc_config: RtcConfigResponse,
+        rtc_config: RtcConfigLease,
         on_event: impl FnMut(RtcEvent) + 'static,
     ) -> Result<Self, BrowserPlatformError> {
-        rtc_config.version.validate().map_err(protocol_error)?;
+        rtc_config
+            .response()
+            .version
+            .validate()
+            .map_err(protocol_error)?;
+        if !rtc_config.is_valid() {
+            return Err(BrowserPlatformError::RtcConfigExpired);
+        }
         Ok(Self {
             inner: Rc::new(RefCell::new(Inner {
                 callback: Rc::new(RefCell::new(Box::new(on_event))),
@@ -161,8 +171,11 @@ impl RtcPeer {
                 peer_connection: None,
                 data_channel: None,
                 target_peer: None,
+                negotiation_id: None,
+                connection_epoch: 0,
                 negotiating: false,
                 local_description_announced: false,
+                remote_description_pending: false,
                 remote_description_set: false,
                 pending_local_candidates: Vec::new(),
                 pending_remote_candidates: Vec::new(),
@@ -194,6 +207,24 @@ impl RtcPeer {
             .is_some_and(|channel| channel.ready_state() == RtcDataChannelState::Open)
     }
 
+    /// Replaces the ICE configuration used the next time a peer connection is constructed.
+    /// The active data channel is intentionally left untouched.
+    pub fn replace_reconnect_rtc_config(
+        &self,
+        rtc_config: RtcConfigLease,
+    ) -> Result<(), BrowserPlatformError> {
+        rtc_config
+            .response()
+            .version
+            .validate()
+            .map_err(protocol_error)?;
+        if !rtc_config.is_valid() {
+            return Err(BrowserPlatformError::RtcConfigExpired);
+        }
+        self.inner.borrow_mut().rtc_config = rtc_config;
+        Ok(())
+    }
+
     pub fn resumable_transfer_active(&self) -> bool {
         let inner = self.inner.borrow();
         inner
@@ -210,14 +241,9 @@ impl RtcPeer {
         Rc::ptr_eq(&self.inner, &other.inner)
     }
 
-    pub(super) fn current_peer_connection(
-        &self,
-    ) -> Result<RtcPeerConnection, BrowserPlatformError> {
-        self.inner
-            .borrow()
-            .peer_connection
-            .clone()
-            .ok_or_else(|| BrowserPlatformError::Browser("PeerConnection is not ready".to_owned()))
+    pub(super) fn connection_epoch_is_current(&self, connection_epoch: u64) -> bool {
+        let inner = self.inner.borrow();
+        inner.connection_epoch == connection_epoch && inner.peer_connection.is_some()
     }
 
     pub(super) fn current_data_channel(&self) -> Result<RtcDataChannel, BrowserPlatformError> {
@@ -244,9 +270,14 @@ impl RtcPeer {
             message,
         });
     }
+
+    pub(super) fn negotiation_failed(&self, message: String) {
+        self.emit(RtcEvent::NegotiationFailed { message });
+    }
 }
 
 pub(super) fn clear_peer_resources(inner: &mut Inner) {
+    inner.connection_epoch = inner.connection_epoch.wrapping_add(1);
     if let Some(channel) = inner.data_channel.take() {
         channel.set_onopen(None);
         channel.set_onmessage(None);
@@ -262,8 +293,10 @@ pub(super) fn clear_peer_resources(inner: &mut Inner) {
         peer_connection.close();
     }
     inner.target_peer = None;
+    inner.negotiation_id = None;
     inner.negotiating = false;
     inner.local_description_announced = false;
+    inner.remote_description_pending = false;
     inner.remote_description_set = false;
     inner.pending_local_candidates.clear();
     inner.pending_remote_candidates.clear();

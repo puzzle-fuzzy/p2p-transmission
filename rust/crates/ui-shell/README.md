@@ -16,7 +16,8 @@ state.
   lobby with six empty room-code cells and two disabled actions, plus a hidden
   room-restoration status that the pre-paint browser hint can select.
 - `LobbyFeedback`: supplies the reserved empty row, live status, or accessible
-  validation error without changing layout height.
+  join/create/page error without changing layout height. Action errors expose
+  `aria-describedby` only on the control that can recover from them.
 
 The client injects its interactive room-code component and footer actions as
 slots. It supplies `EventHandler<FormEvent>` and `EventHandler<MouseEvent>`
