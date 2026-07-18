@@ -622,7 +622,7 @@ PY
 
 snapshot_authorized_key_file() {
   local requested="$AUTHORIZED_KEY_FILE"
-  [[ -n "$requested" ]] || return
+  [[ -n "$requested" ]] || return 0
   TRUSTED_AUTHORIZED_KEY="$(mktemp /root/.p2p-transmission-key.XXXXXX)"
   chmod 0600 "$TRUSTED_AUTHORIZED_KEY"
   python3 -I -B -X utf8 - "$requested" "$TRUSTED_AUTHORIZED_KEY" <<'PY' || \

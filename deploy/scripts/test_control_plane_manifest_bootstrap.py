@@ -250,6 +250,7 @@ class ControlPlaneManifestBootstrapTests(unittest.TestCase):
         self.assertIn('tar --extract --file="$TRUSTED_SOURCE_ARCHIVE"', bootstrap)
         self.assertNotIn('git -C "$SOURCE_ROOT" archive', bootstrap)
         self.assertIn('snapshot_authorized_key_file', bootstrap)
+        self.assertIn('[[ -n "$requested" ]] || return 0', bootstrap)
         self.assertIn("os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)", bootstrap)
         source_snapshot = bootstrap.index('\nvalidate_trusted_source_root\n')
         key_snapshot = bootstrap.index('\nsnapshot_authorized_key_file\n')
