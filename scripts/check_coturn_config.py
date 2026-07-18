@@ -56,6 +56,9 @@ REQUIRED_DENIED_PEER_RANGES = {
     "fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
     "ff00::-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
 }
+SELF_RELAY_ALLOW_PLACEHOLDER = (
+    "# allowed-peer-ip=<TURN_PRIVATE_IP>-<TURN_PRIVATE_IP>"
+)
 FORBIDDEN_DIRECTIVES = {
     "lt-cred-mech",
     "no-dtls",
@@ -329,6 +332,17 @@ def validate_turn_config(text: str) -> list[str]:
     )
     if not placeholder_present:
         errors.append("the checked-in example must document the static-auth-secret placeholder")
+    self_relay_placeholder_present = any(
+        line.strip() == SELF_RELAY_ALLOW_PLACEHOLDER for line in text.splitlines()
+    )
+    if not self_relay_placeholder_present:
+        errors.append(
+            "the checked-in example must document the exact self-relay peer exception"
+        )
+    if "allowed-peer-ip" in directives:
+        errors.append(
+            "the checked-in example must not enable an environment-specific peer exception"
+        )
 
     denied_ranges = {
         value

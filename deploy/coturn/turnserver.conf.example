@@ -16,6 +16,10 @@ bps-capacity=125000000
 no-cli
 no-loopback-peers
 no-multicast-peers
+# Some cloud NATs translate this TURN server's own public relay candidates back
+# to its private host address. Only after confirming that exact address in the
+# coturn logs, add an exact single-host exception such as:
+# allowed-peer-ip=<TURN_PRIVATE_IP>-<TURN_PRIVATE_IP>
 no-tlsv1
 no-tlsv1_1
 cert=/run/coturn/tls/fullchain.pem

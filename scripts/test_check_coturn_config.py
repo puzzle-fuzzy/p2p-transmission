@@ -191,6 +191,23 @@ class TurnPolicyTests(unittest.TestCase):
 
         self.assertTrue(any("10.0.0.0-10.255.255.255" in error for error in errors))
 
+    def test_self_relay_exception_is_documented_but_not_enabled(self) -> None:
+        missing_placeholder = self.policy.replace(
+            check_coturn_config.SELF_RELAY_ALLOW_PLACEHOLDER,
+            "",
+            1,
+        )
+        errors = check_coturn_config.validate_turn_config(missing_placeholder)
+        self.assertTrue(any("self-relay peer exception" in error for error in errors))
+
+        active_exception = self.policy.replace(
+            check_coturn_config.SELF_RELAY_ALLOW_PLACEHOLDER,
+            "allowed-peer-ip=10.0.0.3-10.0.0.3",
+            1,
+        )
+        errors = check_coturn_config.validate_turn_config(active_exception)
+        self.assertTrue(any("environment-specific peer exception" in error for error in errors))
+
     def test_example_endpoints_must_remain_non_production_placeholders(self) -> None:
         policy = self.policy.replace("turn.example.com", "turn.real.example", 1)
 

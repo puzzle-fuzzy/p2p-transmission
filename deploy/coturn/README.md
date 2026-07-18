@@ -9,6 +9,9 @@
 - 将 TURN 域名解析到主机公网 IP。
 - 如果主机在 NAT 后，将 `TURN_EXTERNAL_IP` 写成 `公网 IP/内网 IP`；直接拥有公网
   IP 时只写公网 IP。
+- 记录 TURN 主机实际绑定的私网地址（下文记作 `TURN_PRIVATE_IP`）。部分云网络会把
+  同一 TURN 服务签发的公网 relay 候选回环为这个私网地址；是否需要例外必须以
+  coturn 日志为准，不能仅凭网段猜测。
 - 防火墙和云安全组放行 `3478/udp`、`3478/tcp`、`5349/tcp`，以及
   `49160-49259/udp`。若修改端口，环境变量、coturn 配置和防火墙必须同步。
 - 准备与 TURN 域名匹配的 TLS 完整证书链和私钥。
@@ -32,6 +35,18 @@ install -m 600 /path/to/privkey.pem deploy/coturn/.local/tls/privkey.pem
 P2P_TURN_URLS=turn:turn.example.com:3478?transport=udp,turns:turn.example.com:5349?transport=tcp
 P2P_TURN_SECRET=<随机共享密钥>
 ```
+
+如果强制中继的两个客户端都取得公网 relay 候选，但 coturn 明确记录
+`A peer IP <TURN_PRIVATE_IP> denied`，请在私密的 `.local/turnserver.conf` 中加入：
+
+```ini
+allowed-peer-ip=<TURN_PRIVATE_IP>-<TURN_PRIVATE_IP>
+```
+
+这条规则只用于允许 TURN 主机自己的云 NAT 回环地址，并会覆盖命中的私网拒绝项。
+两端必须填写同一个、已经核实属于 TURN 主机的单个地址；不得放行整个私网网段，也
+不要把环境实际地址提交到示例配置。修改后重建 coturn，并用两端都设为
+`iceTransportPolicy: relay` 的真实文件传输验证，而不能只验证 relay 候选分配。
 
 ## 3. 准备并启动
 
