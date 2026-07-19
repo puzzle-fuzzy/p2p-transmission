@@ -104,12 +104,10 @@ pub(super) fn MemberRoster(
                             }
                         }
                         small {
-                            if participant.role == ParticipantRoleWire::Owner {
-                                "发送者"
-                            } else if peer_connected {
-                                "点对点通道已连接"
+                            if participant.role == ParticipantRoleWire::Owner || peer_connected {
+                                "已连接"
                             } else {
-                                "房间已连接，正在建立通道"
+                                "正在建立通道"
                             }
                         }
                     }

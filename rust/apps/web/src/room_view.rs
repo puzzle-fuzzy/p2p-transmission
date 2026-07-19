@@ -103,11 +103,6 @@ pub(super) fn RoomView(
         .cloned()
         .collect::<Vec<_>>();
     let room_code_for_copy = snapshot.room_code.clone();
-    let role_copy = if role == RoomRole::Owner {
-        "发送者"
-    } else {
-        "接收者"
-    };
     let status_copy = match realtime {
         RealtimePhase::Connected => "房间连接已建立",
         RealtimePhase::Superseded => "已在另一个标签页接管，本页已停止重连",
@@ -160,7 +155,6 @@ pub(super) fn RoomView(
                         peer_connected,
                     }
                     span { class: "member-count", "{participant_count} 位成员" }
-                    span { class: "room-role-copy", "{role_copy}" }
                     button {
                         class: "leave-button",
                         r#type: "button",

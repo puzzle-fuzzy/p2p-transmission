@@ -190,9 +190,11 @@ test('essential flows survive forced colors and 200% text scaling', async ({
     await roomCode.focus()
     expect(await roomCode.evaluate(element => {
       const style = getComputedStyle(element)
-      return style.outlineStyle === 'none'
-        && style.borderStyle !== 'none'
+      const visibleOutline = style.outlineStyle !== 'none'
+        && Number.parseFloat(style.outlineWidth) >= 2
+      const visibleBorder = style.borderStyle !== 'none'
         && Number.parseFloat(style.borderWidth) >= 2
+      return visibleOutline || visibleBorder
     })).toBe(true)
     await expectNoHorizontalOverflow(page)
   } finally {

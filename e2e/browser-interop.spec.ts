@@ -32,19 +32,20 @@ test('Firefox and WebKit complete the buffered transfer path', async ({ browser,
   const payload = Buffer.from('cross-browser buffered transfer\n'.repeat(4096))
 
   await connectSingleReceiverRoom(owner, receiver, { readyTimeout: 20_000 })
-  const fileInput = owner.locator('#transfer-file-input')
-  for (let index = 0; index < 20; index += 1) {
-    if (await fileInput.evaluate(element => element === document.activeElement)) break
-    await owner.keyboard.press('Tab')
-  }
-  await expect(fileInput).toBeFocused()
-  const filePickerLabel = owner.locator('label[for="transfer-file-input"]')
-  expect(await filePickerLabel.evaluate(element => {
+  const filePickerButton = owner.locator('label[for="transfer-file-input"]')
+  await owner.getByRole('button', { name: /选择接收者/u }).focus()
+  await owner.keyboard.press('Tab')
+  await expect(filePickerButton).toBeFocused()
+  expect(await filePickerButton.evaluate(element => {
     const style = getComputedStyle(element)
     return style.outlineStyle !== 'none' && Number.parseFloat(style.outlineWidth) >= 2
   })).toBe(true)
 
-  await fileInput.setInputFiles({
+  const [fileChooser] = await Promise.all([
+    owner.waitForEvent('filechooser'),
+    owner.keyboard.press('Enter'),
+  ])
+  await fileChooser.setFiles({
     name: 'cross-browser.txt',
     mimeType: 'text/plain',
     buffer: payload,

@@ -68,9 +68,13 @@ button:disabled {
   border: 0;
 }
 
-.sr-only:focus-visible + .file-picker-button {
+.file-picker-button:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 3px;
+}
+
+.file-picker-input {
+  display: none;
 }
 
 .app-shell {
@@ -1901,6 +1905,13 @@ a {
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
+@media (forced-colors: active) {
+  .room-code-input:focus-visible {
+    outline: 2px solid CanvasText;
+    outline-offset: 2px;
+  }
+}
+
 .room-code-input[aria-invalid="true"] {
   border-color: var(--error);
   background: var(--error-bg);
@@ -2298,16 +2309,10 @@ a {
   color: var(--error);
 }
 
-.member-count,
-.room-role-copy {
+.member-count {
   color: var(--text-faint);
   font-size: 0.69rem;
   white-space: nowrap;
-}
-
-.room-role-copy {
-  padding-left: 9px;
-  border-left: 1px solid var(--border-faint);
 }
 
 .room-topbar-status .peer-flow {
@@ -3372,11 +3377,6 @@ a {
     justify-content: flex-end;
   }
 
-  .room-role-copy {
-    margin-right: auto;
-    padding-left: 0;
-    border-left: 0;
-  }
 }
 
 @media (max-width: 520px) {

@@ -67,7 +67,7 @@ test('two browsers can create, approve, connect, and restore a room', async ({
         __browserCapabilityState: { notificationPermissionRequests: number }
       }
     ).__browserCapabilityState.notificationPermissionRequests)).toBe(1)
-    await expect(owner.getByText('发送者', { exact: true })).toBeVisible()
+    await expect(owner.locator('.member-row').filter({ hasText: '（你）' })).toBeVisible()
     const roomCodeButton = owner.getByRole('button', { name: /复制房间码/ })
     await expect(roomCodeButton).toBeVisible()
     const roomCode = (await roomCodeButton.textContent())?.trim() ?? ''
@@ -117,8 +117,9 @@ test('two browsers can create, approve, connect, and restore a room', async ({
     await expect(requestDialog).toBeVisible()
     await requestDialog.getByRole('button', { name: '允许加入' }).click()
 
-    await expect(receiver.getByText('接收者', { exact: true })).toBeVisible()
-    await expect(ownerPeerFlow.locator('.peer-track')).toBeVisible()
+    await expect(receiver.locator('.member-row').filter({ hasText: '（你）' })).toBeVisible()
+    await expect(ownerPeerFlow.locator('.peer-track')).toHaveClass(/connected/u)
+    await expect(ownerPeerFlow.locator('.peer-track')).toBeHidden()
     await expect(ownerPeerFlow.locator('.receiver-side .avatar')).toHaveCount(1)
     const enteringAvatar = owner.locator('.avatar-entering')
     await expect(enteringAvatar).toHaveCount(1)
@@ -151,12 +152,12 @@ test('two browsers can create, approve, connect, and restore a room', async ({
     }
 
     await receiver.reload()
-    await expect(receiver.getByText('接收者', { exact: true })).toBeVisible()
+    await expect(receiver.locator('.member-row').filter({ hasText: '（你）' })).toBeVisible()
     await expect(receiver.getByRole('heading', { name: '等待对方发送' })).toBeVisible({ timeout: peerReadyTimeout })
     await expect(receiver.locator('html')).not.toHaveAttribute('data-p2p-room-restore', /.+/u)
 
     await owner.reload()
-    await expect(owner.getByText('发送者', { exact: true })).toBeVisible()
+    await expect(owner.locator('.member-row').filter({ hasText: '（你）' })).toBeVisible()
     await expect(owner.getByRole('heading', { name: '选择要发送的文件' })).toBeVisible({ timeout: peerReadyTimeout })
     await expect(owner.getByText('房间已创建，可以复制邀请链接', { exact: true })).toBeVisible()
     await expect(owner.locator('.avatar-entering')).toHaveCount(0)

@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 
 use dioxus::prelude::*;
-use p2p_browser_platform::{RtcPeer, TransferDirection, persistent_source_file_support};
+use p2p_browser_platform::{
+    RtcPeer, TransferDirection, click_element_by_id, persistent_source_file_support,
+};
 use p2p_protocol::StreamPauseReason;
 
 use super::view_model::StoragePauseRequest;
@@ -61,7 +63,7 @@ pub(super) fn TransferActionArea(
                 } else {
                     input {
                         id: "transfer-file-input",
-                        class: "sr-only",
+                        class: "file-picker-input",
                         r#type: "file",
                         multiple: true,
                         aria_label: "选择要发送的文件",
@@ -76,7 +78,23 @@ pub(super) fn TransferActionArea(
                             }
                         },
                     }
-                    label { class: "file-dropzone file-picker-button", r#for: "transfer-file-input",
+                    label {
+                        class: "file-dropzone file-picker-button",
+                        r#for: "transfer-file-input",
+                        role: "button",
+                        tabindex: "0",
+                        aria_label: "选择要发送的文件",
+                        onkeydown: move |event| match event.key() {
+                            Key::Enter => {
+                                event.prevent_default();
+                                let _ = click_element_by_id("transfer-file-input");
+                            }
+                            Key::Character(value) if value == " " => {
+                                event.prevent_default();
+                                let _ = click_element_by_id("transfer-file-input");
+                            }
+                            _ => {}
+                        },
                         span { class: "file-dropzone-icon", aria_hidden: "true",
                             svg { view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "1.5",
                                 path { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" }

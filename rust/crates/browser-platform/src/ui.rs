@@ -92,6 +92,27 @@ pub fn focus_text_input(_id: &str) -> Result<(), BrowserPlatformError> {
 }
 
 #[cfg(target_arch = "wasm32")]
+pub fn click_element_by_id(id: &str) -> Result<(), BrowserPlatformError> {
+    use wasm_bindgen::JsCast;
+
+    let element = web_sys::window()
+        .ok_or(BrowserPlatformError::MissingWindow)?
+        .document()
+        .ok_or_else(|| BrowserPlatformError::Browser("browser document is unavailable".to_owned()))?
+        .get_element_by_id(id)
+        .ok_or_else(|| BrowserPlatformError::Browser(format!("element #{id} is unavailable")))?
+        .dyn_into::<web_sys::HtmlElement>()
+        .map_err(|_| BrowserPlatformError::Browser(format!("element #{id} is not clickable")))?;
+    element.click();
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn click_element_by_id(_id: &str) -> Result<(), BrowserPlatformError> {
+    Err(BrowserPlatformError::UnsupportedTarget)
+}
+
+#[cfg(target_arch = "wasm32")]
 pub fn show_modal_dialog(id: &str) -> Result<(), BrowserPlatformError> {
     let dialog = modal_dialog(id)?;
     if !dialog.open() {
