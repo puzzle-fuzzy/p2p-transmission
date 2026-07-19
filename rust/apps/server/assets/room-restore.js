@@ -1,6 +1,22 @@
 (() => {
   const storageKey = 'p2p_room_session_v5';
   const schemaVersion = 5;
+  const appearance = [
+    ['vault-theme', 'data-theme', ['mist', 'slate', 'dusk', 'sand'], 'mist'],
+    ['vault-wallpaper', 'data-wallpaper', ['quiet', 'paper', 'plain'], 'quiet'],
+    ['vault-language', 'data-language', ['zh', 'en'], 'zh'],
+  ];
+  for (const [key, attribute, allowed, fallback] of appearance) {
+    try {
+      const value = window.localStorage.getItem(key);
+      document.documentElement.setAttribute(attribute, allowed.includes(value) ? value : fallback);
+      if (attribute === 'data-language') {
+        document.documentElement.lang = value === 'en' ? 'en' : 'zh-CN';
+      }
+    } catch {
+      document.documentElement.setAttribute(attribute, fallback);
+    }
+  }
   const exactKeys = (value, expected) => {
     const keys = Object.keys(value);
     return keys.length === expected.length && expected.every(key => keys.includes(key));

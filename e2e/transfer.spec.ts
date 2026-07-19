@@ -69,19 +69,23 @@ test('a file is transferred over the DataChannel and verified before download', 
       name: 'm6-transfer.bin 传输进度',
     })
     await expect(ownerFileProgress).toHaveAttribute('aria-valuenow', '100')
-    expect(await ownerFileProgress.evaluate(element => {
+    const ownerFilePresentation = await ownerFileProgress.evaluate(element => {
       const progressStyle = getComputedStyle(element)
       const rowStyle = getComputedStyle(element.parentElement as HTMLElement)
       return {
+        accentFaint: getComputedStyle(document.documentElement)
+          .getPropertyValue('--accent-faint')
+          .trim(),
         borderBottomWidth: rowStyle.borderBottomWidth,
         borderTopWidth: rowStyle.borderTopWidth,
         progressBackground: progressStyle.backgroundColor,
       }
-    })).toMatchObject({
-      borderBottomWidth: '0px',
-      borderTopWidth: '0px',
-      progressBackground: 'rgba(94, 17, 209, 0.22)',
     })
+    expect(ownerFilePresentation).toMatchObject({
+      borderBottomWidth: '1px',
+      borderTopWidth: '1px',
+    })
+    expect(ownerFilePresentation.progressBackground).toBe(ownerFilePresentation.accentFaint)
     await expect.poll(() => ownerFileProgress.evaluate(element => (
       getComputedStyle(element).transform
     ))).toBe('matrix(1, 0, 0, 1, 0, 0)')

@@ -30,8 +30,9 @@ pub(super) fn TransferActionArea(
             if can_offer && !active {
                 if persistent_source_file_support() {
                     button {
-                        class: "primary-button file-picker-button",
+                        class: "file-dropzone file-picker-button",
                         r#type: "button",
+                        aria_label: "选择文件",
                         onclick: {
                             let selected_peer_ids = selected_peer_ids.clone();
                             move |_| {
@@ -46,7 +47,16 @@ pub(super) fn TransferActionArea(
                                 });
                             }
                         },
-                        "选择文件"
+                        span { class: "file-dropzone-icon", aria_hidden: "true",
+                            svg { view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "1.5",
+                                path { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" }
+                                path { d: "m17 8-5-5-5 5" }
+                                path { d: "M12 3v12" }
+                            }
+                        }
+                        strong { "选择要发送的文件" }
+                        span { "点击选择文件；支持批量传输" }
+                        small { "文件只通过点对点加密通道发送" }
                     }
                 } else {
                     input {
@@ -66,8 +76,17 @@ pub(super) fn TransferActionArea(
                             }
                         },
                     }
-                    label { class: "primary-button file-picker-button", r#for: "transfer-file-input",
-                        "选择文件"
+                    label { class: "file-dropzone file-picker-button", r#for: "transfer-file-input",
+                        span { class: "file-dropzone-icon", aria_hidden: "true",
+                            svg { view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "1.5",
+                                path { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" }
+                                path { d: "m17 8-5-5-5 5" }
+                                path { d: "M12 3v12" }
+                            }
+                        }
+                        strong { "选择要发送的文件" }
+                        span { "点击选择文件；支持批量传输" }
+                        small { "文件只通过点对点加密通道发送" }
                     }
                 }
             }

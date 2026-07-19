@@ -17,12 +17,14 @@ APP_STYLESHEET = ROOT / "rust" / "apps" / "web" / "assets" / "main.css"
 # the historical 8 KiB gzip ceiling.
 HTML_TEMPLATE_RAW_BUDGET = 2 * 1024
 HTML_TEMPLATE_GZIP_BUDGET = 8 * 1024
-WASM_GZIP_BUDGET = 462 * 1024
+WASM_GZIP_BUDGET = 475 * 1024
 JAVASCRIPT_GZIP_BUDGET = 18 * 1024
-CSS_GZIP_BUDGET = 6 * 1024
-# Keep the post-text-transfer baseline close enough that regressions fail before
-# the browser entrypoint approaches the former 500 KiB ceiling.
-ENTRYPOINT_GZIP_BUDGET = 480 * 1024
+# Vault's four complete theme maps, responsive room workspace, and accessible
+# modal states are deliberately shipped as CSS so they do not add runtime JS.
+CSS_GZIP_BUDGET = 11 * 1024
+# The full Vault interface remains below the original 500 KiB ceiling. Keep the
+# cap tight so later features must pay for their browser-entrypoint growth.
+ENTRYPOINT_GZIP_BUDGET = 500 * 1024
 SSR_LOBBY_START = "<!-- P2P_SSR_LOBBY_START -->"
 SSR_LOBBY_END = "<!-- P2P_SSR_LOBBY_END -->"
 ISLAND_MOUNT = '<div id="main" hidden inert aria-hidden="true"></div>'

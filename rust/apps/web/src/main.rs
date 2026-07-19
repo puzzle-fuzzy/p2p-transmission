@@ -5,10 +5,12 @@ use p2p_browser_platform::{
     RealtimeConnection, RealtimeEvent, RtcPeer, activate_app_mount, mark_app_interactive,
 };
 use p2p_protocol::RoomBootstrapResponse;
+use p2p_ui_shell::VaultShell;
 
 mod about;
 mod app_bootstrap;
 mod app_state;
+mod appearance;
 mod browser_errors;
 mod browser_lifecycle;
 mod icons;
@@ -35,9 +37,10 @@ mod transfer_panel;
 mod transfer_presentation;
 mod waiting_room;
 
-use about::AboutDialog;
+use about::{AboutDialog, FooterLinks};
 use app_bootstrap::initialize;
 use app_state::{AppModel, Screen};
+use appearance::{Appearance, AppearanceDialog};
 use browser_lifecycle::{sync_lifecycle_recovery_target, use_browser_lifecycle};
 use lobby::LobbyView;
 use realtime_connection::{RealtimeLease, use_realtime_connection};
@@ -86,6 +89,8 @@ fn main() {
 #[allow(non_snake_case)]
 fn App() -> Element {
     let model = use_signal(AppModel::default);
+    let appearance = use_signal(Appearance::load);
+    let mut appearance_open = use_signal(|| false);
     let realtime_target = use_signal(|| None::<RealtimeTarget>);
     let connection = use_signal(|| None::<RealtimeConnection>);
     let realtime_connection = RealtimeConnectionRuntime {
@@ -151,24 +156,28 @@ fn App() -> Element {
     use_rtc_config_session(realtime_runtime);
 
     let (route, about_open, _) = *app_shell.read();
+    let card_class = match route {
+        AppRoute::Booting => "vault-card",
+        AppRoute::Lobby => "vault-card vault-card-lobby",
+        AppRoute::Waiting => "vault-card vault-card-waiting",
+        AppRoute::Room => "vault-card vault-card-room",
+    };
     rsx! {
-        match route {
-            AppRoute::Booting => rsx! {},
-            AppRoute::Lobby => rsx! { LobbyView { model, realtime_target } },
-            AppRoute::Waiting => rsx! {
-                div { class: "app-shell",
-                    main { class: "lobby",
-                        WaitingView { model, realtime_target }
-                    }
+        if route != AppRoute::Booting {
+            VaultShell {
+                card_class: card_class.to_owned(),
+                on_preferences: move |_| appearance_open.set(true),
+                footer: rsx! { FooterLinks { model } },
+                content: match route {
+                    AppRoute::Booting => rsx! {},
+                    AppRoute::Lobby => rsx! { LobbyView { model, realtime_target } },
+                    AppRoute::Waiting => rsx! { WaitingView { model, realtime_target } },
+                    AppRoute::Room => rsx! { RoomView { model, realtime_target, rtc_peers } },
                 }
-            },
-            AppRoute::Room => rsx! {
-                div { class: "app-shell",
-                    main { class: "workspace",
-                        RoomView { model, realtime_target, rtc_peers }
-                    }
-                }
-            },
+            }
+        }
+        if appearance_open() {
+            AppearanceDialog { appearance, open: appearance_open }
         }
         if about_open {
             AboutDialog { model }

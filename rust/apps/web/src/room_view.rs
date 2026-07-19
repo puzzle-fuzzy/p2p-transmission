@@ -1,16 +1,20 @@
 use std::collections::BTreeMap;
 
 use dioxus::prelude::*;
-use p2p_browser_platform::{RtcPeer, copy_text, leave_room, new_client_id};
+use p2p_browser_platform::{
+    RtcPeer, close_modal_dialog, copy_text, leave_room, new_client_id, show_modal_dialog,
+};
 use p2p_protocol::{
     CreateInviteResponse, ParticipantRoleWire, ParticipantSnapshot, RoomBootstrapResponse,
 };
 
-use crate::app_state::{AppModel, RealtimePhase, RoomRole, RtcPhase, Screen};
+use crate::app_state::{
+    AppModel, RealtimePhase, RoomRole, RtcPhase, Screen, TextTransferState, TransferState,
+};
 use crate::browser_errors::friendly_error;
 use crate::icons::{UiIcon, UiIconKind};
 use crate::join_request::JoinRequestDialog;
-use crate::participant_presence::PeerFlow;
+use crate::participant_presence::{MemberRoster, PeerFlow};
 use crate::realtime_session::return_to_lobby;
 use crate::realtime_target::{RealtimeTarget, RealtimeTargetScope};
 use crate::share_dialog::ShareDialog;
@@ -27,6 +31,14 @@ struct RoomShellState {
     notice: Option<String>,
     error: Option<String>,
     entering_receivers: Vec<String>,
+    current_session_id: Option<String>,
+    activity: Vec<RoomActivityItem>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RoomActivityItem {
+    tone: &'static str,
+    message: String,
 }
 
 #[derive(Clone)]
@@ -56,6 +68,7 @@ pub(super) fn RoomView(
     rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
 ) -> Element {
     let mut share_open = use_signal(|| false);
+    let mut leave_open = use_signal(|| false);
     let shell_state = use_memo(move || {
         let state = model.read();
         room_shell_state(&state)
@@ -73,6 +86,8 @@ pub(super) fn RoomView(
         notice,
         error,
         entering_receivers,
+        current_session_id,
+        activity,
     } = state;
     let sender = snapshot
         .participants
@@ -100,81 +115,120 @@ pub(super) fn RoomView(
         RealtimePhase::Connecting => "正在连接房间",
         RealtimePhase::Disconnected => "房间连接已断开",
     };
+    let participant_count = snapshot
+        .participants
+        .iter()
+        .filter(|participant| participant.online)
+        .count();
 
     rsx! {
-        section { class: "room-view", aria_label: "房间状态",
-            header { class: "room-header",
-                div {
-                    div { class: "room-label-row",
-                        span { "房间码" }
-                        span { class: "room-expiry", "临时房间" }
+        section { class: "room-view vault-panel panel-motion-forward", aria_label: "房间状态",
+            header { class: "room-topbar",
+                div { class: "room-topbar-primary",
+                    span { class: "room-display-name", "Transfer Room" }
+                    button {
+                        class: "room-code-copy",
+                        r#type: "button",
+                        aria_label: "复制房间码 {snapshot.room_code}",
+                        title: "复制房间码",
+                        onclick: move |_| {
+                            let value = room_code_for_copy.clone();
+                            spawn(async move {
+                                if copy_text(&value).await.is_ok() {
+                                    model.write().notice = Some("房间码已复制".to_owned());
+                                }
+                            });
+                        },
+                        "{snapshot.room_code}"
                     }
-                    div { class: "room-code-row",
+                    if role == RoomRole::Owner && invite.is_some() {
                         button {
-                            class: "room-code-copy",
+                            class: "icon-button",
                             r#type: "button",
-                            aria_label: "复制房间码 {snapshot.room_code}",
-                            title: "复制房间码",
-                            onclick: move |_| {
-                                let value = room_code_for_copy.clone();
-                                spawn(async move {
-                                    if copy_text(&value).await.is_ok() {
-                                        model.write().notice = Some("房间码已复制".to_owned());
-                                    }
-                                });
-                            },
-                            "{snapshot.room_code}"
-                        }
-                        if role == RoomRole::Owner && invite.is_some() {
-                            button {
-                                class: "icon-button",
-                                r#type: "button",
-                                aria_label: "分享房间",
-                                title: "分享房间",
-                                onclick: move |_| share_open.set(true),
-                                UiIcon { kind: UiIconKind::Share2 }
-                            }
+                            aria_label: "分享房间",
+                            title: "分享房间",
+                            onclick: move |_| share_open.set(true),
+                            UiIcon { kind: UiIconKind::Share2 }
                         }
                     }
                 }
-                div { class: "room-role",
-                    div {
-                        span { "{role_copy}" }
-                        strong {
-                            role: "status",
-                            aria_live: "polite",
-                            aria_atomic: "true",
-                            "{status_copy}"
-                        }
+                div { class: "room-topbar-status",
+                    PeerFlow {
+                        sender,
+                        receivers: receivers.clone(),
+                        entering_receivers: entering_receivers.clone(),
+                        peer_connected,
                     }
+                    span { class: "member-count", "{participant_count} 位成员" }
+                    span { class: "room-role-copy", "{role_copy}" }
                     button {
                         class: "leave-button",
                         r#type: "button",
                         aria_label: "退出房间",
                         title: "退出房间",
                         disabled: busy,
-                        onclick: move |_| submit_leave(model, realtime_target),
+                        onclick: move |_| leave_open.set(true),
                         UiIcon { kind: UiIconKind::LogOut }
+                        span { if busy { "正在退出" } else { "离开" } }
                     }
                 }
             }
-            PeerFlow {
-                sender,
-                receivers: receivers.clone(),
-                entering_receivers,
-                peer_connected,
-            }
-            RoomTransferPanel {
-                model,
-                rtc_peers,
-                role,
-                receivers: receivers.clone(),
-            }
-            if let Some(notice) = notice {
-                p { class: "room-notice", role: "status", "{notice}" }
-            }
-            if let Some(error) = error {
-                p { class: "inline-error", role: "alert", "{error}" }
+            div { class: "room-grid",
+                section { class: "room-transfer-column", aria_label: "传输工作区",
+                    div { class: "room-section-label",
+                        span { aria_hidden: "true" }
+                        strong { "文件传输" }
+                    }
+                    RoomTransferPanel {
+                        model,
+                        rtc_peers,
+                        role,
+                        receivers: receivers.clone(),
+                    }
+                    if let Some(notice) = notice {
+                        p { class: "room-notice", role: "status", "{notice}" }
+                    }
+                    if let Some(error) = error {
+                        p { class: "inline-error", role: "alert", "{error}" }
+                    }
+                }
+                aside { class: "room-sidebar", aria_label: "房间成员与活动",
+                    section { class: "member-section", aria_label: "在线成员 {participant_count}",
+                        h2 { class: "room-section-label",
+                            span { aria_hidden: "true" }
+                            strong { "在线成员 · {participant_count}" }
+                        }
+                        MemberRoster {
+                            participants: snapshot.participants.clone(),
+                            current_session_id,
+                            entering_receivers,
+                            peer_connected,
+                        }
+                    }
+                    details { class: "activity-log",
+                        summary {
+                            "活动记录"
+                            svg { view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2", "aria-hidden": "true",
+                                path { d: "m6 9 6 6 6-6" }
+                            }
+                        }
+                        ol {
+                            for item in activity {
+                                li {
+                                    span { class: "activity-mark {item.tone}", aria_hidden: "true" }
+                                    p { "{item.message}" }
+                                }
+                            }
+                        }
+                    }
+                    p {
+                        class: "room-connection-copy",
+                        role: "status",
+                        aria_live: "polite",
+                        aria_atomic: "true",
+                        "{status_copy}"
+                    }
+                }
             }
             if share_open()
                 && let Some(invite) = invite
@@ -196,8 +250,69 @@ pub(super) fn RoomView(
                     request: request.clone(),
                 }
             }
+            if leave_open() {
+                LeaveRoomDialog {
+                    busy,
+                    open: leave_open,
+                    on_confirm: move |_| {
+                        leave_open.set(false);
+                        submit_leave(model, realtime_target);
+                    },
+                }
+            }
         }
     }
+}
+
+#[component]
+fn LeaveRoomDialog(busy: bool, mut open: Signal<bool>, on_confirm: EventHandler<()>) -> Element {
+    use_effect(move || {
+        let _ = show_modal_dialog("leave-room-dialog");
+    });
+
+    rsx! {
+        dialog {
+            id: "leave-room-dialog",
+            class: "leave-room-dialog",
+            aria_labelledby: "leave-room-title",
+            oncancel: move |event| {
+                event.prevent_default();
+                close_leave_dialog(open);
+            },
+            div { class: "leave-dialog-icon", aria_hidden: "true",
+                UiIcon { kind: UiIconKind::LogOut }
+            }
+            p { class: "eyebrow", "End session" }
+            h2 { id: "leave-room-title", "离开这个房间？" }
+            p { class: "leave-dialog-copy",
+                "离开后会结束当前设备上的连接与传输；已完成的下载不受影响。"
+            }
+            div { class: "dialog-actions",
+                button {
+                    class: "secondary-button",
+                    r#type: "button",
+                    disabled: busy,
+                    onclick: move |_| close_leave_dialog(open),
+                    "继续留在房间"
+                }
+                button {
+                    class: "primary-button leave-confirm-button",
+                    r#type: "button",
+                    disabled: busy,
+                    onclick: move |_| {
+                        let _ = close_modal_dialog("leave-room-dialog");
+                        on_confirm.call(());
+                    },
+                    if busy { "正在退出" } else { "确认离开" }
+                }
+            }
+        }
+    }
+}
+
+fn close_leave_dialog(mut open: Signal<bool>) {
+    let _ = close_modal_dialog("leave-room-dialog");
+    open.set(false);
 }
 
 #[component]
@@ -278,7 +393,93 @@ fn room_shell_state(state: &AppModel) -> Option<RoomShellState> {
         notice: state.notice.clone(),
         error: state.error.clone(),
         entering_receivers: state.entering_receivers.clone(),
+        current_session_id: state
+            .session
+            .as_ref()
+            .map(|session| session.session_id.clone()),
+        activity: room_activity(state),
     })
+}
+
+fn room_activity(state: &AppModel) -> Vec<RoomActivityItem> {
+    let mut activity = vec![RoomActivityItem {
+        tone: if state.realtime == RealtimePhase::Connected {
+            "ready"
+        } else {
+            "pending"
+        },
+        message: match state.realtime {
+            RealtimePhase::Connected => "加密房间连接已建立".to_owned(),
+            RealtimePhase::Reconnecting => "房间连接中断，正在恢复".to_owned(),
+            RealtimePhase::Superseded => "房间已在另一个标签页接管".to_owned(),
+            RealtimePhase::Connecting => "正在连接房间".to_owned(),
+            RealtimePhase::Disconnected => "房间连接已断开".to_owned(),
+        },
+    }];
+
+    activity.push(RoomActivityItem {
+        tone: if state.rtc_aggregate_phase == RtcPhase::Ready {
+            "ready"
+        } else {
+            "pending"
+        },
+        message: match state.rtc_aggregate_phase {
+            RtcPhase::Ready => "点对点数据通道已就绪".to_owned(),
+            RtcPhase::Connecting => "正在协商点对点数据通道".to_owned(),
+            RtcPhase::WaitingPeer => "等待其他成员建立数据通道".to_owned(),
+            RtcPhase::Failed => "数据通道建立失败，可以稍后重试".to_owned(),
+            RtcPhase::Disconnected => "数据通道已断开".to_owned(),
+            RtcPhase::Inactive => "等待成员加入房间".to_owned(),
+        },
+    });
+
+    if let Some(message) = transfer_activity(&state.transfer) {
+        activity.push(message);
+    }
+    if let Some(message) = text_activity(&state.text_transfer) {
+        activity.push(message);
+    }
+    activity
+}
+
+fn transfer_activity(transfer: &TransferState) -> Option<RoomActivityItem> {
+    let (tone, message) = match transfer {
+        TransferState::Idle => return None,
+        TransferState::Offering { files, .. } => (
+            "pending",
+            format!("已发起 {} 个文件的传输请求", files.len().max(1)),
+        ),
+        TransferState::OutgoingRecovery { .. } => ("pending", "正在恢复文件发送".to_owned()),
+        TransferState::Incoming { files, .. } => (
+            "pending",
+            format!("收到 {} 个文件的传输请求", files.len().max(1)),
+        ),
+        TransferState::Active { .. } => ("active", "文件正在通过加密通道传输".to_owned()),
+        TransferState::Rejected { .. } => ("muted", "文件传输请求已拒绝".to_owned()),
+        TransferState::Completed { .. } => ("ready", "文件传输与完整性校验已完成".to_owned()),
+        TransferState::Cancelled { .. } => ("muted", "文件传输已取消".to_owned()),
+        TransferState::Failed { message, .. } => ("error", format!("文件传输失败：{message}")),
+    };
+    Some(RoomActivityItem { tone, message })
+}
+
+fn text_activity(transfer: &TextTransferState) -> Option<RoomActivityItem> {
+    let (tone, message) = match transfer {
+        TextTransferState::Idle => return None,
+        TextTransferState::Offering { .. } | TextTransferState::Incoming { .. } => {
+            ("pending", "文本传输正在等待确认".to_owned())
+        }
+        TextTransferState::Sending { .. } | TextTransferState::Receiving { .. } => {
+            ("active", "文本正在通过加密通道传输".to_owned())
+        }
+        TextTransferState::Delivered { .. } | TextTransferState::Received { .. } => {
+            ("ready", "文本已送达".to_owned())
+        }
+        TextTransferState::Rejected { .. } => ("muted", "文本传输请求已拒绝".to_owned()),
+        TextTransferState::Cancelled => ("muted", "文本传输已取消".to_owned()),
+        TextTransferState::Failed { message } => ("error", format!("文本传输失败：{message}")),
+    };
+    Some(RoomActivityItem { tone, message })
 }
 
 fn submit_leave(mut model: Signal<AppModel>, realtime_target: Signal<Option<RealtimeTarget>>) {

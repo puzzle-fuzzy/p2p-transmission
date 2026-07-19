@@ -1,6 +1,55 @@
 use crate::BrowserPlatformError;
 
 #[cfg(target_arch = "wasm32")]
+pub fn load_ui_preference(key: &str) -> Result<Option<String>, BrowserPlatformError> {
+    web_sys::window()
+        .ok_or(BrowserPlatformError::MissingWindow)?
+        .local_storage()
+        .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?
+        .ok_or_else(|| BrowserPlatformError::Browser("localStorage is unavailable".to_owned()))?
+        .get_item(key)
+        .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn load_ui_preference(_key: &str) -> Result<Option<String>, BrowserPlatformError> {
+    Err(BrowserPlatformError::UnsupportedTarget)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn save_ui_preference(key: &str, value: &str) -> Result<(), BrowserPlatformError> {
+    web_sys::window()
+        .ok_or(BrowserPlatformError::MissingWindow)?
+        .local_storage()
+        .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?
+        .ok_or_else(|| BrowserPlatformError::Browser("localStorage is unavailable".to_owned()))?
+        .set_item(key, value)
+        .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn save_ui_preference(_key: &str, _value: &str) -> Result<(), BrowserPlatformError> {
+    Err(BrowserPlatformError::UnsupportedTarget)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn set_document_attribute(name: &str, value: &str) -> Result<(), BrowserPlatformError> {
+    web_sys::window()
+        .ok_or(BrowserPlatformError::MissingWindow)?
+        .document()
+        .ok_or_else(|| BrowserPlatformError::Browser("browser document is unavailable".to_owned()))?
+        .document_element()
+        .ok_or_else(|| BrowserPlatformError::Browser("document root is unavailable".to_owned()))?
+        .set_attribute(name, value)
+        .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn set_document_attribute(_name: &str, _value: &str) -> Result<(), BrowserPlatformError> {
+    Err(BrowserPlatformError::UnsupportedTarget)
+}
+
+#[cfg(target_arch = "wasm32")]
 thread_local! {
     static APP_INTERACTIVE_SCHEDULED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }

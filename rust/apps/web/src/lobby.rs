@@ -1,10 +1,9 @@
 use dioxus::prelude::*;
 use p2p_browser_platform::prime_notification_permission;
 use p2p_ui_shell::{
-    CREATE_ROOM_LABEL, JOIN_REQUEST_LABEL, LobbyFeedback, LobbyShell, ROOM_CODE_LENGTH,
+    CREATE_ROOM_LABEL, JOIN_REQUEST_LABEL, LobbyFeedback, LobbyPanel, ROOM_CODE_LENGTH,
 };
 
-use crate::about::FooterLinks;
 use crate::app_state::{AppModel, LobbyActionError, Screen};
 use crate::realtime_target::RealtimeTarget;
 use crate::room_code_input::RoomCodeInput;
@@ -43,7 +42,7 @@ pub(super) fn LobbyView(
     };
 
     rsx! {
-        LobbyShell {
+        LobbyPanel {
             room_code: rsx! {
                 RoomCodeInput {
                     value: room_code,
@@ -64,7 +63,6 @@ pub(super) fn LobbyView(
                     }
                 }
             },
-            footer: rsx! { FooterLinks { model } },
             feedback,
             invite_ready: invite_capability.is_some(),
             primary_label: primary_label.to_owned(),

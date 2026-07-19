@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use p2p_protocol::ParticipantSnapshot;
+use p2p_protocol::{ParticipantRoleWire, ParticipantSnapshot};
 
 const MAX_VISIBLE_RECEIVER_AVATARS: usize = 3;
 
@@ -62,6 +62,64 @@ pub(super) fn PeerFlow(
                             title: "另有 {hidden_receiver_count} 位接收者",
                             "+{hidden_receiver_count}"
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+pub(super) fn MemberRoster(
+    participants: Vec<ParticipantSnapshot>,
+    current_session_id: Option<String>,
+    entering_receivers: Vec<String>,
+    peer_connected: bool,
+) -> Element {
+    rsx! {
+        div { class: "member-roster", role: "list", aria_label: "在线成员",
+            for participant in participants.iter().filter(|participant| participant.online) {
+                div {
+                    key: "{participant.session_id}",
+                    class: if entering_receivers.contains(&participant.session_id) {
+                        "member-row member-row-entering"
+                    } else {
+                        "member-row"
+                    },
+                    role: "listitem",
+                    span { class: "member-avatar",
+                        Avatar {
+                            seed: participant.session_id.clone(),
+                            label: participant.display_name.clone(),
+                            entering: false,
+                            highlighted: false,
+                        }
+                    }
+                    span { class: "member-copy",
+                        strong {
+                            title: "{participant.display_name}",
+                            "{participant.display_name}"
+                            if current_session_id.as_deref() == Some(participant.session_id.as_str()) {
+                                em { "（你）" }
+                            }
+                        }
+                        small {
+                            if participant.role == ParticipantRoleWire::Owner {
+                                "发送者"
+                            } else if peer_connected {
+                                "点对点通道已连接"
+                            } else {
+                                "房间已连接，正在建立通道"
+                            }
+                        }
+                    }
+                    span {
+                        class: if peer_connected || participant.role == ParticipantRoleWire::Owner {
+                            "member-status ready"
+                        } else {
+                            "member-status pending"
+                        },
+                        aria_hidden: "true"
                     }
                 }
             }

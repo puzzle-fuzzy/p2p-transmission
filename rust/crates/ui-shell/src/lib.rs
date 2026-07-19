@@ -7,8 +7,10 @@
 use dioxus::prelude::*;
 
 pub const ROOM_CODE_LENGTH: usize = 6;
+pub const BRAND_TITLE: &str = "Vault";
+pub const BRAND_TAGLINE: &str = "Secure Peer-to-Peer File Transfer";
 pub const LOBBY_TITLE: &str = "加入房间";
-pub const LOBBY_JOIN_COPY: &str = "输入发送者提供的 6 位房间码，或直接打开邀请链接";
+pub const LOBBY_JOIN_COPY: &str = "输入 6 位验证码，建立端到端加密连接。";
 pub const INVITE_READY_COPY: &str = "已读取邀请链接，确认后加入房间";
 pub const INITIALIZING_COPY: &str = "正在初始化安全会话，稍候即可使用";
 pub const RESTORING_ROOM_COPY: &str = "正在恢复上次房间，请稍候";
@@ -18,6 +20,90 @@ pub const ABOUT_LABEL: &str = "关于";
 pub const GITHUB_LABEL: &str = "GitHub";
 pub const PRIVACY_COPY: &str = "文件和文本正文通过加密的 WebRTC 通道传输，优先尝试设备直连，必要时经加密中继转发；应用服务器只协调连接，不保存传输内容。接收完成的文件会暂存在当前页面中，关闭结果或退出房间后释放。";
 pub const NOSCRIPT_COPY: &str = "传输工作区需要浏览器启用 JavaScript 和 WebAssembly。";
+
+#[component]
+pub fn VaultShell(
+    content: Element,
+    footer: Element,
+    #[props(default = "vault-card".to_owned())] card_class: String,
+    #[props(default)] preferences_disabled: bool,
+    #[props(default)] on_preferences: EventHandler<MouseEvent>,
+) -> Element {
+    rsx! {
+        div { class: "app-shell",
+            div { class: "vault-room",
+                header { class: "vault-header",
+                    button {
+                        class: "vault-brand-trigger",
+                        r#type: "button",
+                        disabled: preferences_disabled,
+                        aria_label: "打开界面设置",
+                        aria_haspopup: "dialog",
+                        onclick: move |event| {
+                            if !preferences_disabled {
+                                on_preferences.call(event);
+                            }
+                        },
+                        {BRAND_TITLE}
+                    }
+                    p { class: "vault-tagline", {BRAND_TAGLINE} }
+                    span { class: "vault-header-line", aria_hidden: "true" }
+                }
+                main { class: "{card_class}", {content} }
+                footer { class: "vault-footer",
+                    VaultFeatureList {}
+                    div { class: "vault-footer-meta",
+                        span { class: "vault-footer-line", aria_hidden: "true" }
+                        p {
+                            "Files never touch our servers · Privacy by design"
+                        }
+                        p { class: "sr-only", {PRIVACY_COPY} }
+                        div { class: "footer-links", {footer} }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn VaultFeatureList() -> Element {
+    rsx! {
+        ul { class: "vault-features", aria_label: "产品特性",
+            li {
+                title: "端到端加密，文件内容只在传输双方之间可读。",
+                svg { view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2", "aria-hidden": "true",
+                    rect { x: "3", y: "11", width: "18", height: "11", rx: "2" }
+                    path { d: "M7 11V7a5 5 0 0 1 10 0v4" }
+                }
+                span { "E2E Encrypted" }
+            }
+            li {
+                title: "传输正文不会落盘，也不会保存在应用服务器上。",
+                svg { view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2", "aria-hidden": "true",
+                    path { d: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" }
+                }
+                span { "Zero Storage" }
+            }
+            li {
+                title: "支持不同设备与操作系统之间的浏览器传输。",
+                svg { view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2", "aria-hidden": "true",
+                    circle { cx: "12", cy: "12", r: "10" }
+                    line { x1: "2", y1: "12", x2: "22", y2: "12" }
+                    path { d: "M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" }
+                }
+                span { "Cross-Platform" }
+            }
+            li {
+                title: "按需传输文件与文本，不占用云端存储空间。",
+                svg { view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2", "aria-hidden": "true",
+                    path { d: "M13 2 3 14h9l-1 8 10-12h-9l1-8z" }
+                }
+                span { "No Cloud Limits" }
+            }
+        }
+    }
+}
 
 /// Stable feedback content rendered in the lobby's reserved message row.
 ///
@@ -74,6 +160,40 @@ pub fn LobbyShell(
     #[props(default)] on_submit: EventHandler<FormEvent>,
     #[props(default)] on_create: EventHandler<MouseEvent>,
 ) -> Element {
+    rsx! {
+        VaultShell {
+            footer,
+            preferences_disabled: true,
+            card_class: "vault-card vault-card-lobby".to_owned(),
+            content: rsx! {
+                LobbyPanel {
+                    room_code,
+                    feedback,
+                    invite_ready,
+                    primary_label,
+                    primary_disabled,
+                    secondary_label,
+                    secondary_disabled,
+                    on_submit,
+                    on_create,
+                }
+            }
+        }
+    }
+}
+
+#[component]
+pub fn LobbyPanel(
+    room_code: Element,
+    #[props(default)] feedback: LobbyFeedback,
+    #[props(default)] invite_ready: bool,
+    #[props(default = JOIN_REQUEST_LABEL.to_owned())] primary_label: String,
+    #[props(default)] primary_disabled: bool,
+    #[props(default = CREATE_ROOM_LABEL.to_owned())] secondary_label: String,
+    #[props(default)] secondary_disabled: bool,
+    #[props(default)] on_submit: EventHandler<FormEvent>,
+    #[props(default)] on_create: EventHandler<MouseEvent>,
+) -> Element {
     let (primary_description, secondary_description) = match &feedback {
         LobbyFeedback::JoinError(_) => (Some("room-code-error"), None),
         LobbyFeedback::CreateError(_) => (None, Some("create-room-error")),
@@ -81,64 +201,65 @@ pub fn LobbyShell(
     };
 
     rsx! {
-        div {
-            class: "app-shell",
-            main { class: "lobby",
-                form {
-                    class: "lobby-panel",
-                    aria_labelledby: "join-title",
-                    onsubmit: move |event| {
-                        event.prevent_default();
-                        if !primary_disabled {
-                            on_submit.call(event);
+        section { class: "lobby-panel vault-panel panel-motion-back", aria_label: "创建或加入房间",
+            form {
+                class: "lobby-action-card join-card",
+                aria_labelledby: "join-title",
+                onsubmit: move |event| {
+                    event.prevent_default();
+                    if !primary_disabled {
+                        on_submit.call(event);
+                    }
+                },
+                h1 { id: "join-title", {LOBBY_TITLE} }
+                div { class: "lobby-guidance",
+                    p {
+                        class: if invite_ready { "join-copy invite-copy-spacer" } else { "join-copy" },
+                        aria_hidden: invite_ready.then_some("true"),
+                        {LOBBY_JOIN_COPY}
+                    }
+                    if invite_ready {
+                        div { class: "invite-notice", role: "status",
+                            span { class: "invite-mark", aria_hidden: "true", "✓" }
+                            span { {INVITE_READY_COPY} }
                         }
-                    },
-                    h1 { id: "join-title", {LOBBY_TITLE} }
-                    div { class: "lobby-guidance",
-                        p {
-                            class: if invite_ready { "join-copy invite-copy-spacer" } else { "join-copy" },
-                            aria_hidden: invite_ready.then_some("true"),
-                            {LOBBY_JOIN_COPY}
-                        }
-                        if invite_ready {
-                            div { class: "invite-notice", role: "status",
-                                span { class: "invite-mark", aria_hidden: "true", "✓" }
-                                span { {INVITE_READY_COPY} }
-                            }
-                        }
-                    }
-                    div { class: "room-code-control", {room_code} }
-                    LobbyFeedbackRow { feedback }
-                    button {
-                        class: "primary-button",
-                        r#type: "submit",
-                        disabled: primary_disabled,
-                        aria_describedby: primary_description,
-                        {primary_label}
-                    }
-                    div { class: "divider", aria_hidden: "true",
-                        span {}
-                        strong { "或" }
-                        span {}
-                    }
-                    button {
-                        class: "secondary-button",
-                        r#type: "button",
-                        disabled: secondary_disabled,
-                        aria_describedby: secondary_description,
-                        onclick: move |event| {
-                            if !secondary_disabled {
-                                on_create.call(event);
-                            }
-                        },
-                        {secondary_label}
-                    }
-                    p { class: "privacy-copy", {PRIVACY_COPY} }
-                    div { class: "footer-links", {footer} }
-                    noscript {
-                        p { class: "boot-noscript", role: "alert", {NOSCRIPT_COPY} }
                     }
                 }
+                div { class: "room-code-control", {room_code} }
+                LobbyJoinFeedbackRow { feedback: feedback.clone() }
+                button {
+                    class: "primary-button",
+                    r#type: "submit",
+                    disabled: primary_disabled,
+                    aria_describedby: primary_description,
+                    {primary_label}
+                }
+            }
+            div { class: "lobby-divider", aria_hidden: "true",
+                span {}
+                strong { "或" }
+                span {}
+            }
+            section { class: "lobby-action-card create-card", aria_labelledby: "create-title",
+                h2 { id: "create-title", "创建传输房间" }
+                p { class: "join-copy", "生成加密房间，将验证码分享给对方即可传输。" }
+                div { class: "create-room-spacer", aria_hidden: "true" }
+                LobbyCreateFeedbackRow { feedback }
+                button {
+                    class: "primary-button",
+                    r#type: "button",
+                    disabled: secondary_disabled,
+                    aria_describedby: secondary_description,
+                    onclick: move |event| {
+                        if !secondary_disabled {
+                            on_create.call(event);
+                        }
+                    },
+                    {secondary_label}
+                }
+            }
+            noscript {
+                p { class: "boot-noscript", role: "alert", {NOSCRIPT_COPY} }
             }
         }
     }
@@ -177,7 +298,7 @@ pub fn initializing_lobby_element() -> Element {
 }
 
 #[component]
-fn LobbyFeedbackRow(feedback: LobbyFeedback) -> Element {
+fn LobbyJoinFeedbackRow(feedback: LobbyFeedback) -> Element {
     match feedback {
         LobbyFeedback::Empty => rsx! {
             div { id: "lobby-feedback", class: "form-message", aria_live: "polite" }
@@ -197,15 +318,30 @@ fn LobbyFeedbackRow(feedback: LobbyFeedback) -> Element {
                 p { id: "room-code-error", role: "alert", {message} }
             }
         },
-        LobbyFeedback::CreateError(message) => rsx! {
-            div { id: "lobby-feedback", class: "form-message",
-                p { id: "create-room-error", role: "alert", {message} }
-            }
+        LobbyFeedback::CreateError(_) => rsx! {
+            div { id: "lobby-feedback", class: "form-message", aria_live: "polite" }
         },
         LobbyFeedback::Error(message) => rsx! {
             div { id: "lobby-feedback", class: "form-message",
                 p { id: "lobby-error", role: "alert", {message} }
             }
+        },
+    }
+}
+
+#[component]
+fn LobbyCreateFeedbackRow(feedback: LobbyFeedback) -> Element {
+    match feedback {
+        LobbyFeedback::CreateError(message) => rsx! {
+            div { id: "create-feedback", class: "form-message",
+                p { id: "create-room-error", role: "alert", {message} }
+            }
+        },
+        LobbyFeedback::Empty
+        | LobbyFeedback::Status(_)
+        | LobbyFeedback::JoinError(_)
+        | LobbyFeedback::Error(_) => rsx! {
+            div { id: "create-feedback", class: "form-message", aria_live: "polite" }
         },
     }
 }
@@ -270,7 +406,7 @@ mod tests {
             html.matches("boot-room-code-cell").count(),
             ROOM_CODE_LENGTH
         );
-        assert_eq!(html.matches(" disabled").count(), 2);
+        assert_eq!(html.matches(" disabled").count(), 3);
         assert!(!html.contains("<input"));
         assert!(!html.contains("<a"));
         assert!(!html.contains("tabindex"));

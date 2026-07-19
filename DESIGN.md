@@ -1,194 +1,125 @@
 ---
-name: P2P Transmission
-description: 快速、极简、可靠的 P2P 文件传输工具
+name: Vault
+description: 安静、可信、跨设备的端到端加密文件与文本传输空间
 colors:
-  primary: "#5e11d1"
-  bg: "#2d2d2d"
-  surface-elevated: "rgba(255,255,255,0.05)"
-  ink: "rgba(255,255,255,0.8)"
-  ink-muted: "rgba(255,255,255,0.56)"
-  ink-muted-elevated: "rgba(255,255,255,0.60)"
-  ink-dim: "rgba(255,255,255,0.2)"
-  border: "rgba(255,251,235,0.15)"
-  control-border: "rgba(255,251,235,0.36)"
-  border-dashed: "rgba(255,251,235,0.15)"
+  mist-accent: "#687f73"
+  slate-accent: "#668095"
+  dusk-accent: "#91acaa"
+  sand-accent: "#988b73"
+  surface: "rgba(255,255,255,0.72)"
+  surface-dark: "rgba(39,43,46,0.86)"
 typography:
-  body:
-    fontFamily: "system-ui, -apple-system, sans-serif"
-    fontSize: "14px"
-    fontWeight: 400
-    lineHeight: 1.5
-  label:
-    fontFamily: "system-ui, -apple-system, sans-serif"
-    fontSize: "12px"
-    fontWeight: 400
-  mono:
-    fontFamily: "ui-monospace, SFMono-Regular, monospace"
-    fontSize: "20px"
-    fontWeight: 400
+  display: "Georgia, 'Times New Roman', serif"
+  body: "'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif"
+  mono: "'Cascadia Mono', Consolas, monospace"
 rounded:
-  sm: "8px"
-  md: "12px"
-spacing:
-  xs: "4px"
-  sm: "8px"
-  md: "12px"
-  lg: "16px"
-  xl: "24px"
-  xxl: "32px"
-components:
-  button-primary:
-    backgroundColor: "{colors.primary}"
-    textColor: "{colors.ink}"
-    rounded: "{rounded.md}"
-    padding: "12px 64px"
-  button-ghost:
-    backgroundColor: "transparent"
-    textColor: "{colors.ink-muted}"
-    rounded: "{rounded.md}"
-    padding: "12px 64px"
-  tab-active:
-    backgroundColor: "rgba(255,255,255,0.10)"
-    textColor: "{colors.ink}"
-    rounded: "{rounded.sm}"
-    padding: "10px 16px"
-  tab-inactive:
-    backgroundColor: "transparent"
-    textColor: "{colors.ink-dim}"
-    rounded: "{rounded.sm}"
-    padding: "10px 16px"
-  input-field:
-    backgroundColor: "transparent"
-    borderColor: "{colors.control-border}"
-    textColor: "{colors.ink}"
-    rounded: "{rounded.md}"
-    padding: "16px"
+  control: "8px"
+  surface: "14px"
+motion:
+  fast: "160ms"
+  panel: "480ms cubic-bezier(0.22, 1, 0.36, 1)"
 ---
-<!-- SEED: 当前产品仅提供深色主题。浅色模式不是当前承诺，仅作为未来可选方向评估。 -->
 
-# Design System: P2P Transmission
+# Design System: Vault
 
-## 1. Overview
+## 1. Creative North Star
 
-**Creative North Star: "The Dark Workshop"**
+**Quiet confidence.** Vault 是一间安静、可靠的临时传输室，而不是功能密集的网盘。界面用大量留白、克制的玻璃表面、衬线标题和细密的状态反馈，让“房间、成员、传输”三件事一眼可见。
 
-一个专注于传东西的工具——没有账户、没有云存储、没有多余步骤。设计系统从"工作台"的隐喻出发：深色背景让前方的内容成为视觉焦点，紫色信号点明正在发生的连接和传输。每个界面只有一个核心操作，控件退后，信息前进。
+产品承诺保持不变：不要求账户，正文不会写入应用服务器；房间只负责连接双方，文件与文本经 WebRTC 加密通道传输。原型中的假成员、随机进度和模拟活动不得进入生产实现。
 
-页面的气质是"工具式的克制"：平坦、不堆叠、不炫技。圆角微乎其微（12px 封顶），阴影不出现，层次通过透明度的微妙变化来区分。用户看到的不是设计，而是传输任务本身。
+## 2. Theme Architecture
 
-**Key Characteristics:**
-- 深色背景 + 单色阶调，不做多色分层
-- 无阴影，无毛玻璃，无渐变
-- 内容居中的单栏布局，视口即是容器
-- 间距规整，以 4px 为步进基数的对称尺度
-- 所有交互反馈仅通过颜色和透明度的变化表达
+界面提供四套等价主题，并通过语义变量保持组件结构一致：
 
-## 2. Colors
+- **Mist**：雾白背景与鼠尾草绿，默认主题；温和、可信。
+- **Slate**：冷灰蓝，强调工具感和清晰度。
+- **Dusk**：深炭黑表面与低饱和青灰，高对比暗色主题。
+- **Sand**：暖米白与灰褐色，适合更柔和的阅读环境。
 
-深色底 + 紫色信号 + 白色半透明阶调，构成三层的色彩体系。
+每套主题支持三种背景气氛：Quiet 柔光、Paper 纸雾、Plain 纯色。主题和壁纸只改变语义 token，不改变布局。偏好写入浏览器本地存储，并在首屏脚本中提前应用，避免闪烁。
 
-### Primary
+主要语义 token：
 
-- **Signal Purple** (`#5e11d1`): 信号色。用在按钮填充、输入框聚焦边框、进度指示、完成标记。在深色背景上它是唯一有彩色，因此它的出现本身就传达"交互正在发生"或"操作可执行"。
-
-### Neutral
-
-- **Charcoal** (`#2d2d2d`): 主背景色。全页的画布色，无纹理无渐变。
-- **Surface Elevated** (`rgba(255,255,255,0.05)`): 浅浮层底色。用于 Tab 背景、文件行、按钮悬浮时极淡的提亮。与背景的区分刚刚好能感知。
-- **Tab Active** (`rgba(255,255,255,0.10)`): Tab 选中态的底色，比表面层略亮一级。
-- **Ink** (`rgba(255,255,255,0.80)`): 正文颜色。标题、输入文本、按钮文字。
-- **Ink Muted** (`rgba(255,255,255,0.56)`): 次要文字。文件描述、日志内容、辅助提示。
-- **Ink Muted Elevated** (`rgba(255,255,255,0.60)`): 仅用于 5% 浅浮层中的次要小字，避免透明背景叠加后低于 WCAG AA 文本对比度。
-- **Ink Dim** (`rgba(255,255,255,0.20)`): 禁用和装饰文字。分割线文字、占位符、时间戳。
-- **Border** (`rgba(255,251,235,0.15)`): 结构描边色。分割线、按钮轮廓和非必要边界。
-- **Control Border** (`rgba(255,251,235,0.36)`): 输入控件的默认可见边界；在 Charcoal 上达到至少 3:1，满足 WCAG 2.2 AA 非文本对比度。
-
-### Named Rules
-
-**The One Color Rule.** Signal Purple 是唯一的彩色，只出现在交互元素（按钮、聚焦、进度、完成标记）上。它的稀有度就是它的意义。不要将它用在纯装饰元素上。
-
-**The Opacity Scale Rule.** 层次不靠阴影，靠白色叠加的透明度阶梯：5% → 10% → 15% → 56% → 80%。每跳对应一个语义角色。输入控件边界使用 36% 作为非文本对比度例外；Signal Purple 的进度/选中表面使用 22%；5% 浮层中的次要小字使用 60% 的无彩色可访问性例外，确保背景叠加后仍满足 WCAG AA。
+- `--bg` / `--bg-secondary`：页面基底与环境光。
+- `--glass-surface` / `--surface-solid`：主卡片与模态框表面。
+- `--text-primary` / `--text-muted` / `--text-faint`：三层文字层级。
+- `--accent` / `--accent-faint`：主要操作、在线状态与选择反馈。
+- `--border` / `--border-faint`：控件边界与结构分隔。
+- `--shadow` / `--scrim`：浮层深度与模态遮罩。
 
 ## 3. Typography
 
-**Body Font:** system-ui, -apple-system, sans-serif
-**Mono Font:** ui-monospace, SFMono-Regular, monospace（仅验证码输入）
+- **Brand / display**：Georgia 或 Times New Roman。用于 VAULT 标识、房间标题与主要面板标题，字重 600，保持文学性但不装饰化。
+- **Product UI**：Segoe UI / Microsoft YaHei / system-ui。用于正文、按钮、状态和操作说明。
+- **Code**：Cascadia Mono / Consolas。仅用于六位房间码和需要逐位对齐的短标识。
+- 品牌标识使用大写与较宽字距；正文不使用全大写。
+- 正文最小 12px；核心操作文字 14px；标题 20–24px。长说明保持 1.65–1.75 行高。
 
-**Character:** 一套无衬线走到底。不需要字体堆叠来表现个性——字重和字号对比承担全部层级工作。正文 14px、标签 12px，步进克制，不追求戏剧化。
+## 4. Layout
 
-### Hierarchy
+### Shared Shell
 
-- **Body** (400, 14px, 1.5): 默认正文。按钮文字、Tab 标签、文件名称。
-- **Label** (400, 12px): 辅助信息。日志内容、文件大小、字数统计、分割线文字。
-- **Mono** (400, 20px): 仅用于验证码 6 位输入框。等宽保证数字对齐。
-- **Button** (400, 14px, `0.05em` letter-spacing): 按钮文字。小写字母 + 微小字距，克制而不松散。
+所有非启动页面共享同一结构：品牌头部、单一玻璃卡片、产品能力列表、隐私说明和页脚链接。桌面内容宽度上限为 960px；移动端使用 16px 页面边距。
 
-### Named Rules
+### Lobby
 
-**The Flat Hierarchy Rule.** 不使用超出 16px 的正文或小于 12px 的标签。字号梯度只有 12 → 14 → 20（等宽）三级。不引入 display / headline 等大字号层级——这个系统不需要。
+桌面为等宽双栏：左侧输入六位房间码，右侧创建房间。中线只承担结构分隔。移动端改为单列，并用带“或”的横向分隔符说明两个入口互斥。
 
-## 4. Elevation
+### Room
 
-该设计系统是**纯平**的。没有任何 `box-shadow`、`drop-shadow`、或模糊叠加。
+房间卡片由两部分组成：
 
-深度通过透明度的阶梯来表达：背景（0%）→ 表面层（5% 白色）→ Tab 选中（10% 白色）→ 描边（15%）。这个序列覆盖了全部层次需求。如果某个元素需要"浮起"，提亮其表面层的透明度即可，不要加阴影。
+1. 顶部状态栏：房间码、分享、点对点连接状态、在线人数、角色、离开。
+2. 工作区：主传输列 + 300px 成员与活动列。小屏幕下改为单列，成员区位于传输区之后。
 
-### Named Rules
-
-**The Flat-By-Default Rule.** 所有表面在静止状态下都是平的。没有任何元素自带阴影。阴影的出现永远是错误。
+成员和活动必须来自当前权威快照、WebRTC 状态和真实传输状态。离开房间必须二次确认。
 
 ## 5. Components
 
+### Verification Code
+
+六个独立输入格，支持逐位输入、粘贴分发、自动前进与无障碍名称。焦点使用 `--accent` 轮廓；错误同时提供文字，不只依赖颜色。
+
 ### Buttons
 
-- **Shape:** 轻微圆角 (12px)。无阴影，无边框（填充态）。文字小写 + 0.05em 字距。
-- **Primary（Signal Purple 填充）:** `bg: #5e11d1` `text: rgba(255,255,255,0.9)` `padding: 12px 64px`。hover 时 `brightness(1.1)`，active 时 `brightness(0.9)`。色彩变化是唯一的反馈。
-- **Ghost（描边）:** `bg: transparent` `border: 1px solid rgba(255,251,235,0.15)` `text: rgba(255,255,255,0.5)`。hover 时背景变为 `rgba(255,255,255,0.05)`，文字提亮。
+- Primary：实色 `--accent`，高对比文字，8px 圆角。
+- Secondary：透明或浅表面，1px 语义边框。
+- Icon button：最小 40×40px 点击区域，必须提供可见 tooltip 或 `aria-label`。
+- 禁用态保留清晰轮廓，不允许只靠低透明度消失。
 
-### Tabs
+### File Selection
 
-- **Shape:** 8px 圆角的药丸容器（容器本身 12px 圆角）。
-- **Container:** 白色 5% 透明度为底，`p-1` (4px) 内边距。
-- **Active Tab:** `bg: rgba(255,255,255,0.10)` `text: rgba(255,255,255,0.80)`。
-- **Inactive Tab:** `bg: transparent` `text: rgba(255,255,255,0.40)`，hover 提亮。
-- 无底部指示条，无图标。激活态靠背景色区分。
+文件入口使用大面积虚线区域表达“选择文件”，但仍调用项目已有的持久文件选择器，保留批量选择、恢复和大文件直接写盘能力。不要伪装成浏览器不支持的拖放能力。
 
-### Inputs / Fields
+### Member Roster and Activity
 
-- **Style:** 透明背景 + 1px 可见控件描边 ( `rgba(255,251,235,0.36)` )，12px 圆角。
-- **Textarea:** 同输入框风格，内边距 16px，右下角字数统计。
-- **Focus:** 描边切换至 Signal Purple (`#5e11d1`)。无发光、无偏移、无动画外的额外反馈。
-- **Verification Code（六位）:** 六个独立等宽输入框，每个 `w-12 h-14`，`font-mono` (20px)，居中文字。支持粘贴分发和自动跳格。
+成员头像沿用确定性 identicon；明确标出“你”、发送者/接收者和在线状态。活动记录以真实连接、协商、传输、校验结果生成，不写入虚构时间线。
 
-### File Drop Zone
+### Dialogs
 
-- **Shape:** 12px 圆角容器，2px 虚线描边 (`rgba(255,251,235,0.15)`)。无文件时为居中上传提示，有文件时顶部排列。
-- **File Item:** 8px 圆角行，白色 5% 透明度底。选中后点击"传输"，行内背景以 Signal Purple 22% 透明度从左向右填充表示进度，并同时显示文字状态。完成后文件图标变为紫色对勾。
-- **"添加更多文件"** 底部居中，以 `+` 图标 + 文字呈现。
+外观、分享、加入审批、接收请求、离开确认都使用原生 `dialog`。打开时聚焦，Escape 可关闭非破坏性流程；危险或中断性操作需明确确认文案。
 
-### Log Entries
+## 6. Motion
 
-- **Style:** 纯文本，无背景无容器。时间戳 + 消息体平铺，两列布局。
-- **Timestamp:** 12px，`tabular-nums`，ink-dim (20%) 透明度。
-- **Message:** 12px，ink-muted (56%) 透明度。
-- **Pending Indicator:** 消息以 `…` 结尾时，右侧显示旋转圆环（12px SVG，1s 周期线性旋转，颜色同 ink-muted）。
+- 页面/面板进入：轻微纵向位移与透明度变化，480ms，使用平滑减速曲线。
+- 按钮与卡片 hover：160–220ms，只改变颜色、边界、阴影或 1px 位移。
+- 在线状态与新成员：短促淡入或脉冲，不能持续抢夺注意力。
+- 所有动画在 `prefers-reduced-motion: reduce` 下关闭或缩短为近即时反馈。
+- 不使用滚动劫持、循环装饰动画或假传输进度。
 
-## 6. Do's and Don'ts
+## 7. Responsive and Accessibility
 
-### Do:
+- 800px 以下将双栏布局折叠为单列；520px 以下压缩房间顶部状态并让操作自然换行。
+- 触摸目标不小于 40×40px；键盘焦点必须清晰可见。
+- 所有主题的正文、控件边界和状态色都应满足 WCAG 2.2 AA。
+- 状态变化用 `role=status` / `aria-live`；错误用 `role=alert`。
+- 不用图标独自表达关键动作；“离开”等高影响操作同时显示文字。
 
-- **Do** 使用 Signal Purple 作为唯一的交互色——按钮填充、焦点边框、进度条、完成对勾。
-- **Do** 使用透明度阶梯（5% / 10% / 15% / 56% / 80%）区分层次；仅为非文本对比度使用 36% 控件边界、为进度/选中表面使用 22% Signal Purple，不要用阴影或渐变。
-- **Do** 保持 12px 圆角上限：大容器、按钮、输入框用 12px，内部元素（Tab、文件行）用 8px。
-- **Do** 让每个页面只有一个核心操作。Tab 选中态靠背景色区分，不需要底部指示条。
-- **Do** 使用 CSS 变量维护深色体系的语义一致性。浅色映射仅在未来需求明确后补充，不属于当前实现要求。
+## 8. Product Boundaries
 
-### Don't:
-
-- **Don't** 使用赛博朋克风格：霓虹色、故障效果、暗黑过载背景。
-- **Don't** 花里胡哨：装饰性元素、不必要的动画、过度设计。
-- **Don't** 像 Telegram 那样：功能密集的侧栏、多层导航、视觉过载。
-- **Don't** 制造复杂：不到三步能完成的操作，不要做成配置向导。
-- **Don't** 使用阴影——任何 `box-shadow` 或 `drop-shadow` 都是错误。
-- **Don't** 使用边框以外的装饰手法：`border-left` 色条、`background-clip: text` 渐变文字、`backdrop-filter` 毛玻璃。
-- **Don't** 引入第二个有彩色。Signal Purple 是唯一的主色，不使用次级/三级色。
+- Do：保持创建/加入两条最短路径；把连接、成员、传输状态放在同一视野；让隐私承诺可见。
+- Do：复用现有会话恢复、多人接收、文件批次、文本传输和 BLAKE3 校验能力。
+- Don't：引入账户、云端文件库、营销导航或多层配置向导。
+- Don't：为了贴近视觉原型而削弱 Origin 校验、邀请能力、服务端权限或持久文件句柄策略。
+- Don't：使用随机成员、随机日志、模拟进度或会误导用户的拖放文案。

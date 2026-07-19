@@ -43,8 +43,8 @@ pub use stream_storage::{
     streaming_batch_storage_supported, streaming_storage_support,
 };
 pub use ui::{
-    activate_app_mount, close_modal_dialog, focus_text_input, mark_app_interactive,
-    show_modal_dialog,
+    activate_app_mount, close_modal_dialog, focus_text_input, load_ui_preference,
+    mark_app_interactive, save_ui_preference, set_document_attribute, show_modal_dialog,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
