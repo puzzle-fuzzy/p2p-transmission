@@ -6,7 +6,9 @@
 
 ## 1. 新服务器准备
 
-服务器需要 Docker Engine、Compose plugin、Nginx、Python 3、OpenSSH server、`sudo`、可用的 HTTPS 证书和 coturn。不要让自动发布账户加入 `sudo`、`docker` 或其他特权组。
+服务器需要 Docker Engine、Compose plugin、Nginx、Python 3、OpenSSH server、`sudo`、
+`age`、`rclone`、可用的 HTTPS 证书和 coturn。不要让自动发布账户加入 `sudo`、`docker`
+或其他特权组。`rclone` 必须由 root 预先配置到独立账户或独立地域的对象存储。
 
 先从可信工作站把**已核对 commit、没有 tracked 修改**的仓库 checkout 放到服务器临时目录，并单独准备一把只用于 GitHub Production environment 的 Ed25519 公钥。通过云厂商控制台中的 root 会话执行：
 
@@ -46,7 +48,20 @@ scp -o BatchMode=yes /tmp/p2p-bootstrap-probe p2p-deploy@YOUR_VERIFIED_HOST:/tmp
 
 部署 key 仍然拥有替换应用镜像和读取/改写应用数据的发布权限，必须按生产高权限 secret 保护；但它不能更新固定控制面，也不能改变经控制面 SHA-256 许可的 Compose/Nginx 宿主机配置。每当稳定入口、`deploy_control_plane` 任一模块、Compose 或 Nginx 配置发生变化，先从待发布 commit 的可信 checkout 在云控制台重新运行 bootstrap。bootstrap 先写入同时包含入口与全部模块的 root-owned/只读版本目录，再只原子切换一次 `current` 指针；若存在 `deploy/production/rollback/pending.json`，必须先 finalize 或 rollback，bootstrap 会在同一全局锁内拒绝跨发布切换控制面。Production workflow 会核对入口与所有模块的排序 SHA 清单摘要，把同一摘要持久化到 supervisor operation state 并传给固定 `stage` wrapper。finalize 前还会重新核对 `main` commit 和主机控制面摘要；任一处不匹配都会安全停止并进入回滚，不会从 release archive 替换控制面或回滚旧 pending。
 
-首次 bootstrap 只会创建带占位符的 `.env`。编辑 `/opt/p2p-transmission/deploy/production/.env`，填写正式域名、TURN 地址、TURN 共享密钥和随机能力密钥。不要把 `.env`、SQLite、证书、SSH 私钥或 coturn 本地配置提交到 Git。第一次启用自动发布前，需要在 `/opt/p2p-transmission` 以目标 commit 手工构建并启动一个健康基线；发布脚本需要当前镜像、Compose、Nginx 和数据库备份点作为可回滚的 pre-image。
+首次 bootstrap 只会创建带占位符的 `.env`。编辑 `/opt/p2p-transmission/deploy/production/.env`，填写正式域名、TURN 地址、TURN 共享密钥、随机能力密钥，以及 `P2P_OFFSITE_BACKUP_*` 三项。用 `age-keygen` 生成专用身份文件并保持 root-owned `0600`，把公开 recipient 写入 `.env`；把命名 rclone remote 配到独立故障域，并在对象存储侧设置至少 30 天生命周期。不要把 `.env`、age 私钥、rclone 配置、SQLite、证书、SSH 私钥或 coturn 本地配置提交到 Git。第一次启用自动发布前，需要在 `/opt/p2p-transmission` 以目标 commit 手工构建并启动一个健康基线；发布脚本需要当前镜像、Compose、Nginx 和数据库备份点作为可回滚的 pre-image。
+
+示例（remote 名称和存储路径按实际供应商调整）：
+
+```bash
+sudo install -d -o root -g root -m 0700 /root/.config/p2p-transmission
+sudo sh -c 'umask 077; age-keygen -o /root/.config/p2p-transmission/backup.agekey'
+sudo chmod 0600 /root/.config/p2p-transmission/backup.agekey
+sudo rclone config
+sudo rclone lsd s3:
+```
+
+age 私钥必须另存一份到不依赖当前主机和同一云账户的受控密钥保管位置；否则主机整体损坏时，
+远端密文也无法恢复。
 
 安全组至少需要管理用 TCP `22`、公网 TCP `80/443`、TURN TCP/UDP `3478`、TURN TLS TCP `5349` 以及 coturn relay UDP 端口范围。确认 DNS 已指向服务器后再申请证书。
 
@@ -112,16 +127,19 @@ python3 -c "import base64,pathlib; print(base64.b64encode(pathlib.Path('p2p-prod
 
 ## 4. 定时生产健康检查
 
-`Production health` workflow 每 6 小时运行，也支持人工触发。它与发布 workflow 复用同一个 `production` environment 和四个 `TENCENT_*` secrets，但不部署代码：
+`Production health` workflow 每 2 小时运行，也支持人工触发。它与发布 workflow 复用同一个 `production` environment 和四个 `TENCENT_*` secrets，但不部署代码：
 
 - 公网 job 用两个隔离 Chromium context 走真实 WSS 和默认 ICE 完成小文件传输，再用 production API 下发的短期 TURN 凭据强制 `relay` 完成同样传输；失败时保留 7 天 Playwright diagnostics。
-- 主机 job 通过同一个固定 wrapper 的无参数 `maintenance` 子命令检查本机 ready/release identity 与仅监听本机的内部指标；它按新建/复用备份的实际峰值计算空间，并在每个文件系统额外保留 2 GiB。最新 SQLite backup 缺失或已满 20 小时时创建在线备份，再把最新备份恢复到一次性数据库，执行 `quick_check` 和回滚写入演练。
+- 主机 job 通过同一个固定 wrapper 的无参数 `maintenance` 子命令检查本机 ready/release identity 与仅监听本机的内部指标；它按新建/复用备份的实际峰值计算空间，并在每个文件系统额外保留 2 GiB。最新 SQLite backup 缺失或已满 20 小时时创建在线备份，先执行本地恢复演练，再用 age 加密上传到配置的 rclone remote；随后从远端实际下载密文，校验 SHA-256，使用 root-only 身份解密，并再次执行 `quick_check` 和回滚写入演练。
 
 主机 maintenance 与 production 发布共用 concurrency group，不会和 stage/finalize/rollback 并发。它不会改生产主库；restore drill 只写 `backups` 下的临时数据库并在结束时清理。Nginx 会让公网 `/internal/metrics` 返回 404，指标只供宿主机维护或受控采集使用。定时 workflow 失败属于生产告警；仓库管理员需要开启 Actions 失败通知或接入现有告警渠道，先保留 artifact 和主机日志，再判断是公网 WSS/TURN、磁盘/备份还是 runtime identity 问题。
 
 ## 5. 备份、更新和回滚
 
-自动发布每次最多保留 10 份已校验的 SQLite 备份。手工备份可以使用：
+自动发布每次最多保留 10 份已校验的 SQLite 备份。定时 maintenance 对每个最新备份只上传
+一次不可变 age 密文，并在每次运行时重新从远端下载、验密和恢复演练；`.offsite-state.json`
+只记录远端对象名、大小和哈希，不包含密钥。对象存储的生命周期/版本保留由远端策略负责。
+手工备份可以使用：
 
 ```bash
 mkdir -p deploy/production/backups
@@ -137,7 +155,9 @@ docker compose --env-file deploy/production/.env -f deploy/production/compose.ym
 
 正式回滚优先使用自动部署脚本保留的上一个镜像。若数据库结构发生不可逆变化，必须同时恢复对应发布前的 SQLite 备份，再启动旧镜像。
 
-本机最近 10 份备份只能应对发布回滚，不能应对主机或云盘整体损坏。生产环境还需要把已校验的一致性备份加密复制到独立账户或独立地域的对象存储，并定期从该副本执行同样的换机恢复演练；目标存储、保留周期和加密密钥属于运营配置，不应硬编码进仓库。
+本机最近 10 份备份只能应对发布回滚，不能应对主机或云盘整体损坏。上述自动远端往返演练
+覆盖了密文可下载、可解密和数据库可恢复，但仍不能替代真实换机演练；至少每季度应在隔离新主机
+按下述流程恢复一次，并记录 RPO、RTO、使用的远端对象和演练结论。
 
 ### 灾备换机
 
@@ -155,4 +175,7 @@ docker compose --env-file deploy/production/.env -f deploy/production/compose.ym
 
 - 当前部署是单实例；SQLite 和进程内 WebSocket 路由不支持直接横向扩展。
 - 2 核 2G 仅适合小规模 beta，TURN 中继会消耗带宽并产生费用。
+- 默认运营门槛为同时 200 条活跃 WebSocket、累计至少 100 个 HTTP 请求后 5xx 比例不超过
+  1%；maintenance 超过门槛即失败告警。调整 `P2P_MAX_ACTIVE_WEBSOCKETS` 或
+  `P2P_MAX_5XX_RATIO_BPS` 前必须先完成压测和容量复核，不能用调大阈值掩盖过载。
 - 应持续监控 ready 状态、5xx、WebSocket 断开、TURN 分配量、出口流量、磁盘空间和备份可恢复性。

@@ -5,6 +5,26 @@ use super::{RtcEvent, RtcPeer, TransferDirection, summarize_transfer_files};
 impl RtcPeer {
     pub(super) fn handle_control(&self, message: ControlMessage) {
         match message {
+            ControlMessage::TextOffer {
+                transfer_id,
+                character_count,
+                byte_length,
+                ..
+            } => self.handle_text_offer(transfer_id, character_count, byte_length),
+            ControlMessage::TextDecision {
+                transfer_id,
+                accepted,
+                ..
+            } => self.handle_text_decision(transfer_id, accepted),
+            ControlMessage::TextPayload {
+                transfer_id, text, ..
+            } => self.handle_text_payload(transfer_id, text),
+            ControlMessage::TextReceipt { transfer_id, .. } => {
+                self.handle_text_receipt(transfer_id);
+            }
+            ControlMessage::TextCancel { transfer_id, .. } => {
+                self.handle_text_cancel(transfer_id);
+            }
             ControlMessage::Manifest {
                 transfer_id,
                 mode,

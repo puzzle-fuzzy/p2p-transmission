@@ -4,4 +4,4 @@ mod manifest;
 mod reconnect;
 
 use manifest::active_transfer_id;
-pub(super) use manifest::prepare_outgoing;
+pub(super) use manifest::{prepare_outgoing, random_binary_id};

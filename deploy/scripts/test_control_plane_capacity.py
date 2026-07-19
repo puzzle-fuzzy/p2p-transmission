@@ -215,6 +215,11 @@ class ControlPlaneCapacityTests(unittest.TestCase):
                     recent,
                     create_backup=False,
                 )
+                offsite = capacity.maintenance_disk_demands(
+                    recent,
+                    create_backup=False,
+                    offsite_backup=True,
+                )
 
             self.assertEqual(sum(item.working_bytes for item in creating), 246)
             self.assertEqual(
@@ -222,6 +227,25 @@ class ControlPlaneCapacityTests(unittest.TestCase):
                 {'database backup', 'database restore drill'},
             )
             self.assertEqual(reusing[0].working_bytes, 57)
+            self.assertEqual(sum(item.working_bytes for item in offsite), 57 * 4)
+
+    def test_runtime_capacity_enforces_websocket_and_http_error_limits(self) -> None:
+        metrics = {
+            'p2p_websocket_connections_active': 40,
+            'p2p_http_requests_total': 1_000,
+            'p2p_http_responses_5xx_total': 5,
+        }
+        status = capacity.require_runtime_capacity(metrics, {})
+        self.assertEqual(status['http_5xx_ratio_bps'], 50)
+        self.assertEqual(status['max_active_websockets'], 200)
+
+        overloaded = {**metrics, 'p2p_websocket_connections_active': 201}
+        with self.assertRaisesRegex(SystemExit, 'WebSockets exceed'):
+            capacity.require_runtime_capacity(overloaded, {})
+
+        unhealthy = {**metrics, 'p2p_http_responses_5xx_total': 11}
+        with self.assertRaisesRegex(SystemExit, '5xx ratio exceeds'):
+            capacity.require_runtime_capacity(unhealthy, {})
 
 
 if __name__ == '__main__':

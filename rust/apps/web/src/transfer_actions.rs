@@ -7,7 +7,7 @@ use p2p_browser_platform::{
 };
 use p2p_protocol::CancelReason;
 
-use crate::app_state::{AppModel, RoomRole, TransferLinkState, TransferState};
+use crate::app_state::{AppModel, RoomRole, TextTransferState, TransferLinkState, TransferState};
 use crate::browser_errors::friendly_transfer_error;
 use crate::rtc_orchestration::reconnect_paused_transfer;
 use crate::transfer_presentation::transfer_is_active;
@@ -87,6 +87,28 @@ impl TransferActions {
         offered
     }
 
+    pub(super) fn submit_text(self, peer_ids: Vec<String>, text: String) -> Vec<String> {
+        self.clear_error();
+        let peers = self.rtc_peers.read();
+        let mut offered = Vec::new();
+        let mut last_error = None;
+        for peer_id in peer_ids {
+            let Some(peer) = peers.get(&peer_id) else {
+                last_error = Some("有接收者的点对点连接已经断开".to_owned());
+                continue;
+            };
+            match peer.offer_text(text.clone()) {
+                Ok(_) => offered.push(peer_id),
+                Err(error) => last_error = Some(friendly_transfer_error(&error)),
+            }
+        }
+        drop(peers);
+        if let Some(error) = last_error {
+            self.set_error(error);
+        }
+        offered
+    }
+
     pub(super) async fn submit_persistent_source_files(self, peer_ids: Vec<String>) -> Vec<String> {
         self.clear_error();
         let files = match choose_persistent_source_files().await {
@@ -152,6 +174,44 @@ impl TransferActions {
         };
         if let Err(error) = peer.decide_transfer(transfer_id, accepted) {
             self.set_error(friendly_transfer_error(&error));
+        }
+    }
+
+    pub(super) fn decide_incoming_text(self, peer_id: &str, transfer_id: &str, accepted: bool) {
+        self.clear_error();
+        let Some(peer) = self.rtc_peers.read().get(peer_id).cloned() else {
+            self.set_error("点对点连接已经断开".to_owned());
+            return;
+        };
+        if let Err(error) = peer.decide_text(transfer_id, accepted) {
+            self.set_error(friendly_transfer_error(&error));
+        }
+    }
+
+    pub(super) fn cancel_text_transfers(self, peer_ids: Vec<String>) {
+        self.clear_error();
+        let peers = {
+            let peers = self.rtc_peers.read();
+            peer_ids
+                .into_iter()
+                .filter_map(|peer_id| peers.get(&peer_id).cloned())
+                .collect::<Vec<_>>()
+        };
+        for peer in peers {
+            if let Err(error) = peer.cancel_text() {
+                self.set_error(friendly_transfer_error(&error));
+            }
+        }
+    }
+
+    pub(super) fn clear_text_result(self, peer_id: Option<&str>) {
+        let mut model = self.model;
+        let mut state = model.write();
+        state.text_transfer = TextTransferState::Idle;
+        if let Some(peer_id) = peer_id {
+            state.text_transfers_by_peer.remove(peer_id);
+        } else {
+            state.text_transfers_by_peer.clear();
         }
     }
 

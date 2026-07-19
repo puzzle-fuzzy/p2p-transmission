@@ -214,6 +214,17 @@ async function verifyPublicTransfer({
     expect(downloadPath).not.toBeNull()
     expect(await readFile(downloadPath ?? '')).toEqual(payload)
 
+    const textPayload = relayOnly ? '公网 TURN 文本校验\nrelay' : '公网直连文本校验\nWSS'
+    await owner.getByRole('tab', { name: '文本' }).click()
+    await owner.getByRole('textbox', { name: '文本内容' }).fill(textPayload)
+    await owner.getByRole('button', { name: '发送文本' }).click()
+    const textOffer = receiver.getByRole('dialog', { name: '接收文本' })
+    await expect(textOffer).toBeVisible()
+    await expect(textOffer).not.toContainText(textPayload)
+    await textOffer.getByRole('button', { name: '接收文本' }).click()
+    await expect(receiver.locator('.received-text-card pre')).toHaveText(textPayload)
+    await expect(owner.getByLabel('文本发送状态').getByText('已送达')).toBeVisible()
+
     if (relayOnly) {
       for (const summary of [await relayState(owner), await relayState(receiver)]) {
         expect(summary.connectionCount).toBeGreaterThan(0)

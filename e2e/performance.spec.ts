@@ -52,6 +52,14 @@ const isNullableNonNegativeNumber = (value: number | null) => (
   value === null || (Number.isFinite(value) && value >= 0)
 )
 
+const PERFORMANCE_BUDGET_MS = {
+  responseEnd: 1_000,
+  domInteractive: 2_000,
+  fcp: 1_800,
+  lcp: 2_500,
+  appInteractive: 3_000,
+} as const
+
 test('the root records a stable performance baseline', async ({ page }, testInfo) => {
   await page.addInitScript(() => {
     const state: PerformanceObserverState = {
@@ -175,14 +183,31 @@ test('the root records a stable performance baseline', async ({ page }, testInfo
   expect(metrics.navigation?.responseEnd).toBeGreaterThanOrEqual(
     metrics.navigation?.responseStart ?? 0,
   )
+  expect(metrics.navigation?.responseEnd).toBeLessThanOrEqual(
+    PERFORMANCE_BUDGET_MS.responseEnd,
+  )
+  expect(metrics.navigation?.domInteractive).toBeLessThanOrEqual(
+    PERFORMANCE_BUDGET_MS.domInteractive,
+  )
   expect(metrics.fcp).not.toBeNull()
   expect(isNullableNonNegativeNumber(metrics.fcp)).toBe(true)
+  expect(metrics.fcp ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(
+    PERFORMANCE_BUDGET_MS.fcp,
+  )
   expect(metrics.lcp).not.toBeNull()
   expect(isNullableNonNegativeNumber(metrics.lcp)).toBe(true)
+  expect(metrics.lcp ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(
+    PERFORMANCE_BUDGET_MS.lcp,
+  )
   expect(metrics.appInteractive).not.toBeNull()
   expect(isNullableNonNegativeNumber(metrics.appInteractive)).toBe(true)
-  if (metrics.fcp !== null && metrics.appInteractive !== null) {
-    expect(metrics.appInteractive).toBeGreaterThanOrEqual(metrics.fcp)
+  expect(metrics.appInteractive ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(
+    PERFORMANCE_BUDGET_MS.appInteractive,
+  )
+  if (metrics.appInteractive !== null) {
+    expect(metrics.appInteractive).toBeGreaterThanOrEqual(
+      metrics.navigation?.responseEnd ?? 0,
+    )
   }
   expect(metrics.observerSupport).toEqual({
     layoutShift: true,

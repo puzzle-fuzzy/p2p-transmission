@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn requests_reject_invalid_names_versions_and_room_codes() {
-        let blank = br#"{"version":{"major":5,"minor":0},"display_name":"  "}"#;
+        let blank = br#"{"version":{"major":5,"minor":1},"display_name":"  "}"#;
         assert_eq!(
             parse_http_body::<CreateSessionRequest>(blank),
             Err(ProtocolError::EmptyField {
@@ -324,7 +324,7 @@ mod tests {
     #[test]
     fn requests_reject_unknown_fields() {
         let unknown =
-            br#"{"version":{"major":5,"minor":0},"request_id":"request_1","unsupported":true}"#;
+            br#"{"version":{"major":5,"minor":1},"request_id":"request_1","unsupported":true}"#;
         assert!(matches!(
             parse_http_body::<CreateRoomRequest>(unknown),
             Err(ProtocolError::InvalidJson(_))
@@ -333,13 +333,13 @@ mod tests {
 
     #[test]
     fn rtc_config_response_requires_a_relative_ttl() {
-        let current = r#"{"version":{"major":5,"minor":0},"ice_servers":[],"expires_at_ms":600000,"ttl_ms":600000}"#;
+        let current = r#"{"version":{"major":5,"minor":1},"ice_servers":[],"expires_at_ms":600000,"ttl_ms":600000}"#;
         let response = serde_json::from_str::<RtcConfigResponse>(current)
             .expect("RTC config with a relative TTL");
         assert_eq!(response.ttl_ms, 600_000);
 
         let missing_ttl =
-            r#"{"version":{"major":5,"minor":0},"ice_servers":[],"expires_at_ms":600000}"#;
+            r#"{"version":{"major":5,"minor":1},"ice_servers":[],"expires_at_ms":600000}"#;
         assert!(serde_json::from_str::<RtcConfigResponse>(missing_ttl).is_err());
     }
 

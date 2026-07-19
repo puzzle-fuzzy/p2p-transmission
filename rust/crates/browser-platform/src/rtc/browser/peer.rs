@@ -40,9 +40,12 @@ pub(super) struct Inner {
     pub(super) pending_local_candidates: Vec<Signal>,
     pub(super) pending_remote_candidates: Vec<(String, String, Signal)>,
     pub(super) outgoing: Option<OutgoingState>,
+    pub(super) outgoing_text: Option<OutgoingTextState>,
     pub(super) pending_outgoing_recovery: Option<OutgoingRecoveryRecord>,
     pub(super) restoring_outgoing: bool,
     pub(super) incoming: Option<IncomingOffer>,
+    pub(super) incoming_text: Option<IncomingTextOffer>,
+    pub(super) receiving_text: Option<IncomingTextOffer>,
     pub(super) pending_recovery: Option<StreamRecoveryRecord>,
     pub(super) paused_receive_reason: Option<StreamPauseReason>,
     pub(super) restoring_transfer: Option<String>,
@@ -103,6 +106,20 @@ pub(super) struct OutgoingState {
     pub(super) recovery_peer_id: Option<String>,
     pub(super) restored_from_disk: bool,
     pub(super) reconciling_resume: bool,
+}
+
+#[derive(Clone)]
+pub(super) struct OutgoingTextState {
+    pub(super) transfer_id: String,
+    pub(super) text: String,
+    pub(super) accepted: bool,
+}
+
+#[derive(Clone)]
+pub(super) struct IncomingTextOffer {
+    pub(super) transfer_id: String,
+    pub(super) character_count: u32,
+    pub(super) byte_length: u32,
 }
 
 pub(super) struct ReceiveState {
@@ -180,9 +197,12 @@ impl RtcPeer {
                 pending_local_candidates: Vec::new(),
                 pending_remote_candidates: Vec::new(),
                 outgoing: None,
+                outgoing_text: None,
                 pending_outgoing_recovery: None,
                 restoring_outgoing: false,
                 incoming: None,
+                incoming_text: None,
+                receiving_text: None,
                 pending_recovery: None,
                 paused_receive_reason: None,
                 restoring_transfer: None,

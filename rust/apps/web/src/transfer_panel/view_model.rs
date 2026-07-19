@@ -65,6 +65,7 @@ pub(super) struct TransferPanelViewInput<'a> {
     pub(super) transfer: &'a TransferState,
     pub(super) rtc_peer_presentations: &'a BTreeMap<String, PeerRtcPresentation>,
     pub(super) transfers_by_peer: &'a BTreeMap<String, TransferState>,
+    pub(super) text_transfer_active: bool,
     pub(super) selected_receiver_ids: Option<&'a [String]>,
     pub(super) batch_peer_ids: &'a [String],
 }
@@ -160,7 +161,8 @@ pub(super) fn derive_transfer_panel_view(
         && selected_count > 0
         && ready_count == selected_count
         && !restoring_selected
-        && !owner_active;
+        && !owner_active
+        && !input.text_transfer_active;
 
     let (title, description) = if input.role == RoomRole::Owner
         && restoring_selected
@@ -350,6 +352,7 @@ mod tests {
             transfer: &TransferState::Idle,
             rtc_peer_presentations: &rtc_peer_presentations,
             transfers_by_peer: &transfers_by_peer,
+            text_transfer_active: false,
             selected_receiver_ids: Some(&selected_receiver_ids),
             batch_peer_ids: &[],
         });
@@ -387,6 +390,7 @@ mod tests {
             transfer: &TransferState::Idle,
             rtc_peer_presentations: &rtc_peer_presentations,
             transfers_by_peer: &transfers_by_peer,
+            text_transfer_active: false,
             selected_receiver_ids: None,
             batch_peer_ids: &[],
         });

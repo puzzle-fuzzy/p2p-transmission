@@ -64,7 +64,7 @@ pub(super) fn friendly_transfer_error(error: &BrowserPlatformError) -> String {
             "无法写入所选位置，请检查磁盘空间后重试".to_owned()
         }
         BrowserPlatformError::Browser(message) if message.contains("already active") => {
-            "已有文件正在传输，请等待完成后再试".to_owned()
+            "已有内容正在传输，请等待完成后再试".to_owned()
         }
         BrowserPlatformError::Browser(message)
             if message.contains("DataChannel") || message.contains("PeerConnection") =>
@@ -73,6 +73,9 @@ pub(super) fn friendly_transfer_error(error: &BrowserPlatformError) -> String {
         }
         BrowserPlatformError::Browser(message) if message.contains("incoming transfer") => {
             "这次文件接收申请已经失效".to_owned()
+        }
+        BrowserPlatformError::Browser(message) if message.contains("incoming text") => {
+            "这次文本接收申请已经失效".to_owned()
         }
         BrowserPlatformError::Browser(_) => "文件传输暂时失败，请重试".to_owned(),
         BrowserPlatformError::UserCancelled => "已取消选择保存位置".to_owned(),

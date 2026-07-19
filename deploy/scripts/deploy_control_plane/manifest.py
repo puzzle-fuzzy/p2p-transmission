@@ -28,6 +28,7 @@ MANAGED_MODULES = (
     "docker_archive.py",
     "manifest.py",
     "oci_archive.py",
+    "offsite_backup.py",
     "release_state.py",
     "runtime.py",
 )

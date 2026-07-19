@@ -19,6 +19,9 @@ from .common import (
 from .database import production_database_runtime_files
 
 
+MIN_REQUESTS_FOR_ERROR_RATIO = 100
+
+
 @dataclass(frozen=True)
 class DiskDemand:
     label: str
@@ -197,13 +200,65 @@ def maintenance_disk_demands(
     backup: Optional[Path],
     *,
     create_backup: bool,
+    offsite_backup: bool = False,
 ) -> list[DiskDemand]:
+    demands: list[DiskDemand]
     if create_backup:
         database_bytes = production_database_working_bytes()
-        return [
+        demands = [
             DiskDemand('database backup', PRODUCTION_BACKUPS, database_bytes),
             DiskDemand('database restore drill', PRODUCTION_BACKUPS, database_bytes),
         ]
-    if backup is None or path_is_linklike(backup) or not backup.is_file():
-        raise SystemExit('database restore drill input is missing or unsafe')
-    return [DiskDemand('database restore drill', PRODUCTION_BACKUPS, backup.stat().st_size)]
+    else:
+        if backup is None or path_is_linklike(backup) or not backup.is_file():
+            raise SystemExit('database restore drill input is missing or unsafe')
+        database_bytes = backup.stat().st_size
+        demands = [
+            DiskDemand('database restore drill', PRODUCTION_BACKUPS, database_bytes)
+        ]
+    if offsite_backup:
+        demands.append(
+            DiskDemand(
+                'encrypted offsite round-trip drill',
+                PRODUCTION_BACKUPS,
+                database_bytes * 3,
+            )
+        )
+    return demands
+
+
+def require_runtime_capacity(
+    metrics: dict[str, int],
+    environment: dict[str, str],
+) -> dict[str, int]:
+    """Fail maintenance when the single-host beta exceeds declared operating limits."""
+
+    try:
+        max_websockets = int(environment.get('P2P_MAX_ACTIVE_WEBSOCKETS', '200'))
+        max_5xx_ratio_bps = int(environment.get('P2P_MAX_5XX_RATIO_BPS', '100'))
+    except ValueError as error:
+        raise SystemExit('production capacity thresholds must be integers') from error
+    if max_websockets <= 0 or not 0 <= max_5xx_ratio_bps <= 10_000:
+        raise SystemExit('production capacity thresholds are outside the supported range')
+
+    active_websockets = metrics['p2p_websocket_connections_active']
+    requests = metrics['p2p_http_requests_total']
+    responses_5xx = metrics['p2p_http_responses_5xx_total']
+    ratio_bps = 0 if requests == 0 else responses_5xx * 10_000 // requests
+    if active_websockets > max_websockets:
+        raise SystemExit(
+            f'active WebSockets exceed the single-host limit: '
+            f'{active_websockets} > {max_websockets}'
+        )
+    if requests >= MIN_REQUESTS_FOR_ERROR_RATIO and ratio_bps > max_5xx_ratio_bps:
+        raise SystemExit(
+            f'HTTP 5xx ratio exceeds the production limit: '
+            f'{ratio_bps} bps > {max_5xx_ratio_bps} bps'
+        )
+    return {
+        'active_websockets': active_websockets,
+        'max_active_websockets': max_websockets,
+        'http_5xx_ratio_bps': ratio_bps,
+        'max_http_5xx_ratio_bps': max_5xx_ratio_bps,
+        'minimum_requests_for_ratio': MIN_REQUESTS_FOR_ERROR_RATIO,
+    }

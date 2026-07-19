@@ -665,7 +665,7 @@ mod tests {
                     )
                     .body(Body::from(
                         json!({
-                            "version": { "major": 5, "minor": 0 },
+                            "version": { "major": 5, "minor": 1 },
                             "request_id": "join_event_1",
                             "room_code": server.room_code.to_string(),
                             "expected_revision": 4
@@ -728,7 +728,7 @@ mod tests {
                 )
                 .body(Body::from(
                     json!({
-                        "version": { "major": 5, "minor": 0 },
+                        "version": { "major": 5, "minor": 1 },
                         "request_id": "join_event_1",
                         "decision": "reject",
                         "expected_revision": 5

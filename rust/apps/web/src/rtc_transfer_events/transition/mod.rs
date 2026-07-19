@@ -175,7 +175,15 @@ pub(super) fn plan_transfer_event(
         RtcEvent::OutboundSignal { .. }
         | RtcEvent::ConnectionState(_)
         | RtcEvent::DataChannelReady
-        | RtcEvent::NegotiationFailed { .. } => {
+        | RtcEvent::NegotiationFailed { .. }
+        | RtcEvent::TextOutgoingOffered { .. }
+        | RtcEvent::TextIncomingOffered { .. }
+        | RtcEvent::TextTransferAccepted { .. }
+        | RtcEvent::TextTransferRejected { .. }
+        | RtcEvent::TextTransferReceived { .. }
+        | RtcEvent::TextTransferDelivered { .. }
+        | RtcEvent::TextTransferCancelled { .. }
+        | RtcEvent::TextTransferFailed { .. } => {
             unreachable!("control RTC event reached transfer event handler")
         }
     }

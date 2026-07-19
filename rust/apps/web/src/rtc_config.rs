@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use p2p_browser_platform::{RtcConfigLease, fetch_rtc_config, monotonic_millis, sleep_ms};
 
-use crate::app_state::TransferState;
+use crate::app_state::{TextTransferState, TransferState};
 use crate::browser_errors::friendly_error;
 use crate::realtime_connection::{realtime_target_is_suppressed, realtime_target_scope_is_current};
 use crate::realtime_runtime::{RealtimeSessionRuntime, ScopedRtcConfig};
@@ -30,7 +30,9 @@ pub(super) fn use_rtc_config_session(mut runtime: RealtimeSessionRuntime) {
         {
             let mut state = runtime.model.write();
             state.transfer = TransferState::Idle;
+            state.text_transfer = TextTransferState::Idle;
             state.transfers_by_peer.clear();
+            state.text_transfers_by_peer.clear();
             state.pending_signals.clear();
             if target_scope.is_some() {
                 begin_rtc_config_loading(&mut state);

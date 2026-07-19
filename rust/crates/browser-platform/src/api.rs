@@ -258,16 +258,16 @@ mod tests {
 
     #[test]
     fn successful_http_responses_require_the_current_protocol() {
-        let current = r#"{"version":{"major":5,"minor":0},"session_id":"session_1","display_name":"Alice","expires_at_ms":1}"#;
+        let current = r#"{"version":{"major":5,"minor":1},"session_id":"session_1","display_name":"Alice","expires_at_ms":1}"#;
         let decoded = decode_success_response::<SessionResponse>(current)
             .expect("current response should decode");
         assert_eq!(decoded.version, CURRENT_PROTOCOL);
 
-        let previous = current.replace(r#""major":5"#, r#""major":4"#);
+        let previous = current.replace(r#""minor":1"#, r#""minor":0"#);
         assert!(matches!(
             decode_success_response::<SessionResponse>(&previous),
             Err(BrowserPlatformError::Decode(message))
-                if message == "protocol version 4.0 is unsupported"
+                if message == "protocol version 5.0 is unsupported"
         ));
     }
 }

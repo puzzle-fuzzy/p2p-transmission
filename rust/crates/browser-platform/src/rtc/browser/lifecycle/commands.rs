@@ -26,7 +26,10 @@ impl RtcPeer {
         {
             let mut inner = self.inner.borrow_mut();
             if inner.outgoing.is_some()
+                || inner.outgoing_text.is_some()
                 || inner.incoming.is_some()
+                || inner.incoming_text.is_some()
+                || inner.receiving_text.is_some()
                 || inner.receive.is_some()
                 || inner.restoring_outgoing
             {

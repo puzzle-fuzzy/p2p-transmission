@@ -8,9 +8,25 @@ use crate::stream_recovery::{delete_outgoing_recovery, delete_stream_recovery};
 
 impl RtcPeer {
     pub fn reset(&self) {
-        let (cancelled, outgoing_recovery_peer) = {
+        let (cancelled, cancelled_text, outgoing_recovery_peer) = {
             let mut inner = self.inner.borrow_mut();
             let transfer_id = active_transfer_id(&inner);
+            let text_transfer_id = inner
+                .outgoing_text
+                .as_ref()
+                .map(|state| state.transfer_id.clone())
+                .or_else(|| {
+                    inner
+                        .incoming_text
+                        .as_ref()
+                        .map(|state| state.transfer_id.clone())
+                })
+                .or_else(|| {
+                    inner
+                        .receiving_text
+                        .as_ref()
+                        .map(|state| state.transfer_id.clone())
+                });
             let outgoing_recovery_peer = inner
                 .outgoing
                 .as_ref()
@@ -23,14 +39,17 @@ impl RtcPeer {
                 });
             clear_peer_resources(&mut inner);
             inner.outgoing = None;
+            inner.outgoing_text = None;
             inner.pending_outgoing_recovery = None;
             inner.restoring_outgoing = false;
             inner.incoming = None;
+            inner.incoming_text = None;
+            inner.receiving_text = None;
             inner.pending_recovery = None;
             inner.paused_receive_reason = None;
             inner.restoring_transfer = None;
             inner.receive = None;
-            (transfer_id, outgoing_recovery_peer)
+            (transfer_id, text_transfer_id, outgoing_recovery_peer)
         };
         if let Some(transfer_id) = cancelled {
             let recovery_id = transfer_id.clone();
@@ -42,6 +61,9 @@ impl RtcPeer {
                 reason: CancelReason::PeerClosed,
             });
         }
+        if let Some(transfer_id) = cancelled_text {
+            self.emit(RtcEvent::TextTransferCancelled { transfer_id });
+        }
         if let Some(peer_id) = outgoing_recovery_peer {
             spawn_local(async move {
                 let _ = delete_outgoing_recovery(&peer_id).await;
@@ -50,9 +72,15 @@ impl RtcPeer {
     }
 
     pub fn prepare_reconnect(&self) {
-        let cancelled = {
+        let (cancelled, cancelled_text) = {
             let mut inner = self.inner.borrow_mut();
             let mut cancelled = None;
+            let cancelled_text = inner
+                .outgoing_text
+                .take()
+                .map(|state| state.transfer_id)
+                .or_else(|| inner.incoming_text.take().map(|state| state.transfer_id))
+                .or_else(|| inner.receiving_text.take().map(|state| state.transfer_id));
 
             if let Some(outgoing) = inner.outgoing.as_mut() {
                 if matches!(outgoing.mode, TransferMode::Streamed { .. }) {
@@ -84,13 +112,16 @@ impl RtcPeer {
                 cancelled.get_or_insert(incoming.transfer_id);
             }
             clear_peer_resources(&mut inner);
-            cancelled
+            (cancelled, cancelled_text)
         };
         if let Some(transfer_id) = cancelled {
             self.emit(RtcEvent::TransferCancelled {
                 transfer_id,
                 reason: CancelReason::PeerClosed,
             });
+        }
+        if let Some(transfer_id) = cancelled_text {
+            self.emit(RtcEvent::TextTransferCancelled { transfer_id });
         }
     }
 

@@ -227,10 +227,19 @@ fn RoomTransferPanel(
                 })
                 .collect::<BTreeMap<_, _>>(),
             state.transfers_by_peer.clone(),
+            state.text_transfer.clone(),
+            state.text_transfers_by_peer.clone(),
         )
     });
-    let (rtc_config_phase, aggregate_rtc, transfer, rtc_peer_presentations, transfers_by_peer) =
-        panel_state.read().clone();
+    let (
+        rtc_config_phase,
+        aggregate_rtc,
+        transfer,
+        rtc_peer_presentations,
+        transfers_by_peer,
+        text_transfer,
+        text_transfers_by_peer,
+    ) = panel_state.read().clone();
 
     rsx! {
         TransferPanel {
@@ -243,6 +252,8 @@ fn RoomTransferPanel(
             transfer,
             rtc_peer_presentations,
             transfers_by_peer,
+            text_transfer,
+            text_transfers_by_peer,
         }
     }
 }

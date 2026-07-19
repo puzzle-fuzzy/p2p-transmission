@@ -12,6 +12,7 @@ SPLIT_TEST_FILES = {
     'test_control_plane_capacity.py',
     'test_control_plane_database.py',
     'test_control_plane_manifest_bootstrap.py',
+    'test_control_plane_offsite_backup.py',
     'test_control_plane_release_state.py',
     'test_control_plane_runtime.py',
     'test_control_plane_runtime_maintenance.py',
@@ -24,13 +25,14 @@ class ControlPlaneArchitectureTests(unittest.TestCase):
         maximum_lines = {
             '__init__.py': 20,
             'artifacts.py': 450,
-            'capacity.py': 250,
+            'capacity.py': 280,
             'cli.py': 250,
             'common.py': 300,
             'database.py': 400,
             'docker_archive.py': 300,
             'manifest.py': 300,
             'oci_archive.py': 300,
+            'offsite_backup.py': 300,
             'release_state.py': 550,
             'runtime.py': 500,
         }

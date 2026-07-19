@@ -25,7 +25,7 @@ impl ProtocolVersion {
     }
 }
 
-pub const CURRENT_PROTOCOL: ProtocolVersion = ProtocolVersion::new(5, 0);
+pub const CURRENT_PROTOCOL: ProtocolVersion = ProtocolVersion::new(5, 1);
 
 #[cfg(test)]
 mod tests {
@@ -36,7 +36,7 @@ mod tests {
         assert_eq!(CURRENT_PROTOCOL.validate(), Ok(()));
         for unsupported in [
             ProtocolVersion::new(4, 0),
-            ProtocolVersion::new(5, 1),
+            ProtocolVersion::new(5, 0),
             ProtocolVersion::new(6, 0),
         ] {
             assert_eq!(
@@ -51,7 +51,7 @@ mod tests {
 
     #[test]
     fn protocol_version_rejects_unknown_fields() {
-        let json = r#"{"major":5,"minor":0,"patch":1}"#;
+        let json = r#"{"major":5,"minor":1,"patch":1}"#;
         assert!(serde_json::from_str::<ProtocolVersion>(json).is_err());
     }
 }

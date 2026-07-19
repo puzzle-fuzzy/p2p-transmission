@@ -7,6 +7,7 @@ mod outgoing;
 mod peer;
 mod recovery;
 mod signaling;
+mod text;
 
 pub use files::{
     BrowserFile, browser_files_from_input, choose_persistent_source_files,
@@ -16,9 +17,9 @@ pub use peer::RtcPeer;
 
 use lifecycle::prepare_outgoing;
 use peer::{
-    Inner, OutgoingFileState, OutgoingState, PendingSegmentAck, ReceiveFileState, ReceivePayload,
-    ReceiveState, StreamReadyPlan, browser_error, clear_peer_resources, protocol_error,
-    reconnectable_channel_error,
+    IncomingTextOffer, Inner, OutgoingFileState, OutgoingState, OutgoingTextState,
+    PendingSegmentAck, ReceiveFileState, ReceivePayload, ReceiveState, StreamReadyPlan,
+    browser_error, clear_peer_resources, protocol_error, reconnectable_channel_error,
 };
 
 use super::{

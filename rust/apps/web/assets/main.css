@@ -37,6 +37,7 @@ body {
 
 button,
 input,
+textarea,
 a {
   font: inherit;
 }
@@ -223,8 +224,7 @@ h1 {
   font-size: 0.82rem;
   letter-spacing: 0.05em;
   text-decoration: none;
-  transition: filter 160ms ease, color 160ms ease, background-color 160ms ease,
-    border-color 160ms ease;
+  transition: filter 160ms ease, border-color 160ms ease;
 }
 
 .primary-button {
@@ -509,7 +509,7 @@ html[data-p2p-room-restore="pending"] #boot-fallback .boot-room-restore {
   border-radius: 8px;
   background: transparent;
   color: var(--ink-muted);
-  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease;
+  transition: background-color 160ms ease, border-color 160ms ease;
 }
 
 .room-code-copy {
@@ -688,6 +688,37 @@ html[data-p2p-room-restore="pending"] #boot-fallback .boot-room-restore {
   text-align: center;
 }
 
+.transfer-kind-tabs {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  margin-bottom: 18px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-hover);
+}
+
+.transfer-kind-tab {
+  min-width: 72px;
+  min-height: 38px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 0.78rem;
+}
+
+.transfer-kind-tab:hover,
+.transfer-kind-tab.is-active {
+  color: var(--ink);
+}
+
+.transfer-kind-tab.is-active {
+  background: var(--accent-surface);
+}
+
 .transfer-panel h1 {
   color: var(--ink);
   font-size: 0.88rem;
@@ -705,6 +736,100 @@ html[data-p2p-room-restore="pending"] #boot-fallback .boot-room-restore {
   text-align: center;
 }
 
+.text-transfer-panel {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+}
+
+.text-composer {
+  width: min(100%, 420px);
+  margin-top: 18px;
+  text-align: left;
+}
+
+.text-composer label {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--ink);
+  font-size: 0.78rem;
+}
+
+.text-composer textarea {
+  display: block;
+  width: 100%;
+  min-height: 144px;
+  resize: vertical;
+  padding: 12px 14px;
+  border: 1px solid var(--control-border);
+  border-radius: 8px;
+  background: var(--surface-hover);
+  color: var(--ink);
+  font-size: 0.84rem;
+  line-height: 1.65;
+}
+
+.text-composer textarea::placeholder {
+  color: var(--ink-muted);
+}
+
+.text-composer textarea:disabled {
+  opacity: 0.64;
+}
+
+.text-composer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  gap: 16px;
+}
+
+.text-composer-footer .primary-button {
+  width: auto;
+  min-width: 112px;
+  padding: 0 18px;
+}
+
+.text-counter {
+  color: var(--ink-muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.text-counter-error {
+  color: var(--ink);
+}
+
+.text-recipient-status {
+  padding: 0;
+  list-style: none;
+}
+
+.received-text-card {
+  width: min(100%, 420px);
+  margin-top: 18px;
+}
+
+.received-text-card pre {
+  width: 100%;
+  max-height: 280px;
+  margin: 0;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-hover);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 0.84rem;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  text-align: left;
+  white-space: pre-wrap;
+}
+
 .recipient-picker-trigger {
   display: flex;
   min-height: 44px;
@@ -717,7 +842,7 @@ html[data-p2p-room-restore="pending"] #boot-fallback .boot-room-restore {
   color: var(--ink-muted);
   gap: 8px;
   font-size: 0.75rem;
-  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease;
+  transition: background-color 160ms ease, border-color 160ms ease;
 }
 
 .recipient-picker-trigger strong {
@@ -1042,13 +1167,42 @@ html[data-p2p-room-restore="pending"] #boot-fallback .boot-room-restore {
 .about-dialog dl,
 .share-dialog > p,
 .transfer-request-dialog > p {
-  color: var(--ink-muted);
+  color: var(--ink-muted-elevated);
   font-size: 0.8rem;
   line-height: 1.7;
 }
 
 .about-dialog dl {
   margin: 20px 0 0;
+}
+
+.text-request-metadata {
+  margin: 18px 0 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.text-request-metadata div {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.text-request-metadata div + div {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.text-request-metadata dt,
+.text-request-metadata dd {
+  color: var(--ink-muted-elevated);
+  font-size: 0.78rem;
+}
+
+.text-request-metadata dd {
+  margin: 0;
+  color: var(--ink);
 }
 
 .about-dialog dl div {
@@ -1246,8 +1400,8 @@ html[data-p2p-room-restore="pending"] #boot-fallback .boot-room-restore {
 }
 
 @keyframes dialog-enter {
-  from { opacity: 0; transform: scale(0.98); }
-  to { opacity: 1; transform: scale(1); }
+  from { transform: scale(0.98); }
+  to { transform: scale(1); }
 }
 
 @media (max-width: 420px) {

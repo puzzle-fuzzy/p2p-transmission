@@ -43,6 +43,9 @@ class ControlPlaneRuntimeTests(unittest.TestCase):
                 'P2P_CAPABILITY_SECRET': 'capability-secret-0123456789abcdef0123456789',
                 'P2P_TURN_URLS': 'turn:turn.p2p.yxswy.com:3478?transport=udp',
                 'P2P_TURN_SECRET': 'turn-secret-0123456789abcdef',
+                'P2P_OFFSITE_BACKUP_REMOTE': 's3:production/backups',
+                'P2P_OFFSITE_BACKUP_AGE_RECIPIENT': 'age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq',
+                'P2P_OFFSITE_BACKUP_AGE_IDENTITY': '/root/backup.agekey',
             },
             '2.0.0-abcdef0',
         )
@@ -57,6 +60,9 @@ class ControlPlaneRuntimeTests(unittest.TestCase):
                 'P2P_CAPABILITY_SECRET': 'existing-capability-secret-0123456789',
                 'P2P_TURN_SECRET': 'existing-turn-secret',
                 'P2P_TURN_URLS': 'turns:existing.example:5349',
+                'P2P_OFFSITE_BACKUP_REMOTE': 's3:production/backups',
+                'P2P_OFFSITE_BACKUP_AGE_RECIPIENT': 'age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq',
+                'P2P_OFFSITE_BACKUP_AGE_IDENTITY': '/root/backup.agekey',
             },
             '2.0.0-abcdef1',
         )

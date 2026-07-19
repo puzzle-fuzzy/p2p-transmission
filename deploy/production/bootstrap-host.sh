@@ -114,6 +114,7 @@ readonly -a CONTROL_PLANE_MODULES=(
   'docker_archive.py'
   'manifest.py'
   'oci_archive.py'
+  'offsite_backup.py'
   'release_state.py'
   'runtime.py'
 )
@@ -122,7 +123,7 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || die "required command is unavailable: $1"
 }
 
-for command_name in awk chmod chown cmp cp cut flock getent git id install ln mktemp mv python3 readlink rm rmdir sshd ssh-keygen stat sudo tar visudo; do
+for command_name in age awk chmod chown cmp cp cut flock getent git id install ln mktemp mv python3 rclone readlink rm rmdir sshd ssh-keygen stat sudo tar visudo; do
   require_command "$command_name"
 done
 if [[ "$MODE" == 'apply' ]]; then

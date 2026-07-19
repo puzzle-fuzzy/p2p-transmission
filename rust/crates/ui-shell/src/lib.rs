@@ -118,7 +118,7 @@ pub fn LobbyShell(
                     }
                     div { class: "divider", aria_hidden: "true",
                         span {}
-                        strong { "OR" }
+                        strong { "或" }
                         span {}
                     }
                     button {

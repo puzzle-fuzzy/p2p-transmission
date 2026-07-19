@@ -30,7 +30,7 @@ from .common import (
     run,
     running_production_image_id,
 )
-from .capacity import maintenance_disk_demands, require_disk_capacity
+from .capacity import maintenance_disk_demands, require_disk_capacity, require_runtime_capacity
 from .database import (
     backup_production_database,
     database_backup_age_seconds,
@@ -42,6 +42,7 @@ from .database import (
     verify_sqlite_database,
 )
 from .docker_archive import load_verified_docker_image_archive
+from . import offsite_backup
 from .release_state import (
     ProductionPreflight,
     cleanup_snapshot_paths,
@@ -66,6 +67,9 @@ def build_production_env(
     turn_urls = existing.get('P2P_TURN_URLS', '')
     turn_secret = existing.get('P2P_TURN_SECRET', '')
     capability = existing.get('P2P_CAPABILITY_SECRET', '')
+    offsite_remote = existing.get('P2P_OFFSITE_BACKUP_REMOTE', '')
+    offsite_recipient = existing.get('P2P_OFFSITE_BACKUP_AGE_RECIPIENT', '')
+    offsite_identity = existing.get('P2P_OFFSITE_BACKUP_AGE_IDENTITY', '')
     ice_urls = existing.get('P2P_ICE_URLS') or 'stun:stun.l.google.com:19302'
 
     if not turn_urls:
@@ -74,6 +78,12 @@ def build_production_env(
         raise ValueError('P2P_TURN_SECRET is missing or too short')
     if len(capability) < 32:
         raise ValueError('P2P_CAPABILITY_SECRET is missing or too short')
+    if not offsite_remote:
+        raise ValueError('P2P_OFFSITE_BACKUP_REMOTE is missing')
+    if not offsite_recipient:
+        raise ValueError('P2P_OFFSITE_BACKUP_AGE_RECIPIENT is missing')
+    if not offsite_identity:
+        raise ValueError('P2P_OFFSITE_BACKUP_AGE_IDENTITY is missing')
 
     return {
         'P2P_IMAGE_TAG': version,
@@ -84,10 +94,15 @@ def build_production_env(
         'P2P_TURN_SECRET': turn_secret,
         'P2P_TURN_URLS': turn_urls,
         'P2P_ICE_URLS': ice_urls,
+        'P2P_OFFSITE_BACKUP_REMOTE': offsite_remote,
+        'P2P_OFFSITE_BACKUP_AGE_RECIPIENT': offsite_recipient,
+        'P2P_OFFSITE_BACKUP_AGE_IDENTITY': offsite_identity,
         'P2P_SESSION_RATE_MAX': existing.get('P2P_SESSION_RATE_MAX', '60'),
         'P2P_ROOM_RATE_MAX': existing.get('P2P_ROOM_RATE_MAX', '60'),
         'P2P_JOIN_RATE_MAX': existing.get('P2P_JOIN_RATE_MAX', '120'),
         'P2P_SIGNAL_RATE_MAX': existing.get('P2P_SIGNAL_RATE_MAX', '600'),
+        'P2P_MAX_ACTIVE_WEBSOCKETS': existing.get('P2P_MAX_ACTIVE_WEBSOCKETS', '200'),
+        'P2P_MAX_5XX_RATIO_BPS': existing.get('P2P_MAX_5XX_RATIO_BPS', '100'),
         'RUST_LOG': existing.get('RUST_LOG', 'p2p_server=info,tower_http=info'),
     }
 
@@ -96,6 +111,8 @@ def prepare_production_environment(version: str, previous: bytes) -> None:
 
     if not existing:
         raise SystemExit('production environment is missing on the host')
+
+    offsite_backup.validated_config_from_environment(existing)
 
     try:
         rendered = format_env(build_production_env(existing, version))
@@ -140,13 +157,18 @@ def maintain_production() -> dict[str, object]:
     if path_is_linklike(PRODUCTION_DATABASE) or not PRODUCTION_DATABASE.is_file():
         raise SystemExit('production database is missing or unsafe')
     verify_sqlite_database(PRODUCTION_DATABASE)
+    if path_is_linklike(PRODUCTION_ENV) or not PRODUCTION_ENV.is_file():
+        raise SystemExit('production environment is missing or unsafe')
+    environment = parse_env_text(PRODUCTION_ENV.read_text(encoding='utf-8'))
+    capacity_status = require_runtime_capacity(metrics, environment)
+    offsite = offsite_backup.config_from_environment(environment)
 
     backup = latest_database_backup()
     created = backup is None
     if backup is not None:
         created = database_backup_age_seconds(backup) >= MAINTENANCE_BACKUP_MAX_AGE_SECONDS
     disk_capacities = require_disk_capacity(
-        maintenance_disk_demands(backup, create_backup=created)
+        maintenance_disk_demands(backup, create_backup=created, offsite_backup=True)
     )
     if created:
         backup = backup_production_database(release)
@@ -155,6 +177,7 @@ def maintain_production() -> dict[str, object]:
 
     verify_sqlite_database(backup)
     restored_bytes = drill_database_restore(backup)
+    offsite_result = offsite_backup.sync_and_drill_offsite_backup(backup, offsite)
     result: dict[str, object] = {
         'status': 'healthy',
         'release': release,
@@ -166,7 +189,9 @@ def maintain_production() -> dict[str, object]:
         'backup_age_seconds': database_backup_age_seconds(backup),
         'backup_created': created,
         'restore_drill_bytes': restored_bytes,
+        'offsite_backup': offsite_result,
         'metrics': metrics,
+        'capacity': capacity_status,
     }
     print(json.dumps(result, sort_keys=True), flush=True)
     return result

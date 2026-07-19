@@ -10,8 +10,8 @@ use p2p_protocol::{
 };
 
 use crate::app_state::{
-    AppModel, PeerRtcState, PendingRtcSignal, RoomRole, RtcPhase, Screen, TransferLinkState,
-    TransferState,
+    AppModel, PeerRtcState, PendingRtcSignal, RoomRole, RtcPhase, Screen, TextTransferState,
+    TransferLinkState, TransferState,
 };
 use crate::browser_errors::{friendly_error, friendly_transfer_error};
 use crate::realtime_runtime::{RealtimeSessionRuntime, ScopedRtcConfig};
@@ -213,6 +213,7 @@ pub(super) fn remove_rtc_peer(
     clear_peer_rtc_error(&mut state, peer_id);
     state.rtc_peer_states.remove(peer_id);
     state.transfers_by_peer.remove(peer_id);
+    state.text_transfers_by_peer.remove(peer_id);
     if matches!(
         state.screen,
         Screen::Room {
@@ -221,6 +222,7 @@ pub(super) fn remove_rtc_peer(
         }
     ) {
         state.transfer = TransferState::Idle;
+        state.text_transfer = TextTransferState::Idle;
     }
     refresh_aggregate_rtc(&mut state);
     drop(state);

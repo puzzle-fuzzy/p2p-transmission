@@ -10,6 +10,28 @@ import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[1]
+BUN_VERSION_FILE = ROOT / ".bun-version"
+
+
+def bun_command() -> list[str]:
+    expected = BUN_VERSION_FILE.read_text(encoding="utf-8").strip()
+    installed = subprocess.run(
+        ["bun", "--version"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    ).stdout.strip()
+    if installed == expected:
+        return ["bun"]
+
+    print(
+        f"本机 Bun {installed} 与仓库固定版本 {expected} 不一致；"
+        "使用固定版本运行浏览器验收。",
+        flush=True,
+    )
+    return ["bunx", f"bun@{expected}"]
 
 
 def main() -> None:
@@ -54,11 +76,7 @@ def main() -> None:
             else ("e2e:full" if run_full else "e2e")
         )
     )
-    command = [
-        "bun",
-        "run",
-        script,
-    ]
+    command = [*bun_command(), "run", script]
     print(f"$ {' '.join(command)}", flush=True)
     subprocess.run(command, cwd=ROOT, env=environment, check=True)
 

@@ -1,3 +1,4 @@
+mod text_transition;
 mod transition;
 
 use dioxus::prelude::*;
@@ -11,6 +12,16 @@ fn execute_effect(effect: &NotificationEffect) {
 }
 
 pub(super) fn handle_transfer_event(mut model: Signal<AppModel>, peer_id: String, event: RtcEvent) {
+    if text_transition::is_text_event(&event) {
+        let effect = {
+            let mut state = model.write();
+            text_transition::apply(&mut state, peer_id, event)
+        };
+        if let Some(effect) = effect.as_ref() {
+            execute_effect(effect);
+        }
+        return;
+    }
     let plan = {
         let state = model.peek();
         plan_transfer_event(&state, peer_id, event)

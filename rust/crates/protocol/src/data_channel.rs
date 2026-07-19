@@ -4,10 +4,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     MAX_BUFFERED_TRANSFER_BYTES, MAX_CHUNK_BYTES, MAX_CONTROL_FRAME_BYTES, MAX_FILES_PER_MANIFEST,
-    MAX_STREAM_ACK_WINDOW_BYTES, MAX_STREAM_SEGMENT_BYTES, MAX_TRANSFER_BYTES,
-    MIN_STREAM_SEGMENT_BYTES, ProtocolError, ProtocolVersion, Validate,
+    MAX_STREAM_ACK_WINDOW_BYTES, MAX_STREAM_SEGMENT_BYTES, MAX_TEXT_TRANSFER_BYTES,
+    MAX_TEXT_TRANSFER_CHARS, MAX_TRANSFER_BYTES, MIN_STREAM_SEGMENT_BYTES, ProtocolError,
+    ProtocolVersion, Validate,
     limits::{
-        MAX_ERROR_MESSAGE_BYTES, MAX_FILE_NAME_BYTES, MAX_MIME_BYTES, validate_text, validate_token,
+        MAX_ERROR_MESSAGE_BYTES, MAX_FILE_NAME_BYTES, MAX_MIME_BYTES, validate_multiline_text,
+        validate_text, validate_token,
     },
 };
 
@@ -135,6 +137,30 @@ pub enum StreamPauseReason {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlMessage {
+    TextOffer {
+        version: ProtocolVersion,
+        transfer_id: String,
+        character_count: u32,
+        byte_length: u32,
+    },
+    TextDecision {
+        version: ProtocolVersion,
+        transfer_id: String,
+        accepted: bool,
+    },
+    TextPayload {
+        version: ProtocolVersion,
+        transfer_id: String,
+        text: String,
+    },
+    TextReceipt {
+        version: ProtocolVersion,
+        transfer_id: String,
+    },
+    TextCancel {
+        version: ProtocolVersion,
+        transfer_id: String,
+    },
     Manifest {
         version: ProtocolVersion,
         transfer_id: String,
@@ -207,7 +233,12 @@ pub enum ControlMessage {
 impl ControlMessage {
     fn version(&self) -> ProtocolVersion {
         match self {
-            Self::Manifest { version, .. }
+            Self::TextOffer { version, .. }
+            | Self::TextDecision { version, .. }
+            | Self::TextPayload { version, .. }
+            | Self::TextReceipt { version, .. }
+            | Self::TextCancel { version, .. }
+            | Self::Manifest { version, .. }
             | Self::Decision { version, .. }
             | Self::Start { version, .. }
             | Self::StreamReady { version, .. }
@@ -223,7 +254,12 @@ impl ControlMessage {
 
     fn transfer_id(&self) -> &str {
         match self {
-            Self::Manifest { transfer_id, .. }
+            Self::TextOffer { transfer_id, .. }
+            | Self::TextDecision { transfer_id, .. }
+            | Self::TextPayload { transfer_id, .. }
+            | Self::TextReceipt { transfer_id, .. }
+            | Self::TextCancel { transfer_id, .. }
+            | Self::Manifest { transfer_id, .. }
             | Self::Decision { transfer_id, .. }
             | Self::Start { transfer_id, .. }
             | Self::StreamReady { transfer_id, .. }
@@ -244,6 +280,36 @@ impl Validate for ControlMessage {
         validate_token(self.transfer_id(), "transfer_id")?;
 
         match self {
+            Self::TextOffer {
+                character_count,
+                byte_length,
+                ..
+            } => {
+                if *character_count == 0
+                    || usize::try_from(*character_count)
+                        .map_or(true, |count| count > MAX_TEXT_TRANSFER_CHARS)
+                {
+                    return Err(ProtocolError::InvalidField {
+                        field: "character_count",
+                    });
+                }
+                if *byte_length == 0
+                    || usize::try_from(*byte_length)
+                        .map_or(true, |length| length > MAX_TEXT_TRANSFER_BYTES)
+                {
+                    return Err(ProtocolError::InvalidField {
+                        field: "byte_length",
+                    });
+                }
+                Ok(())
+            }
+            Self::TextPayload { text, .. } => {
+                validate_multiline_text(text, "text", MAX_TEXT_TRANSFER_BYTES)?;
+                if text.chars().count() > MAX_TEXT_TRANSFER_CHARS {
+                    return Err(ProtocolError::InvalidField { field: "text" });
+                }
+                Ok(())
+            }
             Self::Manifest { mode, files, .. } => {
                 mode.validate()?;
                 if files.is_empty() || files.len() > MAX_FILES_PER_MANIFEST {
@@ -347,6 +413,9 @@ impl Validate for ControlMessage {
                 validate_text(message, "error_message", MAX_ERROR_MESSAGE_BYTES)
             }
             Self::Decision { .. }
+            | Self::TextDecision { .. }
+            | Self::TextReceipt { .. }
+            | Self::TextCancel { .. }
             | Self::Start { .. }
             | Self::StreamPaused { .. }
             | Self::Cancel { .. } => Ok(()),
@@ -537,11 +606,54 @@ mod tests {
             Err(ProtocolError::UnsupportedVersion { major: 2, minor: 0 })
         );
 
-        let unknown = r#"{"type":"start","version":{"major":5,"minor":0},"transfer_id":"transfer_1","unsupported":true}"#;
+        let unknown = r#"{"type":"start","version":{"major":5,"minor":1},"transfer_id":"transfer_1","unsupported":true}"#;
         assert!(matches!(
             parse_control_message(unknown),
             Err(ProtocolError::InvalidJson(_))
         ));
+    }
+
+    #[test]
+    fn text_frames_enforce_consent_metadata_and_payload_limits() {
+        let text = "你好\nWebRTC 👋".to_owned();
+        let offer = ControlMessage::TextOffer {
+            version: CURRENT_PROTOCOL,
+            transfer_id: "text_1".to_owned(),
+            character_count: text.chars().count() as u32,
+            byte_length: text.len() as u32,
+        };
+        let payload = ControlMessage::TextPayload {
+            version: CURRENT_PROTOCOL,
+            transfer_id: "text_1".to_owned(),
+            text: text.clone(),
+        };
+
+        assert_eq!(offer.validate(), Ok(()));
+        assert_eq!(payload.validate(), Ok(()));
+        assert_eq!(
+            parse_control_message(&serde_json::to_string(&payload).expect("serialize text")),
+            Ok(payload)
+        );
+
+        let too_many_characters = ControlMessage::TextPayload {
+            version: CURRENT_PROTOCOL,
+            transfer_id: "text_1".to_owned(),
+            text: "字".repeat(MAX_TEXT_TRANSFER_CHARS + 1),
+        };
+        assert_eq!(
+            too_many_characters.validate(),
+            Err(ProtocolError::InvalidField { field: "text" })
+        );
+
+        let invalid_control_character = ControlMessage::TextPayload {
+            version: CURRENT_PROTOCOL,
+            transfer_id: "text_1".to_owned(),
+            text: "hello\u{0000}".to_owned(),
+        };
+        assert_eq!(
+            invalid_control_character.validate(),
+            Err(ProtocolError::InvalidField { field: "text" })
+        );
     }
 
     #[test]
@@ -569,7 +681,7 @@ mod tests {
         previous.extend_from_slice(b"abc");
         assert_eq!(
             decode_binary_frame(&previous),
-            Err(ProtocolError::UnsupportedVersion { major: 2, minor: 0 })
+            Err(ProtocolError::UnsupportedVersion { major: 2, minor: 1 })
         );
     }
 

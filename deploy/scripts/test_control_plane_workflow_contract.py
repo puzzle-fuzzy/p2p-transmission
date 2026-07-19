@@ -166,7 +166,7 @@ class ControlPlaneWorkflowContractTests(unittest.TestCase):
 
     def test_scheduled_health_checks_public_relay_and_database_restore(self) -> None:
         workflow = PRODUCTION_HEALTH_WORKFLOW.read_text(encoding='utf-8')
-        self.assertIn('cron: "17 */6 * * *"', workflow)
+        self.assertIn('cron: "17 */2 * * *"', workflow)
         self.assertIn('bun run e2e:public', workflow)
         self.assertIn('p2p-transmission-deploy maintenance', workflow)
         self.assertIn('group: production', workflow)

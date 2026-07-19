@@ -186,14 +186,14 @@ mod tests {
 
     #[test]
     fn server_realtime_messages_require_the_current_protocol() {
-        let current = r#"{"type":"error","version":{"major":5,"minor":0},"code":"unavailable","message":"Try again","retryable":true}"#;
+        let current = r#"{"type":"error","version":{"major":5,"minor":1},"code":"unavailable","message":"Try again","retryable":true}"#;
         assert!(decode_server_message(current).is_ok());
 
-        let previous = current.replace(r#""major":5"#, r#""major":4"#);
+        let previous = current.replace(r#""minor":1"#, r#""minor":0"#);
         assert!(matches!(
             decode_server_message(&previous),
             Err(BrowserPlatformError::Decode(message))
-                if message == "protocol version 4.0 is unsupported"
+                if message == "protocol version 5.0 is unsupported"
         ));
     }
 }

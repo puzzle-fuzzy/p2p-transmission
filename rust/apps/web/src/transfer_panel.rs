@@ -7,6 +7,8 @@ use p2p_protocol::ParticipantSnapshot;
 mod file_progress_list;
 mod receiver_transfer_list;
 mod recipient_picker_dialog;
+mod text_panel;
+mod text_request_dialog;
 mod transfer_action_area;
 mod transfer_request_dialog;
 mod view_model;
@@ -14,19 +16,28 @@ mod view_model;
 use self::file_progress_list::FileProgressList;
 use self::receiver_transfer_list::ReceiverTransferList;
 use self::recipient_picker_dialog::RecipientPickerDialog;
+use self::text_panel::{TextPanel, text_transfer_has_content, text_transfer_is_active};
 use self::transfer_action_area::TransferActionArea;
 use self::transfer_request_dialog::TransferRequestDialog;
 use self::view_model::{
     TransferPanelViewInput, TransferPanelViewModel, derive_transfer_panel_view,
 };
 
-use crate::app_state::{AppModel, RoomRole, RtcConfigPhase, RtcPhase, TransferState};
+use crate::app_state::{
+    AppModel, RoomRole, RtcConfigPhase, RtcPhase, TextTransferState, TransferState,
+};
 use crate::transfer_presentation::format_bytes;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct PeerRtcPresentation {
     phase: RtcPhase,
     outgoing_recovery_checking: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TransferKind {
+    File,
+    Text,
 }
 
 impl PeerRtcPresentation {
@@ -49,12 +60,17 @@ pub(super) fn TransferPanel(
     transfer: TransferState,
     rtc_peer_presentations: BTreeMap<String, PeerRtcPresentation>,
     transfers_by_peer: BTreeMap<String, TransferState>,
+    text_transfer: TextTransferState,
+    text_transfers_by_peer: BTreeMap<String, TextTransferState>,
 ) -> Element {
     let mut picker_open = use_signal(|| false);
+    let mut transfer_kind = use_signal(|| TransferKind::File);
     let selected_receiver_ids = use_signal(|| None::<Vec<String>>);
     let batch_peer_ids = use_signal(Vec::<String>::new);
     let selected_receiver_ids_value = selected_receiver_ids.read().clone();
     let batch_peer_ids_value = batch_peer_ids.read().clone();
+    let text_active = text_transfer_is_active(&text_transfer)
+        || text_transfers_by_peer.values().any(text_transfer_is_active);
     let TransferPanelViewModel {
         selected_ids,
         selected_peer_ids,
@@ -77,76 +93,111 @@ pub(super) fn TransferPanel(
         transfer: &transfer,
         rtc_peer_presentations: &rtc_peer_presentations,
         transfers_by_peer: &transfers_by_peer,
+        text_transfer_active: text_active,
         selected_receiver_ids: selected_receiver_ids_value.as_deref(),
         batch_peer_ids: &batch_peer_ids_value,
     });
     let receiver_count = receivers.len();
     let completed_bytes = file_progress.completed_bytes;
     let total_bytes = file_progress.total_bytes;
+    let global_active = active || text_active;
+    let showing_text = transfer_kind() == TransferKind::Text
+        || (role == RoomRole::Receiver && text_transfer_has_content(&text_transfer));
 
     rsx! {
-        section { class: "transfer-panel", aria_label: "文件传输",
-            div {
-                class: "transfer-panel-copy",
-                role: "status",
-                aria_live: "polite",
-                aria_atomic: "true",
-                h1 { "{title}" }
-                p { "{description}" }
+        section { class: "transfer-panel", aria_label: "文件与文本传输",
+            div { class: "transfer-kind-tabs", role: "tablist", aria_label: "传输类型",
+                button {
+                    class: if !showing_text { "transfer-kind-tab is-active" } else { "transfer-kind-tab" },
+                    r#type: "button",
+                    role: "tab",
+                    aria_selected: !showing_text,
+                    onclick: move |_| transfer_kind.set(TransferKind::File),
+                    "文件"
+                }
+                button {
+                    class: if showing_text { "transfer-kind-tab is-active" } else { "transfer-kind-tab" },
+                    r#type: "button",
+                    role: "tab",
+                    aria_selected: showing_text,
+                    onclick: move |_| transfer_kind.set(TransferKind::Text),
+                    "文本"
+                }
             }
             if role == RoomRole::Owner && receiver_count > 0 {
                 button {
                     class: "recipient-picker-trigger",
                     r#type: "button",
-                    disabled: active,
+                    disabled: global_active,
                     aria_label: "选择接收者，已选择 {selected_ids.len()} 位",
                     onclick: move |_| picker_open.set(true),
                     span { "接收者" }
                     strong { "{selected_summary}" }
                 }
             }
-            FileProgressList {
-                role,
-                transfer: transfer.clone(),
-                owner_states: owner_states.clone(),
-                file_progress,
-            }
-            if role == RoomRole::Owner && !current_batch_peer_ids.is_empty() {
-                ReceiverTransferList {
-                    peer_ids: current_batch_peer_ids.clone(),
-                    receivers: receivers.clone(),
-                    transfers_by_peer: transfers_by_peer.clone(),
-                }
-            }
-            if active {
-                p { class: "transfer-progress-copy",
-                    "{format_bytes(completed_bytes)} / {format_bytes(total_bytes)}"
-                }
-            }
-            TransferActionArea {
-                model,
-                rtc_peers,
-                role,
-                can_offer,
-                active,
-                selected_peer_ids,
-                current_batch_peer_ids: current_batch_peer_ids.clone(),
-                paused_peer_ids,
-                owner_states,
-                storage_pause_request,
-                transfer: transfer.clone(),
-                batch_peer_ids,
-            }
-            if let Some(request) = incoming_request {
-                TransferRequestDialog {
-                    key: "{request.transfer_id}",
+            if showing_text {
+                TextPanel {
                     model,
                     rtc_peers,
-                    peer_id: request.peer_id,
-                    transfer_id: request.transfer_id,
-                    mode: request.mode,
-                    files: request.files,
-                    recovery_available: request.recovery_available,
+                    role,
+                    receivers: receivers.clone(),
+                    can_offer,
+                    selected_peer_ids: selected_peer_ids.clone(),
+                    text_transfer: text_transfer.clone(),
+                    text_transfers_by_peer: text_transfers_by_peer.clone(),
+                }
+            } else {
+                div {
+                    class: "transfer-panel-copy",
+                    role: "status",
+                    aria_live: "polite",
+                    aria_atomic: "true",
+                    h1 { "{title}" }
+                    p { "{description}" }
+                }
+                FileProgressList {
+                    role,
+                    transfer: transfer.clone(),
+                    owner_states: owner_states.clone(),
+                    file_progress,
+                }
+                if role == RoomRole::Owner && !current_batch_peer_ids.is_empty() {
+                    ReceiverTransferList {
+                        peer_ids: current_batch_peer_ids.clone(),
+                        receivers: receivers.clone(),
+                        transfers_by_peer: transfers_by_peer.clone(),
+                    }
+                }
+                if active {
+                    p { class: "transfer-progress-copy",
+                        "{format_bytes(completed_bytes)} / {format_bytes(total_bytes)}"
+                    }
+                }
+                TransferActionArea {
+                    model,
+                    rtc_peers,
+                    role,
+                    can_offer,
+                    active,
+                    selected_peer_ids,
+                    current_batch_peer_ids: current_batch_peer_ids.clone(),
+                    paused_peer_ids,
+                    owner_states,
+                    storage_pause_request,
+                    transfer: transfer.clone(),
+                    batch_peer_ids,
+                }
+                if let Some(request) = incoming_request {
+                    TransferRequestDialog {
+                        key: "{request.transfer_id}",
+                        model,
+                        rtc_peers,
+                        peer_id: request.peer_id,
+                        transfer_id: request.transfer_id,
+                        mode: request.mode,
+                        files: request.files,
+                        recovery_available: request.recovery_available,
+                    }
                 }
             }
             if picker_open() {

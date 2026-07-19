@@ -323,13 +323,13 @@ mod tests {
 
     #[test]
     fn realtime_messages_and_nested_signals_reject_unknown_fields() {
-        let unknown_message = r#"{"type":"heartbeat","version":{"major":5,"minor":0},"nonce":"n_1","unsupported":true}"#;
+        let unknown_message = r#"{"type":"heartbeat","version":{"major":5,"minor":1},"nonce":"n_1","unsupported":true}"#;
         assert!(matches!(
             parse_client_message(unknown_message),
             Err(ProtocolError::InvalidJson(_))
         ));
 
-        let unknown_signal = r#"{"type":"signal","version":{"major":5,"minor":0},"room_code":"AB12CD","to_peer_id":"peer_1","negotiation_id":"neg_1","signal":{"kind":"offer","sdp":"v=0","unsupported":true}}"#;
+        let unknown_signal = r#"{"type":"signal","version":{"major":5,"minor":1},"room_code":"AB12CD","to_peer_id":"peer_1","negotiation_id":"neg_1","signal":{"kind":"offer","sdp":"v=0","unsupported":true}}"#;
         assert!(matches!(
             parse_client_message(unknown_signal),
             Err(ProtocolError::InvalidJson(_))
@@ -338,20 +338,20 @@ mod tests {
 
     #[test]
     fn signal_negotiation_id_is_required_and_validated() {
-        let valid = r#"{"type":"signal","version":{"major":5,"minor":0},"room_code":"AB12CD","to_peer_id":"peer_1","negotiation_id":"neg_1","signal":{"kind":"offer","sdp":"v=0"}}"#;
+        let valid = r#"{"type":"signal","version":{"major":5,"minor":1},"room_code":"AB12CD","to_peer_id":"peer_1","negotiation_id":"neg_1","signal":{"kind":"offer","sdp":"v=0"}}"#;
         assert!(matches!(
             parse_client_message(valid),
             Ok(ClientRealtimeMessage::Signal { negotiation_id, .. })
                 if negotiation_id == "neg_1"
         ));
 
-        let missing = r#"{"type":"signal","version":{"major":5,"minor":0},"room_code":"AB12CD","to_peer_id":"peer_1","signal":{"kind":"offer","sdp":"v=0"}}"#;
+        let missing = r#"{"type":"signal","version":{"major":5,"minor":1},"room_code":"AB12CD","to_peer_id":"peer_1","signal":{"kind":"offer","sdp":"v=0"}}"#;
         assert!(matches!(
             parse_client_message(missing),
             Err(ProtocolError::InvalidJson(_))
         ));
 
-        let invalid = r#"{"type":"signal","version":{"major":5,"minor":0},"room_code":"AB12CD","to_peer_id":"peer_1","negotiation_id":"neg 1","signal":{"kind":"offer","sdp":"v=0"}}"#;
+        let invalid = r#"{"type":"signal","version":{"major":5,"minor":1},"room_code":"AB12CD","to_peer_id":"peer_1","negotiation_id":"neg 1","signal":{"kind":"offer","sdp":"v=0"}}"#;
         assert_eq!(
             parse_client_message(invalid),
             Err(ProtocolError::InvalidField {

@@ -349,18 +349,24 @@ def drill_database_restore(backup: Path) -> int:
         with tempfile.TemporaryDirectory(prefix='.restore-drill-', dir=backup_root) as directory:
             restored = Path(directory) / 'control.sqlite3'
             copy_sqlite_database(resolved, restored)
-            with closing(sqlite3.connect(restored, timeout=30.0)) as database:
-                result = database.execute('PRAGMA quick_check').fetchone()
-                if result != ('ok',):
-                    raise sqlite3.DatabaseError(f'restore drill quick_check failed: {result!r}')
-                user_version = int(database.execute('PRAGMA user_version').fetchone()[0])
-                database.execute('BEGIN IMMEDIATE')
-                database.execute(f'PRAGMA user_version = {(user_version + 1) % 2147483647}')
-                database.rollback()
-                restored_version = int(database.execute('PRAGMA user_version').fetchone()[0])
-                if restored_version != user_version:
-                    raise sqlite3.DatabaseError('restore drill rollback did not preserve metadata')
-            verify_sqlite_database(restored)
-            return restored.stat().st_size
+            return exercise_restored_database(restored)
     except (OSError, sqlite3.Error) as error:
         raise SystemExit(f'database restore drill failed: {error}') from error
+
+
+def exercise_restored_database(restored: Path) -> int:
+    """Prove a restored SQLite file is valid, writable, and transactionally reversible."""
+
+    with closing(sqlite3.connect(restored, timeout=30.0)) as database:
+        result = database.execute('PRAGMA quick_check').fetchone()
+        if result != ('ok',):
+            raise sqlite3.DatabaseError(f'restore drill quick_check failed: {result!r}')
+        user_version = int(database.execute('PRAGMA user_version').fetchone()[0])
+        database.execute('BEGIN IMMEDIATE')
+        database.execute(f'PRAGMA user_version = {(user_version + 1) % 2147483647}')
+        database.rollback()
+        restored_version = int(database.execute('PRAGMA user_version').fetchone()[0])
+        if restored_version != user_version:
+            raise sqlite3.DatabaseError('restore drill rollback did not preserve metadata')
+    verify_sqlite_database(restored)
+    return restored.stat().st_size

@@ -77,6 +77,12 @@ opt-level = "z"
 [profile.wasm-release.package.p2p-ui-shell]
 opt-level = "z"
 
+[profile.wasm-release.package.p2p-browser-platform]
+opt-level = "z"
+
+[profile.wasm-release.package.p2p-protocol]
+opt-level = "z"
+
 # Keep transfer, hashing, protocol, and browser I/O code at `opt-level = "s"`,
 # while favoring download size for the UI framework runtime.
 [profile.wasm-release.package.dioxus]

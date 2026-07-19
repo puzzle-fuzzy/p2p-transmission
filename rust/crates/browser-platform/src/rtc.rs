@@ -92,6 +92,38 @@ pub enum RtcEvent {
     NegotiationFailed {
         message: String,
     },
+    TextOutgoingOffered {
+        transfer_id: String,
+        character_count: u32,
+        byte_length: u32,
+    },
+    TextIncomingOffered {
+        transfer_id: String,
+        character_count: u32,
+        byte_length: u32,
+    },
+    TextTransferAccepted {
+        transfer_id: String,
+        direction: TransferDirection,
+    },
+    TextTransferRejected {
+        transfer_id: String,
+        direction: TransferDirection,
+    },
+    TextTransferReceived {
+        transfer_id: String,
+        text: String,
+    },
+    TextTransferDelivered {
+        transfer_id: String,
+    },
+    TextTransferCancelled {
+        transfer_id: String,
+    },
+    TextTransferFailed {
+        transfer_id: Option<String>,
+        message: String,
+    },
     OutgoingOffered {
         transfer_id: String,
         file: TransferFile,
@@ -256,6 +288,10 @@ mod native {
             Err(BrowserPlatformError::UnsupportedTarget)
         }
 
+        pub fn offer_text(&self, _text: String) -> Result<String, BrowserPlatformError> {
+            Err(BrowserPlatformError::UnsupportedTarget)
+        }
+
         pub async fn offer_persistent_files(
             &self,
             _files: Vec<BrowserFile>,
@@ -279,6 +315,18 @@ mod native {
             _transfer_id: &str,
             _accepted: bool,
         ) -> Result<(), BrowserPlatformError> {
+            Err(BrowserPlatformError::UnsupportedTarget)
+        }
+
+        pub fn decide_text(
+            &self,
+            _transfer_id: &str,
+            _accepted: bool,
+        ) -> Result<(), BrowserPlatformError> {
+            Err(BrowserPlatformError::UnsupportedTarget)
+        }
+
+        pub fn cancel_text(&self) -> Result<(), BrowserPlatformError> {
             Err(BrowserPlatformError::UnsupportedTarget)
         }
 

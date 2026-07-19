@@ -7,7 +7,7 @@ use p2p_protocol::{
 };
 
 use crate::app_state::{
-    AppModel, RealtimePhase, RoomRole, Screen, StoredRoomSession, TransferState,
+    AppModel, RealtimePhase, RoomRole, Screen, StoredRoomSession, TextTransferState, TransferState,
 };
 use crate::browser_errors::friendly_error;
 use crate::browser_lifecycle::complete_lifecycle_recovery;
@@ -96,10 +96,12 @@ pub(super) fn return_to_lobby(
     state.realtime = RealtimePhase::Disconnected;
     deactivate_rtc_config(&mut state);
     state.transfer = TransferState::Idle;
+    state.text_transfer = TextTransferState::Idle;
     state.pending_signals.clear();
     state.rtc_peer_states.clear();
     state.rtc_error = None;
     state.transfers_by_peer.clear();
+    state.text_transfers_by_peer.clear();
     state.decision_request_id = None;
     state.busy = false;
     state.lobby_action_error = None;

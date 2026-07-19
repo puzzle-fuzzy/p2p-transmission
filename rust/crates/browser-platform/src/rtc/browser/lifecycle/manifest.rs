@@ -42,7 +42,7 @@ pub(super) fn active_transfer_id(inner: &Inner) -> Option<String> {
         .or_else(|| inner.restoring_transfer.clone())
 }
 
-fn random_binary_id(prefix: &str) -> (String, [u8; 16]) {
+pub(in crate::rtc::browser) fn random_binary_id(prefix: &str) -> (String, [u8; 16]) {
     let mut bytes = [0_u8; 16];
     for byte in &mut bytes {
         *byte = (Math::random() * 256.0) as u8;

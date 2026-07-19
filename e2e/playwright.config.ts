@@ -12,6 +12,7 @@ export default defineConfig({
     'shell.spec.ts',
     'room.spec.ts',
     'transfer.spec.ts',
+    'text-transfer.spec.ts',
     'transfer-storage.spec.ts',
     'transfer-resume.spec.ts',
     'transfer-reload.spec.ts',

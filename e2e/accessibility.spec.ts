@@ -50,13 +50,15 @@ test('dynamic room and transfer states pass WCAG axe rules', async ({
   baseURL,
   browser,
 }, testInfo) => {
-  test.skip(
-    testInfo.project.name !== 'desktop-chromium',
-    'dynamic room accessibility runs once in desktop Chromium',
-  )
-
-  const ownerContext = await browser.newContext({ baseURL })
-  const receiverContext = await browser.newContext({ baseURL })
+  const mobile = testInfo.project.name === 'mobile-chromium'
+  const contextOptions = {
+    baseURL,
+    viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 960 },
+    isMobile: mobile,
+    hasTouch: mobile,
+  }
+  const ownerContext = await browser.newContext(contextOptions)
+  const receiverContext = await browser.newContext(contextOptions)
   const owner = await ownerContext.newPage()
   const receiver = await receiverContext.newPage()
   await useFileInputFallback(owner)
@@ -90,7 +92,7 @@ test('dynamic room and transfer states pass WCAG axe rules', async ({
     await expect(owner.getByRole('heading', { name: '选择要发送的文件' })).toBeVisible({
       timeout: 20_000,
     })
-    const ownerTransferRegion = owner.getByRole('region', { name: '文件传输' })
+    const ownerTransferRegion = owner.getByRole('region', { name: '文件与文本传输' })
     const ownerTransferStatus = ownerTransferRegion.getByRole('status')
     await expect(ownerTransferStatus).toHaveAttribute('aria-live', 'polite')
     await expect(ownerTransferStatus).toHaveAttribute('aria-atomic', 'true')
@@ -136,6 +138,19 @@ test('dynamic room and transfer states pass WCAG axe rules', async ({
     await expect(
       completedProgress.locator('xpath=..').getByText('全部传输完成', { exact: true }),
     ).toBeVisible()
+    await expectNoAccessibilityViolations(owner)
+    await expectNoAccessibilityViolations(receiver)
+
+    await owner.getByRole('tab', { name: '文本' }).click()
+    await owner.getByRole('textbox', { name: '文本内容' }).fill('无障碍文本\n第二行')
+    await expectNoAccessibilityViolations(owner)
+    await owner.getByRole('button', { name: '发送文本' }).click()
+    const textDialog = receiver.getByRole('dialog', { name: '接收文本' })
+    await expect(textDialog).toBeVisible()
+    await expectNoAccessibilityViolations(receiver)
+    await textDialog.getByRole('button', { name: '接收文本' }).click()
+    await expect(receiver.getByRole('heading', { name: '文本接收完成' })).toBeVisible()
+    await expect(owner.getByLabel('文本发送状态').getByText('已送达')).toBeVisible()
     await expectNoAccessibilityViolations(owner)
     await expectNoAccessibilityViolations(receiver)
   } finally {

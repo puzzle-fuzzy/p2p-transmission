@@ -189,6 +189,45 @@ pub(super) enum TransferState {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(super) enum TextTransferState {
+    Idle,
+    Offering {
+        transfer_id: String,
+        character_count: u32,
+        byte_length: u32,
+    },
+    Incoming {
+        transfer_id: String,
+        character_count: u32,
+        byte_length: u32,
+    },
+    Sending {
+        transfer_id: String,
+        character_count: u32,
+        byte_length: u32,
+    },
+    Receiving {
+        transfer_id: String,
+        character_count: u32,
+        byte_length: u32,
+    },
+    Rejected {
+        direction: TransferDirection,
+    },
+    Delivered {
+        character_count: u32,
+        byte_length: u32,
+    },
+    Received {
+        text: String,
+    },
+    Cancelled,
+    Failed {
+        message: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(super) enum Screen {
     Booting,
     Lobby {
@@ -218,6 +257,7 @@ pub(super) struct AppModel {
     pub(super) rtc_config_phase: RtcConfigPhase,
     pub(super) rtc_aggregate_phase: RtcPhase,
     pub(super) transfer: TransferState,
+    pub(super) text_transfer: TextTransferState,
     pub(super) busy: bool,
     pub(super) lobby_action_error: Option<LobbyActionError>,
     pub(super) error: Option<String>,
@@ -231,6 +271,7 @@ pub(super) struct AppModel {
     pub(super) rtc_config_error: Option<String>,
     pub(super) rtc_error: Option<PeerRtcError>,
     pub(super) transfers_by_peer: BTreeMap<String, TransferState>,
+    pub(super) text_transfers_by_peer: BTreeMap<String, TextTransferState>,
 }
 
 impl Default for AppModel {
@@ -242,6 +283,7 @@ impl Default for AppModel {
             rtc_config_phase: RtcConfigPhase::Inactive,
             rtc_aggregate_phase: RtcPhase::Inactive,
             transfer: TransferState::Idle,
+            text_transfer: TextTransferState::Idle,
             busy: false,
             lobby_action_error: None,
             error: None,
@@ -255,6 +297,7 @@ impl Default for AppModel {
             rtc_config_error: None,
             rtc_error: None,
             transfers_by_peer: BTreeMap::new(),
+            text_transfers_by_peer: BTreeMap::new(),
         }
     }
 }
