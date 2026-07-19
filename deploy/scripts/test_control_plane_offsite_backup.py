@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import stat
 import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from deploy_control_plane import common
@@ -62,7 +64,10 @@ class ControlPlaneOffsiteBackupTests(unittest.TestCase):
             offsite_ops.PRODUCTION_BACKUPS = backups
             common.APP_DIR = root
             try:
-                with patch.object(offsite_ops, 'run_offsite_command', side_effect=fake_command):
+                with (
+                    patch.object(offsite_ops, 'validate_offsite_backup_config'),
+                    patch.object(offsite_ops, 'run_offsite_command', side_effect=fake_command),
+                ):
                     first = offsite_ops.sync_and_drill_offsite_backup(backup, config)
                     second = offsite_ops.sync_and_drill_offsite_backup(backup, config)
 
@@ -75,6 +80,7 @@ class ControlPlaneOffsiteBackupTests(unittest.TestCase):
 
                 remote_objects[str(first['remote_object'])] = b'tampered'
                 with (
+                    patch.object(offsite_ops, 'validate_offsite_backup_config'),
                     patch.object(offsite_ops, 'run_offsite_command', side_effect=fake_command),
                     self.assertRaisesRegex(SystemExit, 'size does not match|hash does not match'),
                 ):
@@ -85,6 +91,38 @@ class ControlPlaneOffsiteBackupTests(unittest.TestCase):
                     offsite_ops.PRODUCTION_BACKUPS,
                     common.APP_DIR,
                 ) = original_values
+
+    @unittest.skipIf(os.name == 'nt', 'root ownership is POSIX-only')
+    def test_accepts_a_root_owned_identity_with_exact_permissions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            identity = Path(directory) / 'backup.agekey'
+            identity.touch()
+            config = offsite_ops.OffsiteBackupConfig(
+                remote='test:production/backups',
+                recipient='age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq',
+                identity=identity,
+            )
+            metadata = SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=0)
+            with patch.object(Path, 'stat', return_value=metadata):
+                offsite_ops.validate_offsite_backup_config(config)
+
+    @unittest.skipIf(os.name == 'nt', 'root ownership is POSIX-only')
+    def test_rejects_a_non_root_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            identity = Path(directory) / 'backup.agekey'
+            identity.touch()
+            os.chmod(identity, 0o600)
+            config = offsite_ops.OffsiteBackupConfig(
+                remote='test:production/backups',
+                recipient='age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq',
+                identity=identity,
+            )
+            metadata = SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=1000)
+            with (
+                patch.object(Path, 'stat', return_value=metadata),
+                self.assertRaisesRegex(SystemExit, 'root-owned'),
+            ):
+                offsite_ops.validate_offsite_backup_config(config)
 
     def test_rejects_traversal_in_the_remote_prefix(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
