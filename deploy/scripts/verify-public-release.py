@@ -20,6 +20,12 @@ WASM_REFERENCE_RE = re.compile(r'''["']([^"']+\.wasm(?:\?[^"']*)?)["']''')
 HASHED_WASM_RE = re.compile(r'^/assets/[A-Za-z0-9_.-]+-dxh[0-9a-f]+\.wasm$')
 REQUIRED_STYLESHEET = '/shell/app-shell.css'
 REQUIRED_SCRIPTS = {'/shell/room-restore.js', '/shell/app-shell.js'}
+REQUIRED_ROOT_SHELL_MARKERS = {
+    'Vault document title': '<title>Vault · Secure Transfer</title>',
+    'Vault shell root': 'class="vault-room"',
+    'Vault brand control': 'class="vault-brand-trigger"',
+    'boot fallback': 'id="boot-fallback"',
+}
 REMOVED_PUBLIC_PATHS = (
     '/app',
     '/app/',
@@ -204,6 +210,18 @@ def wait_for_public_readiness(
     raise PublicVerificationError(f'public readiness check failed: {last_error}')
 
 
+def verify_root_application_shell(index_html: str) -> None:
+    missing = [
+        label
+        for label, marker in REQUIRED_ROOT_SHELL_MARKERS.items()
+        if marker not in index_html
+    ]
+    if missing:
+        raise PublicVerificationError(
+            f'public root application shell is missing: {", ".join(missing)}'
+        )
+
+
 def verify_shell_assets(
     base_url: str,
     index_html: str,
@@ -278,8 +296,7 @@ def verify_public_release(
         index_html = fetch_200(index_url).decode('utf-8')
     except UnicodeDecodeError as error:
         raise PublicVerificationError('public application shell is not UTF-8') from error
-    if 'P2P Transmission' not in index_html or 'id="boot-fallback"' not in index_html:
-        raise PublicVerificationError('public root application shell check failed')
+    verify_root_application_shell(index_html)
     assets = verify_shell_assets(base_url, index_html, release_version)
     removed_paths = verify_removed_public_paths(base_url)
     return {'readiness': readiness, 'assets': assets, 'removed_paths': removed_paths}

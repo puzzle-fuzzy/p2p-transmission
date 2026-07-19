@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import tomllib
 import unittest
 import urllib.error
 from io import BytesIO
@@ -10,6 +11,7 @@ from unittest.mock import patch
 
 
 MODULE_PATH = Path(__file__).with_name('verify-public-release.py')
+REPOSITORY_ROOT = MODULE_PATH.parents[2]
 SPEC = importlib.util.spec_from_file_location('verify_public_release', MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 verify_public_release = importlib.util.module_from_spec(SPEC)
@@ -18,6 +20,44 @@ SPEC.loader.exec_module(verify_public_release)
 
 
 class VerifyPublicReleaseTests(unittest.TestCase):
+    def test_root_shell_contract_matches_the_vault_sources(self) -> None:
+        dioxus_config = tomllib.loads(
+            (REPOSITORY_ROOT / 'rust/apps/web/Dioxus.toml').read_text(encoding='utf-8')
+        )
+        title = dioxus_config['web']['app']['title']
+        self.assertEqual(
+            verify_public_release.REQUIRED_ROOT_SHELL_MARKERS['Vault document title'],
+            f'<title>{title}</title>',
+        )
+
+        ui_shell = (REPOSITORY_ROOT / 'rust/crates/ui-shell/src/lib.rs').read_text(
+            encoding='utf-8'
+        )
+        self.assertIn('class: "vault-room"', ui_shell)
+        self.assertIn('class: "vault-brand-trigger"', ui_shell)
+        self.assertIn('div { id: "boot-fallback"', ui_shell)
+
+    def test_root_shell_requires_the_complete_vault_contract(self) -> None:
+        index = (
+            '<title>Vault · Secure Transfer</title>'
+            '<div id="boot-fallback">'
+            '<div class="vault-room">'
+            '<button class="vault-brand-trigger">Vault</button>'
+            '</div></div>'
+        )
+
+        verify_public_release.verify_root_application_shell(index)
+
+        for label, marker in verify_public_release.REQUIRED_ROOT_SHELL_MARKERS.items():
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(
+                    verify_public_release.PublicVerificationError,
+                    label,
+                ):
+                    verify_public_release.verify_root_application_shell(
+                        index.replace(marker, '')
+                    )
+
     def test_readiness_requires_the_exact_public_build(self) -> None:
         payload = {
             'status': 'ready',
