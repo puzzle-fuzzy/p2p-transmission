@@ -1,8 +1,6 @@
-use std::collections::BTreeMap;
-
 use dioxus::prelude::*;
 use p2p_browser_platform::{
-    RtcPeer, StreamingStorageSupport, TransferFile, show_modal_dialog,
+    RtcPeerRegistry, StreamingStorageSupport, TransferFile, show_modal_dialog,
     streaming_batch_storage_supported, streaming_storage_support,
 };
 use p2p_protocol::TransferMode;
@@ -14,7 +12,7 @@ use crate::transfer_presentation::format_bytes;
 #[component]
 pub(super) fn TransferRequestDialog(
     mut model: Signal<AppModel>,
-    rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+    rtc_peers: Signal<RtcPeerRegistry>,
     peer_id: String,
     transfer_id: String,
     mode: TransferMode,

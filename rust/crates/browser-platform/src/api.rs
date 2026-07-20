@@ -3,10 +3,10 @@ use p2p_protocol::ErrorEnvelope;
 #[cfg(any(target_arch = "wasm32", test))]
 use p2p_protocol::ProtocolVersion;
 use p2p_protocol::{
-    CURRENT_PROTOCOL, CreateInviteRequest, CreateInviteResponse, CreateRoomRequest,
-    CreateRoomResponse, CreateSessionRequest, DecideJoinRequest, JoinDecisionRequest,
-    JoinRequestResponse, LeaveRoomRequest, RequestJoinRequest, RoomBootstrapResponse,
-    RoomMutationResponse, RtcConfigResponse, SessionResponse,
+    BuildInfo, CURRENT_CAPABILITIES, CURRENT_PROTOCOL, CreateInviteRequest, CreateInviteResponse,
+    CreateRoomRequest, CreateRoomResponse, CreateSessionRequest, DecideJoinRequest,
+    JoinDecisionRequest, JoinRequestResponse, LeaveRoomRequest, RequestJoinRequest,
+    RoomBootstrapResponse, RoomMutationResponse, RtcConfigResponse, SessionResponse,
 };
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -42,17 +42,39 @@ impl_protocol_response!(
 );
 
 #[cfg(any(target_arch = "wasm32", test))]
+impl ProtocolResponse for BuildInfo {
+    fn protocol_version(&self) -> ProtocolVersion {
+        ProtocolVersion::new(self.api_major, self.api_minor)
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
 fn decode_success_response<ResponseBody>(text: &str) -> Result<ResponseBody, BrowserPlatformError>
 where
     ResponseBody: DeserializeOwned + ProtocolResponse,
 {
     let response = serde_json::from_str::<ResponseBody>(text)
         .map_err(|error| BrowserPlatformError::Decode(error.to_string()))?;
-    response
-        .protocol_version()
-        .validate()
-        .map_err(|error| BrowserPlatformError::Decode(error.to_string()))?;
+    let received = response.protocol_version();
+    if received != CURRENT_PROTOCOL {
+        return Err(BrowserPlatformError::upgrade_required(
+            CURRENT_PROTOCOL,
+            received,
+        ));
+    }
     Ok(response)
+}
+
+pub async fn fetch_build_info() -> Result<BuildInfo, BrowserPlatformError> {
+    let info = request_json::<(), BuildInfo>("GET", "/api/meta", None).await?;
+    validate_build_info(info)
+}
+
+fn validate_build_info(info: BuildInfo) -> Result<BuildInfo, BrowserPlatformError> {
+    if !info.capabilities.contains(CURRENT_CAPABILITIES) {
+        return Err(BrowserPlatformError::missing_capabilities());
+    }
+    Ok(info)
 }
 
 pub async fn fetch_rtc_config() -> Result<RtcConfigResponse, BrowserPlatformError> {
@@ -227,6 +249,12 @@ where
         .ok_or_else(|| BrowserPlatformError::Decode("response body is not text".to_owned()))?;
 
     if !response.ok() {
+        if status == 426 {
+            return Err(BrowserPlatformError::upgrade_required(
+                CURRENT_PROTOCOL,
+                ProtocolVersion::new(0, 0),
+            ));
+        }
         let envelope = serde_json::from_str::<ErrorEnvelope>(&text)
             .map_err(|error| BrowserPlatformError::Decode(error.to_string()))?;
         return Err(BrowserPlatformError::Api {
@@ -266,8 +294,34 @@ mod tests {
         let previous = current.replace(r#""minor":1"#, r#""minor":0"#);
         assert!(matches!(
             decode_success_response::<SessionResponse>(&previous),
-            Err(BrowserPlatformError::Decode(message))
-                if message == "protocol version 5.0 is unsupported"
+            Err(BrowserPlatformError::UpgradeRequired {
+                expected_major: 5,
+                expected_minor: 1,
+                received_major: 5,
+                received_minor: 0,
+            })
+        ));
+
+        let metadata = r#"{"product":"P2P Transmission","version":"2.0.1","release":"test","api_major":5,"api_minor":1,"capabilities":7}"#;
+        let metadata =
+            decode_success_response::<BuildInfo>(metadata).expect("current metadata should decode");
+        assert!(validate_build_info(metadata).is_ok());
+    }
+
+    #[test]
+    fn build_metadata_requires_every_browser_capability() {
+        let incomplete = BuildInfo {
+            product: "P2P Transmission".to_owned(),
+            version: "2.0.1".to_owned(),
+            release: "test".to_owned(),
+            api_major: CURRENT_PROTOCOL.major,
+            api_minor: CURRENT_PROTOCOL.minor,
+            capabilities: p2p_protocol::ProtocolCapabilities::DIRECT_TEXT,
+        };
+
+        assert!(matches!(
+            validate_build_info(incomplete),
+            Err(BrowserPlatformError::MissingCapabilities)
         ));
     }
 }

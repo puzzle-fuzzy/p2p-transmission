@@ -1,7 +1,7 @@
-use std::{collections::BTreeMap, rc::Rc};
+use std::rc::Rc;
 
 use dioxus::prelude::Signal;
-use p2p_browser_platform::{RealtimeConnection, RtcConfigLease, RtcPeer};
+use p2p_browser_platform::{RealtimeConnection, RtcConfigLease, RtcPeerRegistry};
 
 use crate::app_state::AppModel;
 use crate::realtime_target::{RealtimeTarget, RealtimeTargetScope};
@@ -72,7 +72,7 @@ pub(super) struct RealtimeConnectionRuntime {
 #[derive(Clone, Copy)]
 pub(super) struct RtcRuntime {
     pub(super) connection: Signal<Option<RealtimeConnection>>,
-    pub(super) peers: Signal<BTreeMap<String, RtcPeer>>,
+    pub(super) peers: Signal<RtcPeerRegistry>,
     pub(super) config: Signal<Option<ScopedRtcConfig>>,
 }
 

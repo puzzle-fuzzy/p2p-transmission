@@ -1,15 +1,15 @@
-use std::collections::BTreeMap;
-
 use dioxus::prelude::*;
 use p2p_browser_platform::{
-    RealtimeConnection, RealtimeEvent, RtcPeer, activate_app_mount, mark_app_interactive,
+    RealtimeConnection, RealtimeEvent, RtcPeerRegistry, activate_app_mount, mark_app_interactive,
 };
 use p2p_protocol::RoomBootstrapResponse;
 use p2p_ui_shell::VaultShell;
 
 mod about;
 mod app_bootstrap;
+mod app_runtime;
 mod app_state;
+mod app_transition;
 mod appearance;
 mod browser_errors;
 mod browser_lifecycle;
@@ -82,6 +82,7 @@ fn app_shell_state(state: &AppModel) -> (AppRoute, bool, bool) {
 }
 
 fn main() {
+    #[cfg(debug_assertions)]
     console_error_panic_hook::set_once();
     dioxus::launch(App);
 }
@@ -97,7 +98,7 @@ fn App() -> Element {
         trigger: use_signal(|| 0_u64),
         state: use_signal(RealtimeConnectionState::default),
     };
-    let rtc_peers = use_signal(BTreeMap::<String, RtcPeer>::new);
+    let rtc_peers = use_signal(RtcPeerRegistry::default);
     let rtc_config = use_signal(|| None::<ScopedRtcConfig>);
     let lifecycle_state = use_signal(LifecycleState::default);
     let rtc_runtime = RtcRuntime {

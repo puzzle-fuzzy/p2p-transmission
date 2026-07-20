@@ -6,10 +6,12 @@ use p2p_protocol::{
     CURRENT_PROTOCOL, JoinRequestStateWire, RoomBootstrapResponse, ServerRealtimeMessage,
 };
 
+use crate::app_runtime::dispatch_app_event;
 use crate::app_state::{
     AppModel, RealtimePhase, RoomRole, Screen, StoredRoomSession, TextTransferState, TransferState,
 };
-use crate::browser_errors::friendly_error;
+use crate::app_transition::{AppEvent, reduce_app_event};
+use crate::browser_errors::platform_error_event;
 use crate::browser_lifecycle::complete_lifecycle_recovery;
 use crate::realtime_connection::{
     RealtimeLease, defer_realtime_socket_clear, mark_realtime_connected, realtime_lease_is_current,
@@ -89,11 +91,17 @@ pub(super) fn return_to_lobby(
     realtime_target.set(None);
     let _ = clear_room_session();
     let mut state = model.write();
-    state.screen = Screen::Lobby {
-        room_code: String::new(),
-        invite_capability: None,
-    };
-    state.realtime = RealtimePhase::Disconnected;
+    reduce_app_event(
+        &mut state,
+        AppEvent::Navigate(Screen::Lobby {
+            room_code: String::new(),
+            invite_capability: None,
+        }),
+    );
+    reduce_app_event(
+        &mut state,
+        AppEvent::SetRealtime(RealtimePhase::Disconnected),
+    );
     deactivate_rtc_config(&mut state);
     state.transfer = TransferState::Idle;
     state.text_transfer = TextTransferState::Idle;
@@ -102,11 +110,11 @@ pub(super) fn return_to_lobby(
     state.rtc_error = None;
     state.transfers_by_peer.clear();
     state.text_transfers_by_peer.clear();
-    state.decision_request_id = None;
-    state.busy = false;
+    reduce_app_event(&mut state, AppEvent::SetDecisionRequest(None));
+    reduce_app_event(&mut state, AppEvent::SetBusy(false));
     state.lobby_action_error = None;
-    state.error = None;
-    state.notice = notice;
+    reduce_app_event(&mut state, AppEvent::SetError(None));
+    reduce_app_event(&mut state, AppEvent::SetNotice(notice));
     state.entering_receivers.clear();
     refresh_aggregate_rtc(&mut state);
 }
@@ -122,9 +130,12 @@ fn complete_attachment(
     let lifecycle_recovered =
         complete_lifecycle_recovery(model, rtc, lifecycle_state, &target_scope, member);
     let mut state = model.write();
-    state.realtime = RealtimePhase::Connected;
+    reduce_app_event(&mut state, AppEvent::SetRealtime(RealtimePhase::Connected));
     if lifecycle_recovered {
-        state.notice = Some("连接已恢复".to_owned());
+        reduce_app_event(
+            &mut state,
+            AppEvent::SetNotice(Some("连接已恢复".to_owned())),
+        );
     }
     drop(state);
     if member {
@@ -202,6 +213,9 @@ pub(super) fn handle_realtime_event(
             apply_realtime_effects(runtime, &lease, reduce_socket_opened());
         }
         RealtimeEvent::Message(message) => handle_server_message(runtime, &lease, message),
+        RealtimeEvent::UpgradeRequired => {
+            dispatch_app_event(runtime.model, AppEvent::UpgradeRequired);
+        }
         RealtimeEvent::Error(error) => {
             apply_realtime_effects(runtime, &lease, reduce_socket_error(error));
         }
@@ -392,14 +406,18 @@ fn handle_revisioned_model_event(
 }
 
 fn apply_realtime_effects(
-    mut runtime: RealtimeSessionRuntime,
+    runtime: RealtimeSessionRuntime,
     lease: &RealtimeLease,
     effects: Vec<RealtimeEffect>,
 ) {
     for effect in effects {
         match effect {
-            RealtimeEffect::SetRealtimePhase(phase) => runtime.model.write().realtime = phase,
-            RealtimeEffect::SetError(error) => runtime.model.write().error = Some(error),
+            RealtimeEffect::SetRealtimePhase(phase) => {
+                dispatch_app_event(runtime.model, AppEvent::SetRealtime(phase));
+            }
+            RealtimeEffect::SetError(error) => {
+                dispatch_app_event(runtime.model, AppEvent::SetError(Some(error)));
+            }
             RealtimeEffect::MarkTargetRevisionApplied(revision) => {
                 mark_target_event_revision_applied(runtime.target, revision);
             }
@@ -434,7 +452,10 @@ fn apply_realtime_effects(
                 return;
             }
             RealtimeEffect::ReconnectSocket => {
-                runtime.model.write().realtime = RealtimePhase::Reconnecting;
+                dispatch_app_event(
+                    runtime.model,
+                    AppEvent::SetRealtime(RealtimePhase::Reconnecting),
+                );
                 defer_realtime_socket_clear(
                     runtime.connection,
                     runtime.target,
@@ -468,11 +489,16 @@ fn suppress_realtime_connection(mut runtime: RealtimeSessionRuntime, lease: Real
     runtime.rtc.config.set(None);
     {
         let mut model = runtime.model.write();
-        model.realtime = RealtimePhase::Superseded;
+        reduce_app_event(&mut model, AppEvent::SetRealtime(RealtimePhase::Superseded));
         deactivate_rtc_config(&mut model);
         model.pending_signals.clear();
-        model.notice = Some("此房间已在另一个标签页中打开，本页面已停止重连".to_owned());
-        model.error = None;
+        reduce_app_event(
+            &mut model,
+            AppEvent::SetNotice(Some(
+                "此房间已在另一个标签页中打开，本页面已停止重连".to_owned(),
+            )),
+        );
+        reduce_app_event(&mut model, AppEvent::SetError(None));
     }
 
     // Dropping the connection synchronously from its own callback would also drop
@@ -486,7 +512,7 @@ fn suppress_realtime_connection(mut runtime: RealtimeSessionRuntime, lease: Real
 }
 
 fn resolve_waiting(runtime: RealtimeSessionRuntime, lease: RealtimeLease) {
-    let mut model = runtime.model;
+    let model = runtime.model;
     let realtime_target = runtime.target;
     let Screen::Waiting {
         room_code,
@@ -505,9 +531,19 @@ fn resolve_waiting(runtime: RealtimeSessionRuntime, lease: RealtimeLease) {
         if !realtime_lease_is_current(&lease, runtime.connection, realtime_target) {
             return;
         }
-        let Ok(status) = status else {
-            model.write().error = Some("暂时无法确认申请状态，正在等待重连".to_owned());
-            return;
+        let status = match status {
+            Ok(status) => status,
+            Err(error) => {
+                if error.requires_upgrade() {
+                    dispatch_app_event(model, platform_error_event(&error));
+                } else {
+                    dispatch_app_event(
+                        model,
+                        AppEvent::SetError(Some("暂时无法确认申请状态，正在等待重连".to_owned())),
+                    );
+                }
+                return;
+            }
         };
         match status.state {
             JoinRequestStateWire::Pending => {}
@@ -520,7 +556,9 @@ fn resolve_waiting(runtime: RealtimeSessionRuntime, lease: RealtimeLease) {
                     Ok(snapshot) => {
                         enter_receiver_room(model, realtime_target, snapshot, request_id, peer_id)
                     }
-                    Err(error) => model.write().error = Some(friendly_error(&error)),
+                    Err(error) => {
+                        dispatch_app_event(model, platform_error_event(&error));
+                    }
                 }
             }
             JoinRequestStateWire::Rejected => return_to_lobby(
@@ -553,18 +591,21 @@ pub(super) fn enter_receiver_room(
     });
     let revision = snapshot.revision;
     let room_code = snapshot.room_code.clone();
-    model.write().screen = Screen::Room {
-        role: RoomRole::Receiver,
-        snapshot,
-        invite: None,
-        invite_request_id: None,
-    };
-    model.write().error = None;
+    reduce_app_event(
+        &mut model.write(),
+        AppEvent::Navigate(Screen::Room {
+            role: RoomRole::Receiver,
+            snapshot,
+            invite: None,
+            invite_request_id: None,
+        }),
+    );
+    dispatch_app_event(model, AppEvent::SetError(None));
     realtime_target.set(Some(member_target(room_code, revision, peer_id)));
 }
 
 fn refresh_room_snapshot(runtime: RealtimeSessionRuntime, lease: RealtimeLease) {
-    let mut model = runtime.model;
+    let model = runtime.model;
     let realtime_target = runtime.target;
     let room_code = match &model.read().screen {
         Screen::Waiting { room_code, .. } => room_code.clone(),
@@ -590,7 +631,9 @@ fn refresh_room_snapshot(runtime: RealtimeSessionRuntime, lease: RealtimeLease) 
                     resolve_waiting(runtime, lease.clone());
                 }
             }
-            Err(error) => model.write().error = Some(friendly_error(&error)),
+            Err(error) => {
+                dispatch_app_event(model, platform_error_event(&error));
+            }
         }
     });
 }

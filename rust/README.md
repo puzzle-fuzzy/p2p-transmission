@@ -15,7 +15,15 @@
 - SQLite 控制面持久化、TURN 临时凭据、安全响应头、限流与健康检查。
 - Chromium 桌面/移动端 E2E、Firefox/WebKit 轻量协商，以及发布前跨浏览器缓冲传输和大文件降级验证。
 
-当前协议固定为 5.0，只接受 major 与 minor 都完全匹配的消息；外部 JSON 出现未知字段也会被拒绝。服务端会话 Cookie 使用 `p2p_session_v5`，房间会话使用 `p2p_room_session_v5`，旧状态不会恢复。大文件正文始终通过 WebRTC 传输，不经过 Axum 或 SQLite。
+当前协议固定为 5.1，只接受 major 与 minor 都完全匹配的消息；外部 JSON 出现未知字段也会被拒绝。服务端会通过 `/api/meta` 声明紧凑能力位集，浏览器启动时同时检查协议和所需能力。服务端会话 Cookie 使用 `p2p_session_v5`，房间会话使用 `p2p_room_session_v5`，旧状态不会恢复。浏览器会在协议、能力或 Service Worker 版本变化时显示明确的刷新升级提示。大文件正文始终通过 WebRTC 传输，不经过 Axum 或 SQLite。
+
+## 架构边界
+
+- Axum SSR 只生成不依赖请求、Cookie 或房间状态的匿名大厅；私密状态和 WebRTC 生命周期只存在于浏览器岛中。
+- Dioxus 页面通过 `AppEvent` 修改壳层状态，副作用由 `AppEffect` 在状态借用结束后执行；实时消息继续由纯 reducer 返回后续 effect。
+- `RtcPeerRegistry` 独立持有浏览器 RTC 句柄，展示组件只接收可比较的状态和视图模型，不把 `RtcPeer` 放进响应式状态树。
+- 协议号、持久化键和 Cookie 名由 `protocol/src/version.rs` 统一派生；服务端以 HTTP 426 拒绝旧协议，应用壳负责在 WASM 不兼容时仍展示刷新入口。
+- `check_web_architecture.py`、`check_server_architecture.py` 和 `check_version_contract.py` 在 `verify.py` 中固化这些边界。
 
 ## 启动
 

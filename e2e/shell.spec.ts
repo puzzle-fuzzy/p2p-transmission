@@ -8,6 +8,47 @@ const currentDirectory = dirname(fileURLToPath(import.meta.url))
 test('the root renders the Dioxus transfer workspace', { tag: '@smoke' }, async ({ page }, testInfo) => {
   const pageErrors: string[] = []
   page.on('pageerror', error => pageErrors.push(error.message))
+  await page.addInitScript(() => {
+    const probe = {
+      overflowFrames: 0,
+      overflows: [] as Array<{
+        bootFallback: boolean
+        clientHeight: number
+        mainHidden: boolean
+        sample: number
+        shells: Array<{ className: string, display: string, height: number, top: number }>
+        scrollHeight: number
+        time: number
+      }>,
+      samples: 0,
+    }
+    Object.assign(window, { __p2pOverflowProbe: probe })
+    const sample = () => {
+      probe.samples += 1
+      if (document.documentElement.scrollHeight > document.documentElement.clientHeight) {
+        probe.overflowFrames += 1
+        probe.overflows.push({
+          bootFallback: document.querySelector('#boot-fallback') !== null,
+          clientHeight: document.documentElement.clientHeight,
+          mainHidden: document.querySelector('#main')?.hasAttribute('hidden') ?? true,
+          sample: probe.samples,
+          shells: [...document.querySelectorAll<HTMLElement>('.app-shell')].map(shell => {
+            const rect = shell.getBoundingClientRect()
+            return {
+              className: shell.className,
+              display: getComputedStyle(shell).display,
+              height: rect.height,
+              top: rect.top,
+            }
+          }),
+          scrollHeight: document.documentElement.scrollHeight,
+          time: performance.now(),
+        })
+      }
+      if (probe.samples < 180) requestAnimationFrame(sample)
+    }
+    requestAnimationFrame(sample)
+  })
 
   const response = await page.goto('/')
   expect(response?.ok()).toBe(true)
@@ -22,6 +63,68 @@ test('the root renders the Dioxus transfer workspace', { tag: '@smoke' }, async 
   await expect(roomCode).toBeVisible()
   await expect(page.getByRole('button', { name: '请求加入' })).toBeDisabled()
   await expect(page.getByRole('button', { name: '创建房间' })).toBeEnabled()
+  const githubLink = page.getByRole('link', { name: 'GitHub ↗' })
+  await expect(githubLink).toBeVisible()
+  await expect(githubLink.locator('xpath=..')).toContainText(
+    'Files never touch our servers · Privacy by design · GitHub ↗',
+  )
+
+  const encryptedFeature = page.getByRole('listitem').filter({ hasText: 'E2E Encrypted' })
+  await encryptedFeature.hover()
+  await expect.poll(() => encryptedFeature.evaluate(element => (
+    getComputedStyle(element, '::after').opacity
+  ))).toBe('1')
+
+  const createButton = page.getByRole('button', { name: '创建房间' })
+  const createButtonBackground = await createButton.evaluate(element => (
+    getComputedStyle(element).backgroundColor
+  ))
+  await createButton.hover()
+  await expect.poll(() => createButton.evaluate(element => (
+    getComputedStyle(element).backgroundColor
+  ))).not.toBe(createButtonBackground)
+
+  if (testInfo.project.name === 'desktop-chromium') {
+    const layout = await page.locator('.app-shell').evaluate(shell => {
+      const style = getComputedStyle(shell)
+      const room = shell.querySelector('.vault-room')?.getBoundingClientRect()
+      return {
+        alignItems: style.alignItems,
+        display: style.display,
+        justifyContent: style.justifyContent,
+        topGap: room?.top ?? -1,
+        bottomGap: room ? innerHeight - room.bottom : -1,
+      }
+    })
+    expect(layout).toMatchObject({
+      alignItems: 'center',
+      display: 'flex',
+      justifyContent: 'center',
+    })
+    expect(Math.abs(layout.topGap - layout.bottomGap)).toBeLessThanOrEqual(1)
+    await page.waitForTimeout(250)
+    const overflowProbe = await page.evaluate(() => (
+      window as Window & {
+        __p2pOverflowProbe: {
+          overflowFrames: number
+          overflows: Array<{
+            bootFallback: boolean
+            clientHeight: number
+            mainHidden: boolean
+            sample: number
+            shells: Array<{ className: string, display: string, height: number, top: number }>
+            scrollHeight: number
+            time: number
+          }>
+          samples: number
+        }
+      }
+    ).__p2pOverflowProbe)
+    expect(overflowProbe.samples).toBeGreaterThan(0)
+    expect(overflowProbe.overflowFrames).toBe(overflowProbe.overflows.length)
+    expect(overflowProbe.overflows).toEqual([])
+  }
+
   await roomCode.focus()
   await page.keyboard.type('a')
   await expect(roomCodeInputs.nth(1)).toBeFocused()
@@ -94,6 +197,38 @@ test('the root renders the Dioxus transfer workspace', { tag: '@smoke' }, async 
     await mkdir(resolve(output, '..'), { recursive: true })
     await page.screenshot({ path: output, fullPage: true })
   }
+})
+
+test('a newly activated application release asks the user to refresh', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: '加入房间' })).toBeVisible()
+
+  await page.evaluate(() => window.dispatchEvent(new Event('p2p-app-update')))
+
+  const dialog = page.getByRole('alertdialog', { name: '需要刷新页面' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('正在进行的传输会中断')
+  await expect(dialog.getByRole('button', { name: '刷新并升级' })).toBeVisible()
+})
+
+test('a protocol mismatch stops boot and presents the upgrade action', async ({ page }) => {
+  await page.route('**/api/meta', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      product: 'P2P Transmission',
+      version: '2.0.1',
+      release: 'stale-test',
+      api_major: 5,
+      api_minor: 0,
+      capabilities: 7,
+    }),
+  }))
+
+  await page.goto('/')
+
+  await expect(page.getByRole('alertdialog', { name: '需要刷新页面' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '刷新并升级' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '加入房间' })).toBeVisible()
 })
 
 test('an invalid stored room is cleared without a navigation trap', async ({ page }) => {
@@ -180,7 +315,7 @@ test('the root keeps a useful anonymous lobby when WebAssembly is blocked', { ta
   await expect(shell.getByRole('button', { name: '请求加入' })).toBeDisabled()
   await expect(shell.getByRole('button', { name: '创建房间' })).toBeDisabled()
   await expect(shell.getByRole('textbox')).toHaveCount(0)
-  await expect(shell.locator('.footer-links .text-link').first()).toHaveText('关于')
+  await expect(shell.locator('.footer-inline-actions .footer-about-link')).toHaveText('关于')
   await expect(shell.locator(
     'a[href], input:not(:disabled), button:not(:disabled), [tabindex]:not([tabindex="-1"])',
   )).toHaveCount(0)

@@ -143,7 +143,11 @@ async fn room_restore_js(RawQuery(query): RawQuery) -> Response {
     if !current_shell_asset_query(query.as_deref()) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let mut response = embedded_asset("text/javascript; charset=utf-8", ROOM_RESTORE_JS);
+    let body = ROOM_RESTORE_JS.replace(
+        "__P2P_ROOM_SESSION_STORAGE_KEY__",
+        p2p_protocol::ROOM_SESSION_STORAGE_KEY,
+    );
+    let mut response = embedded_asset("text/javascript; charset=utf-8", body);
     response.headers_mut().insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static("no-cache, must-revalidate"),
@@ -197,6 +201,8 @@ async fn meta() -> Json<BuildInfo> {
         version: env!("CARGO_PKG_VERSION").to_owned(),
         release: release_version().to_owned(),
         api_major: API_MAJOR_VERSION,
+        api_minor: p2p_protocol::CURRENT_PROTOCOL.minor,
+        capabilities: p2p_protocol::CURRENT_CAPABILITIES,
     })
 }
 

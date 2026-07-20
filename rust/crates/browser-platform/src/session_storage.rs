@@ -1,7 +1,7 @@
 use crate::BrowserPlatformError;
 
 #[cfg(target_arch = "wasm32")]
-const ROOM_SESSION_STORAGE_KEY: &str = "p2p_room_session_v5";
+use p2p_protocol::ROOM_SESSION_STORAGE_KEY;
 
 #[cfg(target_arch = "wasm32")]
 pub fn load_room_session() -> Result<Option<String>, BrowserPlatformError> {

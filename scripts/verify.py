@@ -30,6 +30,7 @@ def main() -> None:
     run(["cargo", "fmt", "--all", "--", "--check"])
     run(["python", "-X", "utf8", "scripts/check_web_architecture.py"])
     run(["python", "-X", "utf8", "scripts/check_server_architecture.py"])
+    run(["python", "-X", "utf8", "scripts/check_version_contract.py"])
     run([
         "cargo",
         "clippy",

@@ -38,7 +38,7 @@ M8 存储异常恢复截图：
 - [`m8-pending-write-cancelled-desktop-chromium.png`](screenshots/m8-pending-write-cancelled-desktop-chromium.png)
 - [`m8-storage-quota-paused-desktop-chromium.png`](screenshots/m8-storage-quota-paused-desktop-chromium.png)
 
-## M9 文本同意流
+## M9 文本直达流
 
 - [`m9-text-owner-desktop-chromium.png`](screenshots/m9-text-owner-desktop-chromium.png)
 - [`m9-text-receiver-desktop-chromium.png`](screenshots/m9-text-receiver-desktop-chromium.png)

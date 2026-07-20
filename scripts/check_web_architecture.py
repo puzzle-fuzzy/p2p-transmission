@@ -228,6 +228,25 @@ TRANSFER_PANEL_VIEW_MODEL_FORBIDDEN_MARKERS = (
     "Signal<",
     "rsx!",
 )
+RTC_HANDLE_FREE_PRESENTATION_PATHS = (
+    WEB_SOURCE / "main.rs",
+    WEB_SOURCE / "about.rs",
+    WEB_SOURCE / "join_request.rs",
+    WEB_SOURCE / "lobby.rs",
+    WEB_SOURCE / "room_view.rs",
+    WEB_SOURCE / "share_dialog.rs",
+    WEB_SOURCE / "waiting_room.rs",
+)
+APP_EVENT_REDUCER_PATHS = {
+    WEB_SOURCE / "app_transition.rs",
+    WEB_SOURCE / "realtime_event_reducer.rs",
+    WEB_SOURCE / "rtc_transition.rs",
+    WEB_SOURCE / "rtc_transfer_events/text_transition.rs",
+    WEB_SOURCE / "rtc_transfer_events/transition/mod.rs",
+}
+DIRECT_APP_FIELD_ASSIGNMENT = re.compile(
+    r"\b(?:model|state)\.(?:about_open|notice|error|busy|realtime|session|screen|decision_request_id)\s*=(?!=)"
+)
 
 
 def load_toml(path: Path) -> dict[str, object]:
@@ -267,6 +286,32 @@ def main() -> None:
         for dependency in forbidden:
             if imports_dependency(source, dependency):
                 violations.append(f"{path.relative_to(ROOT)} imports {dependency}")
+
+    presentation_paths = list(RTC_HANDLE_FREE_PRESENTATION_PATHS)
+    presentation_paths.extend((WEB_SOURCE / "transfer_panel").rglob("*.rs"))
+    for path in sorted(presentation_paths):
+        source = path.read_text(encoding="utf-8").split("#[cfg(test)]", 1)[0]
+        if re.search(r"\bRtcPeer\b", source):
+            violations.append(
+                f"{path.relative_to(ROOT)} exposes a raw RtcPeer to presentation code"
+            )
+
+    for path in sorted(WEB_SOURCE.rglob("*.rs")):
+        if path.name == "tests.rs":
+            continue
+        source = path.read_text(encoding="utf-8").split("#[cfg(test)]", 1)[0]
+        if "Signal<BTreeMap<String, RtcPeer>>" in source:
+            violations.append(
+                f"{path.relative_to(ROOT)} stores raw peers in Dioxus reactive state"
+            )
+        if path not in APP_EVENT_REDUCER_PATHS and DIRECT_APP_FIELD_ASSIGNMENT.search(source):
+            violations.append(
+                f"{path.relative_to(ROOT)} mutates app shell state outside AppEvent reduction"
+            )
+
+    realtime_runtime = (WEB_SOURCE / "realtime_runtime.rs").read_text(encoding="utf-8")
+    if "Signal<RtcPeerRegistry>" not in realtime_runtime:
+        violations.append("realtime runtime must own peers through RtcPeerRegistry")
 
     browser_platform_facade_path = BROWSER_PLATFORM_SOURCE / "lib.rs"
     browser_platform_facade = browser_platform_facade_path.read_text(encoding="utf-8")
@@ -484,7 +529,7 @@ def main() -> None:
         f"checked {len(FORBIDDEN_DEPENDENCIES)} web module boundaries, the browser-platform "
         "facade, the RTC file, connection, peer/signaling, transfer-lifecycle, and "
         "recovery boundaries, the transfer-panel facade/view-model split, and the shared "
-        "UI boundary."
+        "UI boundary, AppEvent mutation boundary, and opaque RTC peer registry."
     )
 
 

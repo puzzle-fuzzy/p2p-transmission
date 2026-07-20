@@ -1,29 +1,26 @@
-use std::collections::BTreeMap;
-
 use dioxus::prelude::*;
 use p2p_browser_platform::{
-    BrowserPlatformError, RtcPeer, browser_files_from_input, choose_persistent_source_files,
-    choose_stream_files,
+    BrowserPlatformError, RtcPeerRegistry, browser_files_from_input,
+    choose_persistent_source_files, choose_stream_files,
 };
 use p2p_protocol::CancelReason;
 
+use crate::app_runtime::dispatch_app_event;
 use crate::app_state::{AppModel, RoomRole, TextTransferState, TransferLinkState, TransferState};
-use crate::browser_errors::friendly_transfer_error;
+use crate::app_transition::AppEvent;
+use crate::browser_errors::{friendly_transfer_error, transfer_error_event};
 use crate::rtc_orchestration::reconnect_paused_transfer;
 use crate::transfer_presentation::transfer_is_active;
 
 #[derive(Clone, Copy)]
 pub(super) struct TransferActions {
     model: Signal<AppModel>,
-    rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+    rtc_peers: Signal<RtcPeerRegistry>,
     dialog_error: Option<Signal<Option<String>>>,
 }
 
 impl TransferActions {
-    pub(super) fn new(
-        model: Signal<AppModel>,
-        rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
-    ) -> Self {
+    pub(super) fn new(model: Signal<AppModel>, rtc_peers: Signal<RtcPeerRegistry>) -> Self {
         Self {
             model,
             rtc_peers,
@@ -37,8 +34,7 @@ impl TransferActions {
     }
 
     fn clear_error(self) {
-        let mut model = self.model;
-        model.write().error = None;
+        dispatch_app_event(self.model, AppEvent::SetError(None));
         if let Some(mut dialog_error) = self.dialog_error
             && let Ok(mut error) = dialog_error.try_write()
         {
@@ -52,8 +48,14 @@ impl TransferActions {
                 *error = Some(message);
             }
         } else {
-            let mut model = self.model;
-            model.write().error = Some(message);
+            dispatch_app_event(self.model, AppEvent::SetError(Some(message)));
+        }
+    }
+
+    fn set_transfer_error(self, error: &BrowserPlatformError) {
+        match transfer_error_event(error) {
+            AppEvent::SetError(Some(message)) => self.set_error(message),
+            event => dispatch_app_event(self.model, event),
         }
     }
 
@@ -63,7 +65,7 @@ impl TransferActions {
             Ok(files) if !files.is_empty() => files,
             Ok(_) => return Vec::new(),
             Err(error) => {
-                self.set_error(friendly_transfer_error(&error));
+                self.set_transfer_error(&error);
                 return Vec::new();
             }
         };
@@ -115,7 +117,7 @@ impl TransferActions {
             Ok(files) if !files.is_empty() => files,
             Ok(_) | Err(BrowserPlatformError::UserCancelled) => return Vec::new(),
             Err(error) => {
-                self.set_error(friendly_transfer_error(&error));
+                self.set_transfer_error(&error);
                 return Vec::new();
             }
         };
@@ -123,7 +125,7 @@ impl TransferActions {
             let peers = self.rtc_peers.read();
             peer_ids
                 .into_iter()
-                .map(|peer_id| (peer_id.clone(), peers.get(&peer_id).cloned()))
+                .map(|peer_id| (peer_id.clone(), peers.get(&peer_id)))
                 .collect::<Vec<_>>()
         };
         let mut offered = Vec::new();
@@ -150,7 +152,7 @@ impl TransferActions {
             let peers = self.rtc_peers.read();
             peer_ids
                 .into_iter()
-                .filter_map(|peer_id| peers.get(&peer_id).cloned())
+                .filter_map(|peer_id| peers.get(&peer_id))
                 .collect::<Vec<_>>()
         };
         spawn(async move {
@@ -168,23 +170,12 @@ impl TransferActions {
 
     pub(super) fn decide_incoming_transfer(self, peer_id: &str, transfer_id: &str, accepted: bool) {
         self.clear_error();
-        let Some(peer) = self.rtc_peers.read().get(peer_id).cloned() else {
+        let Some(peer) = self.rtc_peers.read().get(peer_id) else {
             self.set_error("点对点连接已经断开".to_owned());
             return;
         };
         if let Err(error) = peer.decide_transfer(transfer_id, accepted) {
-            self.set_error(friendly_transfer_error(&error));
-        }
-    }
-
-    pub(super) fn decide_incoming_text(self, peer_id: &str, transfer_id: &str, accepted: bool) {
-        self.clear_error();
-        let Some(peer) = self.rtc_peers.read().get(peer_id).cloned() else {
-            self.set_error("点对点连接已经断开".to_owned());
-            return;
-        };
-        if let Err(error) = peer.decide_text(transfer_id, accepted) {
-            self.set_error(friendly_transfer_error(&error));
+            self.set_transfer_error(&error);
         }
     }
 
@@ -194,12 +185,12 @@ impl TransferActions {
             let peers = self.rtc_peers.read();
             peer_ids
                 .into_iter()
-                .filter_map(|peer_id| peers.get(&peer_id).cloned())
+                .filter_map(|peer_id| peers.get(&peer_id))
                 .collect::<Vec<_>>()
         };
         for peer in peers {
             if let Err(error) = peer.cancel_text() {
-                self.set_error(friendly_transfer_error(&error));
+                self.set_transfer_error(&error);
             }
         }
     }
@@ -222,7 +213,7 @@ impl TransferActions {
         file_names: Vec<String>,
     ) {
         self.clear_error();
-        let Some(peer) = self.rtc_peers.read().get(&peer_id).cloned() else {
+        let Some(peer) = self.rtc_peers.read().get(&peer_id) else {
             self.set_error("点对点连接已经断开".to_owned());
             return;
         };
@@ -230,35 +221,37 @@ impl TransferActions {
             Ok(writers) => writers,
             Err(BrowserPlatformError::UserCancelled) => return,
             Err(error) => {
-                self.set_error(friendly_transfer_error(&error));
+                self.set_transfer_error(&error);
                 return;
             }
         };
         if let Err(error) = peer.accept_stream_transfer(&transfer_id, writers).await {
-            self.set_error(friendly_transfer_error(&error));
+            self.set_transfer_error(&error);
         } else {
-            let mut model = self.model;
-            let mut state = model.write();
-            state.notice = Some(if file_names.len() > 1 {
-                "已选择保存文件夹，开始按顺序接收".to_owned()
-            } else {
-                "已选择保存位置，开始接收文件".to_owned()
-            });
+            dispatch_app_event(
+                self.model,
+                AppEvent::SetNotice(Some(if file_names.len() > 1 {
+                    "已选择保存文件夹，开始按顺序接收".to_owned()
+                } else {
+                    "已选择保存位置，开始接收文件".to_owned()
+                })),
+            );
         }
     }
 
     pub(super) async fn resume_streaming_transfer(self, peer_id: String, transfer_id: String) {
         self.clear_error();
-        let Some(peer) = self.rtc_peers.read().get(&peer_id).cloned() else {
+        let Some(peer) = self.rtc_peers.read().get(&peer_id) else {
             self.set_error("点对点连接已经断开".to_owned());
             return;
         };
         if let Err(error) = peer.resume_stream_transfer(&transfer_id).await {
-            self.set_error(friendly_transfer_error(&error));
+            self.set_transfer_error(&error);
         } else {
-            let mut model = self.model;
-            let mut state = model.write();
-            state.notice = Some("已校验原保存位置，继续接收".to_owned());
+            dispatch_app_event(
+                self.model,
+                AppEvent::SetNotice(Some("已校验原保存位置，继续接收".to_owned())),
+            );
         }
     }
 
@@ -284,7 +277,7 @@ impl TransferActions {
             let peers = self.rtc_peers.read();
             peer_ids
                 .into_iter()
-                .filter_map(|peer_id| peers.get(&peer_id).cloned())
+                .filter_map(|peer_id| peers.get(&peer_id))
                 .collect::<Vec<_>>()
         };
         spawn(async move {
@@ -306,7 +299,7 @@ impl TransferActions {
             let peers = self.rtc_peers.read();
             peer_ids
                 .into_iter()
-                .filter_map(|peer_id| peers.get(&peer_id).cloned().map(|peer| (peer_id, peer)))
+                .filter_map(|peer_id| peers.get(&peer_id).map(|peer| (peer_id, peer)))
                 .collect::<Vec<_>>()
         };
         for (peer_id, peer) in peers {

@@ -7,7 +7,7 @@ mod manifest;
 #[cfg(any(target_arch = "wasm32", test))]
 mod wire;
 
-use std::rc::Rc;
+use std::{cell::RefCell, collections::BTreeMap, fmt, rc::Rc};
 
 use p2p_protocol::{CancelReason, RtcConfigResponse, Signal, StreamPauseReason};
 pub use p2p_transfer::{TransferDirection, TransferFile};
@@ -364,6 +364,71 @@ pub use native::{
     persistent_source_file_support,
 };
 
+/// Owns browser-only peer handles behind an opaque runtime boundary.
+///
+/// Dioxus view state carries this registry as a service handle instead of
+/// storing `RtcPeer` objects in reactive collections. Mutating the registry
+/// therefore cannot accidentally trigger UI renders or expose browser handles
+/// through presentation component properties.
+#[derive(Clone, Default)]
+pub struct RtcPeerRegistry {
+    inner: Rc<RefCell<BTreeMap<String, RtcPeer>>>,
+}
+
+impl RtcPeerRegistry {
+    pub fn get(&self, peer_id: &str) -> Option<RtcPeer> {
+        self.inner.borrow().get(peer_id).cloned()
+    }
+
+    pub fn insert(&self, peer_id: String, peer: RtcPeer) {
+        self.inner.borrow_mut().insert(peer_id, peer);
+    }
+
+    pub fn remove(&self, peer_id: &str) -> Option<RtcPeer> {
+        self.inner.borrow_mut().remove(peer_id)
+    }
+
+    pub fn peer_ids(&self) -> Vec<String> {
+        self.inner.borrow().keys().cloned().collect()
+    }
+
+    pub fn entries(&self) -> Vec<(String, RtcPeer)> {
+        self.inner
+            .borrow()
+            .iter()
+            .map(|(peer_id, peer)| (peer_id.clone(), peer.clone()))
+            .collect()
+    }
+
+    pub fn take_all(&self) -> Vec<RtcPeer> {
+        std::mem::take(&mut *self.inner.borrow_mut())
+            .into_values()
+            .collect()
+    }
+
+    pub fn is_current(&self, peer_id: &str, peer: &RtcPeer) -> bool {
+        self.inner
+            .borrow()
+            .get(peer_id)
+            .is_some_and(|current| current.ptr_eq(peer))
+    }
+}
+
+impl PartialEq for RtcPeerRegistry {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
+impl fmt::Debug for RtcPeerRegistry {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RtcPeerRegistry")
+            .field("peer_count", &self.inner.borrow().len())
+            .finish()
+    }
+}
+
 #[cfg(test)]
 mod lease_tests {
     use super::rtc_config_deadline_ms;
@@ -376,5 +441,23 @@ mod lease_tests {
     #[test]
     fn rtc_config_deadline_saturates_instead_of_wrapping() {
         assert_eq!(rtc_config_deadline_ms(u64::MAX - 5, 10), u64::MAX);
+    }
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::{RtcPeer, RtcPeerRegistry};
+
+    #[test]
+    fn cloned_registry_handles_share_one_opaque_peer_store() {
+        let registry = RtcPeerRegistry::default();
+        let clone = registry.clone();
+        assert_eq!(registry, clone);
+
+        registry.insert("peer-a".to_owned(), RtcPeer);
+        assert_eq!(clone.peer_ids(), vec!["peer-a"]);
+        assert!(clone.get("peer-a").is_some());
+        assert_eq!(clone.take_all().len(), 1);
+        assert!(registry.peer_ids().is_empty());
     }
 }

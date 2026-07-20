@@ -218,10 +218,7 @@ async function verifyPublicTransfer({
     await owner.getByRole('tab', { name: '文本' }).click()
     await owner.getByRole('textbox', { name: '文本内容' }).fill(textPayload)
     await owner.getByRole('button', { name: '发送文本' }).click()
-    const textOffer = receiver.getByRole('dialog', { name: '接收文本' })
-    await expect(textOffer).toBeVisible()
-    await expect(textOffer).not.toContainText(textPayload)
-    await textOffer.getByRole('button', { name: '接收文本' }).click()
+    await expect(receiver.getByRole('dialog', { name: '接收文本' })).toHaveCount(0)
     await expect(receiver.locator('.received-text-card pre')).toHaveText(textPayload)
     await expect(owner.getByLabel('文本发送状态').getByText('已送达')).toBeVisible()
 

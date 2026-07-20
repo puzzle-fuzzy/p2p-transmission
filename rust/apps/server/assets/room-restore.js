@@ -1,5 +1,5 @@
 (() => {
-  const storageKey = 'p2p_room_session_v5';
+  const storageKey = '__P2P_ROOM_SESSION_STORAGE_KEY__';
   const schemaVersion = 5;
   const appearance = [
     ['vault-theme', 'data-theme', ['mist', 'slate', 'dusk', 'sand'], 'mist'],

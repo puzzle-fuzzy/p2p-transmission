@@ -1,17 +1,18 @@
 use std::collections::BTreeMap;
 
 use dioxus::prelude::*;
-use p2p_browser_platform::{RtcPeer, TransferDirection, copy_text};
+use p2p_browser_platform::{RtcPeerRegistry, TransferDirection, copy_text};
 use p2p_protocol::{MAX_TEXT_TRANSFER_BYTES, MAX_TEXT_TRANSFER_CHARS, ParticipantSnapshot};
 
-use super::text_request_dialog::TextRequestDialog;
+use crate::app_runtime::dispatch_app_event;
 use crate::app_state::{AppModel, RoomRole, TextTransferState};
+use crate::app_transition::AppEvent;
 use crate::transfer_actions::TransferActions;
 
 #[component]
 pub(super) fn TextPanel(
     mut model: Signal<AppModel>,
-    rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+    rtc_peers: Signal<RtcPeerRegistry>,
     role: RoomRole,
     receivers: Vec<ParticipantSnapshot>,
     can_offer: bool,
@@ -33,22 +34,6 @@ pub(super) fn TextPanel(
         .map(|(peer_id, _)| peer_id.clone())
         .collect::<Vec<_>>();
     let active = !active_peer_ids.is_empty() || text_transfer_is_active(&text_transfer);
-    let incoming_request = text_transfers_by_peer.iter().find_map(|(peer_id, state)| {
-        let TextTransferState::Incoming {
-            transfer_id,
-            character_count,
-            byte_length,
-        } = state
-        else {
-            return None;
-        };
-        Some((
-            peer_id.clone(),
-            transfer_id.clone(),
-            *character_count,
-            *byte_length,
-        ))
-    });
     let current_peer_id = text_transfers_by_peer
         .iter()
         .find(|(_, state)| !matches!(state, TextTransferState::Idle))
@@ -67,9 +52,9 @@ pub(super) fn TextPanel(
                         if receivers.is_empty() {
                             "接收者加入后即可发送。正文不会经过服务器。"
                         } else if active {
-                            "正在等待接收者确认或回执。"
+                            "正在发送并等待接收回执。"
                         } else {
-                            "对方同意后，正文才会通过点对点加密通道发送。"
+                            "文本会通过点对点加密通道直接送达并展示。"
                         }
                     }
                 }
@@ -143,17 +128,6 @@ pub(super) fn TextPanel(
                     peer_id: current_peer_id,
                 }
             }
-            if let Some((peer_id, transfer_id, character_count, byte_length)) = incoming_request {
-                TextRequestDialog {
-                    key: "{transfer_id}",
-                    model,
-                    rtc_peers,
-                    peer_id,
-                    transfer_id,
-                    character_count,
-                    byte_length,
-                }
-            }
         }
     }
 }
@@ -161,7 +135,7 @@ pub(super) fn TextPanel(
 #[component]
 fn ReceiverTextView(
     mut model: Signal<AppModel>,
-    rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+    rtc_peers: Signal<RtcPeerRegistry>,
     state: TextTransferState,
     peer_id: Option<String>,
 ) -> Element {
@@ -188,7 +162,10 @@ fn ReceiverTextView(
                                 let value = value.clone();
                                 spawn(async move {
                                     if copy_text(&value).await.is_ok() {
-                                        model.write().notice = Some("文本已复制".to_owned());
+                            dispatch_app_event(
+                                model,
+                                AppEvent::SetNotice(Some("文本已复制".to_owned())),
+                            );
                                     }
                                 });
                             }
@@ -244,8 +221,8 @@ fn receiver_name(receivers: &[ParticipantSnapshot], peer_id: &str) -> String {
 fn text_status(state: &TextTransferState) -> &'static str {
     match state {
         TextTransferState::Idle => "等待发送",
-        TextTransferState::Offering { .. } => "等待同意",
-        TextTransferState::Incoming { .. } => "等待确认",
+        TextTransferState::Offering { .. } => "正在发送",
+        TextTransferState::Incoming { .. } => "正在接收",
         TextTransferState::Sending { .. } => "等待回执",
         TextTransferState::Receiving { .. } => "正在接收",
         TextTransferState::Rejected { .. } => "已拒绝",
@@ -259,7 +236,7 @@ fn text_status(state: &TextTransferState) -> &'static str {
 fn receiver_text_title(state: &TextTransferState) -> &'static str {
     match state {
         TextTransferState::Idle => "等待对方发送",
-        TextTransferState::Incoming { .. } => "收到文本请求",
+        TextTransferState::Incoming { .. } => "正在接收文本",
         TextTransferState::Receiving { .. } => "正在接收文本",
         TextTransferState::Received { .. } => "文本接收完成",
         TextTransferState::Rejected { .. } => "已拒绝文本",
@@ -271,11 +248,11 @@ fn receiver_text_title(state: &TextTransferState) -> &'static str {
 
 fn receiver_text_description(state: &TextTransferState) -> String {
     match state {
-        TextTransferState::Idle => "对方发起文本请求后，会先征得你的同意。".to_owned(),
+        TextTransferState::Idle => "对方发送文本后，正文会在这里直接显示。".to_owned(),
         TextTransferState::Incoming {
             character_count, ..
-        } => format!("一段 {character_count} 字符的文本正在等待确认。"),
-        TextTransferState::Receiving { .. } => "已同意，正在等待正文通过加密通道送达。".to_owned(),
+        } => format!("正在准备接收一段 {character_count} 字符的文本。"),
+        TextTransferState::Receiving { .. } => "正在等待正文通过加密通道送达。".to_owned(),
         TextTransferState::Received { .. } => "正文只保留在当前页面中，请按需复制。".to_owned(),
         TextTransferState::Rejected { direction } => {
             if *direction == TransferDirection::Receive {

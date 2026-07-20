@@ -1,14 +1,13 @@
 use std::collections::BTreeMap;
 
 use dioxus::prelude::*;
-use p2p_browser_platform::RtcPeer;
+use p2p_browser_platform::RtcPeerRegistry;
 use p2p_protocol::ParticipantSnapshot;
 
 mod file_progress_list;
 mod receiver_transfer_list;
 mod recipient_picker_dialog;
 mod text_panel;
-mod text_request_dialog;
 mod transfer_action_area;
 mod transfer_request_dialog;
 mod view_model;
@@ -52,7 +51,7 @@ impl PeerRtcPresentation {
 #[component]
 pub(super) fn TransferPanel(
     model: Signal<AppModel>,
-    rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+    rtc_peers: Signal<RtcPeerRegistry>,
     role: RoomRole,
     receivers: Vec<ParticipantSnapshot>,
     rtc_config_phase: RtcConfigPhase,

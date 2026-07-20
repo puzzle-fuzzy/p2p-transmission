@@ -1,8 +1,9 @@
 use dioxus::prelude::*;
 use p2p_browser_platform::{RtcConfigLease, fetch_rtc_config, monotonic_millis, sleep_ms};
 
+use crate::app_runtime::dispatch_app_event;
 use crate::app_state::{TextTransferState, TransferState};
-use crate::browser_errors::friendly_error;
+use crate::browser_errors::{friendly_error, platform_error_event};
 use crate::realtime_connection::{realtime_target_is_suppressed, realtime_target_scope_is_current};
 use crate::realtime_runtime::{RealtimeSessionRuntime, ScopedRtcConfig};
 use crate::realtime_target::{RealtimeTarget, RealtimeTargetScope};
@@ -76,6 +77,10 @@ pub(super) fn use_rtc_config_session(mut runtime: RealtimeSessionRuntime) {
                         next_delay_ms = rtc_config_refresh_delay_ms(lease.remaining_ms());
                     }
                     Err(error) => {
+                        if error.requires_upgrade() {
+                            dispatch_app_event(runtime.model, platform_error_event(&error));
+                            return;
+                        }
                         next_delay_ms = retry_delay_for_current_config(
                             runtime,
                             &target_scope,
@@ -97,8 +102,9 @@ fn apply_rtc_config(
         .rtc
         .peers
         .peek()
-        .values()
-        .cloned()
+        .entries()
+        .into_iter()
+        .map(|(_, peer)| peer)
         .collect::<Vec<_>>();
     for peer in peers {
         let _ = peer.replace_reconnect_rtc_config(lease.clone());

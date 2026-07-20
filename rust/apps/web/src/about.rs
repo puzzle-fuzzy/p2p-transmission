@@ -1,11 +1,13 @@
 use dioxus::prelude::*;
 use p2p_browser_platform::{close_modal_dialog, show_modal_dialog};
-use p2p_ui_shell::{ABOUT_LABEL, GITHUB_LABEL, PRIVACY_COPY};
+use p2p_ui_shell::{ABOUT_LABEL, PRIVACY_COPY};
 
+use crate::app_runtime::dispatch_app_event;
 use crate::app_state::AppModel;
+use crate::app_transition::AppEvent;
 
 #[component]
-pub(super) fn AboutDialog(mut model: Signal<AppModel>) -> Element {
+pub(super) fn AboutDialog(model: Signal<AppModel>) -> Element {
     use_effect(|| {
         let _ = show_modal_dialog("about-dialog");
     });
@@ -17,7 +19,7 @@ pub(super) fn AboutDialog(mut model: Signal<AppModel>) -> Element {
             oncancel: move |event| {
                 event.prevent_default();
                 let _ = close_modal_dialog("about-dialog");
-                model.write().about_open = false;
+                dispatch_app_event(model, AppEvent::SetAboutOpen(false));
             },
             h2 { id: "about-title", {ABOUT_LABEL} }
             p { "当前版本使用 Axum SSR、Dioxus Web 交互岛与共享 Rust crates 构建。页面样式和用户功能保持产品体验基线。" }
@@ -33,7 +35,7 @@ pub(super) fn AboutDialog(mut model: Signal<AppModel>) -> Element {
                 r#type: "button",
                 onclick: move |_| {
                     let _ = close_modal_dialog("about-dialog");
-                    model.write().about_open = false;
+                    dispatch_app_event(model, AppEvent::SetAboutOpen(false));
                 },
                 "关闭"
             }
@@ -42,20 +44,13 @@ pub(super) fn AboutDialog(mut model: Signal<AppModel>) -> Element {
 }
 
 #[component]
-pub(super) fn FooterLinks(mut model: Signal<AppModel>) -> Element {
+pub(super) fn FooterLinks(model: Signal<AppModel>) -> Element {
     rsx! {
         button {
-            class: "text-link",
+            class: "footer-about-link",
             r#type: "button",
-            onclick: move |_| model.write().about_open = true,
+            onclick: move |_| dispatch_app_event(model, AppEvent::SetAboutOpen(true)),
             {ABOUT_LABEL}
-        }
-        a {
-            class: "text-link",
-            href: "https://github.com/puzzle-fuzzy/p2p-transmission",
-            target: "_blank",
-            rel: "noreferrer",
-            {GITHUB_LABEL}
         }
     }
 }

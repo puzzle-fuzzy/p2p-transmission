@@ -43,16 +43,12 @@ pub(super) fn apply(
             byte_length,
         } => (
             TextTransferState::Incoming {
-                transfer_id: transfer_id.clone(),
+                transfer_id,
                 character_count,
                 byte_length,
             },
             None,
-            Some(NotificationEffect {
-                title: "收到文本请求".to_owned(),
-                body: format!("对方想发送一段 {character_count} 字符的文本"),
-                tag: format!("text-{transfer_id}"),
-            }),
+            None,
         ),
         RtcEvent::TextTransferAccepted {
             transfer_id,
@@ -101,7 +97,7 @@ pub(super) fn apply(
                     character_count,
                     byte_length,
                 },
-                Some("文本已发送并由接收方确认"),
+                Some("文本已送达接收方"),
                 None,
             )
         }
@@ -162,7 +158,7 @@ fn receiver_role(model: &AppModel) -> bool {
 
 fn friendly_text_error(message: &str) -> String {
     if message.contains("timed out") {
-        "等待确认或正文超时，请重新发送".to_owned()
+        "文本送达超时，请重新发送".to_owned()
     } else if message.contains("metadata does not match")
         || message.contains("exceeds the supported limit")
     {
@@ -232,7 +228,7 @@ mod tests {
     fn text_transport_errors_are_presented_in_chinese() {
         assert_eq!(
             friendly_text_error("text transfer timed out"),
-            "等待确认或正文超时，请重新发送"
+            "文本送达超时，请重新发送"
         );
         assert_eq!(
             friendly_text_error("text payload metadata does not match"),

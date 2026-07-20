@@ -614,7 +614,7 @@ mod tests {
     }
 
     #[test]
-    fn text_frames_enforce_consent_metadata_and_payload_limits() {
+    fn text_frames_enforce_metadata_and_payload_limits() {
         let text = "你好\nWebRTC 👋".to_owned();
         let offer = ControlMessage::TextOffer {
             version: CURRENT_PROTOCOL,

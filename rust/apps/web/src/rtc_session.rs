@@ -1,9 +1,9 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use dioxus::prelude::*;
 use p2p_browser_platform::{
     BrowserPlatformError, RealtimeConnection, RtcConnectionPhase, RtcEvent, RtcPeer,
-    SignalAcceptance, sleep_ms,
+    RtcPeerRegistry, SignalAcceptance, sleep_ms,
 };
 use p2p_protocol::{
     CURRENT_PROTOCOL, ClientRealtimeMessage, ParticipantRoleWire, Signal as ProtocolSignal,
@@ -13,6 +13,7 @@ use crate::app_state::{
     AppModel, PeerRtcState, PendingRtcSignal, RoomRole, RtcPhase, Screen, TextTransferState,
     TransferLinkState, TransferState,
 };
+use crate::app_transition::{AppEvent, reduce_app_event};
 use crate::browser_errors::{friendly_error, friendly_transfer_error};
 use crate::realtime_runtime::{RealtimeSessionRuntime, ScopedRtcConfig};
 use crate::realtime_target::RealtimeTargetScope;
@@ -26,11 +27,8 @@ use crate::rtc_transition::{
     refresh_aggregate_rtc, set_peer_rtc_error,
 };
 
-pub(super) fn reset_all_rtc_peers(
-    mut model: Signal<AppModel>,
-    mut rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
-) {
-    let peers = std::mem::take(&mut *rtc_peers.write());
+pub(super) fn reset_all_rtc_peers(mut model: Signal<AppModel>, rtc_peers: Signal<RtcPeerRegistry>) {
+    let peers = rtc_peers.read().take_all();
     {
         let mut state = model.write();
         if let Some(peer_id) = state
@@ -43,7 +41,7 @@ pub(super) fn reset_all_rtc_peers(
         state.rtc_peer_states.clear();
         refresh_aggregate_rtc(&mut state);
     }
-    for peer in peers.into_values() {
+    for peer in peers {
         peer.reset();
     }
 }
@@ -69,7 +67,7 @@ fn remote_peer_ids(model: &AppModel) -> Option<(RoomRole, Vec<String>)> {
 pub(super) fn sync_rtc_peers(
     mut model: Signal<AppModel>,
     connection: Signal<Option<RealtimeConnection>>,
-    rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+    rtc_peers: Signal<RtcPeerRegistry>,
     rtc_config: Signal<Option<ScopedRtcConfig>>,
     target_scope: &RealtimeTargetScope,
 ) {
@@ -89,9 +87,9 @@ pub(super) fn sync_rtc_peers(
     let desired = desired_peer_ids.iter().cloned().collect::<BTreeSet<_>>();
     let stale = rtc_peers
         .read()
-        .keys()
-        .filter(|peer_id| !desired.contains(*peer_id))
-        .cloned()
+        .peer_ids()
+        .into_iter()
+        .filter(|peer_id| !desired.contains(peer_id))
         .collect::<Vec<_>>();
     for peer_id in stale {
         if rtc_peers
@@ -134,7 +132,10 @@ pub(super) fn sync_rtc_peers(
                             let recovery_finished =
                                 finish_outgoing_recovery(&mut state, &peer_id, restore_generation);
                             if recovery_finished && let Err(error) = restore_result {
-                                state.error = Some(friendly_transfer_error(&error));
+                                reduce_app_event(
+                                    &mut state,
+                                    AppEvent::SetError(Some(friendly_transfer_error(&error))),
+                                );
                             }
                         }
                     });
@@ -165,11 +166,11 @@ pub(super) fn sync_rtc_peers(
 fn ensure_rtc_peer(
     mut model: Signal<AppModel>,
     connection: Signal<Option<RealtimeConnection>>,
-    mut rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+    rtc_peers: Signal<RtcPeerRegistry>,
     config: &p2p_browser_platform::RtcConfigLease,
     peer_id: String,
 ) -> Option<RtcPeer> {
-    if let Some(peer) = rtc_peers.read().get(&peer_id).cloned() {
+    if let Some(peer) = rtc_peers.read().get(&peer_id) {
         return Some(peer);
     }
     let callback_peer_id = peer_id.clone();
@@ -189,7 +190,7 @@ fn ensure_rtc_peer(
     });
     match RtcPeer::new(config.clone(), on_rtc_event.into_closure()) {
         Ok(peer) => {
-            rtc_peers.write().insert(peer_id, peer.clone());
+            rtc_peers.read().insert(peer_id, peer.clone());
             let mut state = model.write();
             refresh_aggregate_rtc(&mut state);
             Some(peer)
@@ -205,10 +206,10 @@ fn ensure_rtc_peer(
 
 pub(super) fn remove_rtc_peer(
     mut model: Signal<AppModel>,
-    mut rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+    rtc_peers: Signal<RtcPeerRegistry>,
     peer_id: &str,
 ) {
-    let peer = rtc_peers.write().remove(peer_id);
+    let peer = rtc_peers.read().remove(peer_id);
     let mut state = model.write();
     clear_peer_rtc_error(&mut state, peer_id);
     state.rtc_peer_states.remove(peer_id);
@@ -258,7 +259,10 @@ pub(super) fn accept_rtc_signal(
                 signal,
             });
         } else {
-            state.error = Some("点对点协商消息过多，请重新进入房间".to_owned());
+            reduce_app_event(
+                &mut state,
+                AppEvent::SetError(Some("点对点协商消息过多，请重新进入房间".to_owned())),
+            );
         }
         return;
     };
@@ -297,7 +301,7 @@ pub(super) fn accept_rtc_signal(
 fn handle_rtc_event(
     mut model: Signal<AppModel>,
     connection: Signal<Option<RealtimeConnection>>,
-    rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+    rtc_peers: Signal<RtcPeerRegistry>,
     peer_id: String,
     peer_generation: u64,
     event: RtcEvent,
@@ -341,7 +345,7 @@ fn handle_rtc_event(
                 Screen::Room { role, .. } => *role,
                 _ => return,
             };
-            let Some(peer) = rtc_peers.read().get(&peer_id).cloned() else {
+            let Some(peer) = rtc_peers.read().get(&peer_id) else {
                 return;
             };
             let connected_channel_ready =
@@ -352,7 +356,12 @@ fn handle_rtc_event(
                 if connected_channel_ready {
                     let recovered_stream = mark_data_channel_ready(&mut state, &peer_id);
                     if recovered_stream {
-                        state.notice = Some("连接已恢复，传输将从最后检查点继续".to_owned());
+                        reduce_app_event(
+                            &mut state,
+                            AppEvent::SetNotice(Some(
+                                "连接已恢复，传输将从最后检查点继续".to_owned(),
+                            )),
+                        );
                     }
                     RtcRecoveryAction::None
                 } else {
@@ -402,7 +411,10 @@ fn handle_rtc_event(
             let mut state = model.write();
             let recovered_stream = mark_data_channel_ready(&mut state, &peer_id);
             if recovered_stream {
-                state.notice = Some("连接已恢复，传输将从最后检查点继续".to_owned());
+                reduce_app_event(
+                    &mut state,
+                    AppEvent::SetNotice(Some("连接已恢复，传输将从最后检查点继续".to_owned())),
+                );
             }
         }
         RtcEvent::NegotiationFailed { message } => {

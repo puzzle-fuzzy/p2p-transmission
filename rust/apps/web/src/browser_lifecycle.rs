@@ -4,8 +4,10 @@ use p2p_browser_platform::{
 };
 use p2p_protocol::RoomBootstrapResponse;
 
+use crate::app_runtime::dispatch_app_event;
 use crate::app_state::{AppModel, RealtimePhase, Screen};
-use crate::browser_errors::friendly_error;
+use crate::app_transition::{AppEvent, reduce_app_event};
+use crate::browser_errors::platform_error_event;
 use crate::realtime_connection::{
     RealtimeLease, current_realtime_lease, current_realtime_target_scope,
     invalidate_realtime_lease, realtime_lease_is_current, realtime_target_is_suppressed,
@@ -63,7 +65,7 @@ pub(super) fn use_browser_lifecycle(
     runtime: RealtimeSessionRuntime,
     apply_snapshot: Callback<(RealtimeLease, RoomBootstrapResponse)>,
 ) {
-    let mut model = runtime.model;
+    let model = runtime.model;
     use_hook(move || {
         let on_event = Callback::new(move |event| {
             handle_browser_lifecycle_event(runtime, event, apply_snapshot);
@@ -71,7 +73,7 @@ pub(super) fn use_browser_lifecycle(
         match connect_browser_lifecycle(on_event.into_closure()) {
             Ok(active) => Some(active),
             Err(error) => {
-                model.write().error = Some(friendly_error(&error));
+                dispatch_app_event(model, platform_error_event(&error));
                 None
             }
         }
@@ -109,6 +111,7 @@ fn lifecycle_recovery_action(
             LifecycleRecoveryAction::RebuildResumablePeers
         }
         BrowserLifecycleEvent::Resumed { .. } => LifecycleRecoveryAction::None,
+        BrowserLifecycleEvent::AppUpdate => LifecycleRecoveryAction::None,
     }
 }
 
@@ -117,6 +120,10 @@ fn handle_browser_lifecycle_event(
     event: BrowserLifecycleEvent,
     apply_snapshot: Callback<(RealtimeLease, RoomBootstrapResponse)>,
 ) {
+    if event == BrowserLifecycleEvent::AppUpdate {
+        dispatch_app_event(runtime.model, AppEvent::UpgradeRequired);
+        return;
+    }
     let RealtimeSessionRuntime {
         mut model,
         target: realtime_target,
@@ -143,6 +150,7 @@ fn handle_browser_lifecycle_event(
                 }
             }
             BrowserLifecycleEvent::Resumed { .. } => {}
+            BrowserLifecycleEvent::AppUpdate => {}
         }
         action
     };
@@ -162,13 +170,19 @@ fn handle_browser_lifecycle_event(
         rtc.connection.set(None);
         {
             let mut state = model.write();
-            state.realtime = RealtimePhase::Reconnecting;
+            reduce_app_event(
+                &mut state,
+                AppEvent::SetRealtime(RealtimePhase::Reconnecting),
+            );
             let has_stream = mark_streamed_transfers_waiting(&mut state);
-            state.notice = Some(if has_stream {
-                "网络已断开，恢复后将从最后检查点继续传输".to_owned()
-            } else {
-                "网络已断开，恢复后会自动重新连接".to_owned()
-            });
+            reduce_app_event(
+                &mut state,
+                AppEvent::SetNotice(Some(if has_stream {
+                    "网络已断开，恢复后将从最后检查点继续传输".to_owned()
+                } else {
+                    "网络已断开，恢复后会自动重新连接".to_owned()
+                })),
+            );
         }
         if let Some(lease) = current_realtime_lease(realtime_connection, realtime_target) {
             schedule_reconnect(realtime_connection, realtime_target, model, lease);
@@ -187,13 +201,22 @@ fn handle_browser_lifecycle_event(
 
     {
         let mut state = model.write();
-        state.realtime = RealtimePhase::Reconnecting;
-        state.error = None;
+        reduce_app_event(
+            &mut state,
+            AppEvent::SetRealtime(RealtimePhase::Reconnecting),
+        );
+        reduce_app_event(&mut state, AppEvent::SetError(None));
         let has_stream = mark_streamed_transfers_waiting(&mut state);
         if has_stream {
-            state.notice = Some("正在恢复连接，将从最后检查点继续传输".to_owned());
+            reduce_app_event(
+                &mut state,
+                AppEvent::SetNotice(Some("正在恢复连接，将从最后检查点继续传输".to_owned())),
+            );
         } else {
-            state.notice = Some("正在恢复连接".to_owned());
+            reduce_app_event(
+                &mut state,
+                AppEvent::SetNotice(Some("正在恢复连接".to_owned())),
+            );
         }
     }
 
@@ -219,7 +242,9 @@ fn handle_browser_lifecycle_event(
             }
             match result {
                 Ok(snapshot) => apply_snapshot.call((lease.clone(), snapshot)),
-                Err(error) => model.write().error = Some(friendly_error(&error)),
+                Err(error) => {
+                    dispatch_app_event(model, platform_error_event(&error));
+                }
             }
         });
     }
@@ -242,9 +267,9 @@ pub(super) fn complete_lifecycle_recovery(
     let peers = rtc
         .peers
         .read()
-        .iter()
+        .entries()
+        .into_iter()
         .filter(|(_, peer)| peer.resumable_transfer_active() || !peer.data_channel_ready())
-        .map(|(peer_id, peer)| (peer_id.clone(), peer.clone()))
         .collect::<Vec<_>>();
     {
         let mut state = model.write();

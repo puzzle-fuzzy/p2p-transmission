@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOCKET = ROOT / "rust/apps/server/src/realtime/socket.rs"
 COMMANDS = ROOT / "rust/apps/server/src/realtime/socket/commands.rs"
 COMMAND_ERRORS = ROOT / "rust/apps/server/src/realtime/socket/commands/errors.rs"
+WEB_SHELL = ROOT / "rust/apps/server/src/web_shell.rs"
 
 
 def production_source(path: Path) -> str:
@@ -21,6 +22,9 @@ def main() -> None:
     socket = production_source(SOCKET)
     commands = production_source(COMMANDS)
     command_errors = production_source(COMMAND_ERRORS)
+    web_shell = WEB_SHELL.read_text(encoding="utf-8").split(
+        "#[cfg(test)]\nmod tests", 1
+    )[0]
 
     if len(socket.splitlines()) > 300:
         failures.append("realtime/socket.rs production code must stay at or below 300 lines")
@@ -36,6 +40,15 @@ def main() -> None:
         failures.append("command module must expose the internal dispatcher")
     if "mod errors;" not in commands:
         failures.append("command dispatch must keep error classification in its own module")
+    if web_shell.count("dioxus_ssr::render_element") != 1:
+        failures.append("SSR must render exactly one shared public lobby element")
+    if "p2p_ui_shell::initializing_lobby_element()" not in web_shell:
+        failures.append("SSR must use the shared anonymous lobby component")
+    for forbidden in ("CookieJar", "Query<", "State<", "p2p_domain", "p2p_protocol"):
+        if forbidden in web_shell:
+            failures.append(f"SSR public shell must not depend on request state marker {forbidden}")
+    if "pub async fn root(Extension(renderer): Extension<WebShellRenderer>)" not in web_shell:
+        failures.append("SSR root must depend only on the immutable startup renderer")
 
     for helper in (
         "async fn attach_room",
@@ -53,7 +66,7 @@ def main() -> None:
 
     print(
         "Server architecture check passed: WebSocket lifecycle, command dispatch, "
-        "authorization, and signaling boundaries are separated."
+        "authorization, signaling, and immutable public SSR boundaries are separated."
     )
 
 

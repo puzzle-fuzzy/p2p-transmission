@@ -147,13 +147,15 @@ pub fn activate_app_mount() {
     let Some(document) = web_sys::window().and_then(|window| window.document()) else {
         return;
     };
+    // Remove the SSR shell before revealing the live mount so both full-height
+    // layouts can never contribute to the same intermediate document flow.
+    if let Some(fallback) = document.get_element_by_id("boot-fallback") {
+        fallback.remove();
+    }
     if let Some(mount) = document.get_element_by_id("main") {
         let _ = mount.remove_attribute("hidden");
         let _ = mount.remove_attribute("inert");
         let _ = mount.remove_attribute("aria-hidden");
-    }
-    if let Some(fallback) = document.get_element_by_id("boot-fallback") {
-        fallback.remove();
     }
     if let Some(root) = document.document_element() {
         let _ = root.remove_attribute("data-p2p-room-restore");

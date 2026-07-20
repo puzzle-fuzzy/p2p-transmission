@@ -3,8 +3,10 @@ use std::rc::Rc;
 use dioxus::prelude::*;
 use p2p_browser_platform::{RealtimeConnection, RealtimeEvent, connect_realtime, sleep_ms};
 
+use crate::app_runtime::dispatch_app_event;
 use crate::app_state::{AppModel, RealtimePhase};
-use crate::browser_errors::friendly_error;
+use crate::app_transition::{AppEvent, reduce_app_event};
+use crate::browser_errors::platform_error_event;
 use crate::realtime_runtime::{
     RealtimeConnectionRuntime, RealtimeConnectionState, RealtimeSessionRuntime, SuppressedTarget,
 };
@@ -194,21 +196,24 @@ pub(super) fn use_realtime_connection(
 
         let (lease, attempt) = match begin {
             BeginConnection::Disconnected => {
-                model.write().realtime = RealtimePhase::Disconnected;
+                dispatch_app_event(model, AppEvent::SetRealtime(RealtimePhase::Disconnected));
                 return;
             }
             BeginConnection::Suppressed => {
-                model.write().realtime = RealtimePhase::Superseded;
+                dispatch_app_event(model, AppEvent::SetRealtime(RealtimePhase::Superseded));
                 return;
             }
             BeginConnection::Connect { lease, attempt } => (lease, attempt),
         };
 
-        model.write().realtime = if attempt == 0 {
-            RealtimePhase::Connecting
-        } else {
-            RealtimePhase::Reconnecting
-        };
+        dispatch_app_event(
+            model,
+            AppEvent::SetRealtime(if attempt == 0 {
+                RealtimePhase::Connecting
+            } else {
+                RealtimePhase::Reconnecting
+            }),
+        );
         let initial = lease.initial_message();
         let event_lease = lease.clone();
         let on_event = Callback::new(move |event| {
@@ -226,9 +231,12 @@ pub(super) fn use_realtime_connection(
                 }
                 {
                     let mut state = model.write();
-                    state.realtime = RealtimePhase::Reconnecting;
-                    state.error = Some(friendly_error(&error));
+                    reduce_app_event(
+                        &mut state,
+                        AppEvent::SetRealtime(RealtimePhase::Reconnecting),
+                    );
                 }
+                dispatch_app_event(model, platform_error_event(&error));
                 schedule_reconnect(runtime.connection, runtime.target, runtime.model, lease);
             }
         }

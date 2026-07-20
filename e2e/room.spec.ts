@@ -110,6 +110,20 @@ test('two browsers can create, approve, connect, and restore a room', async ({
     await receiver.keyboard.press('Enter')
     await expect(receiver.getByRole('heading', { name: '等待发送者确认' })).toBeVisible()
     await expect(receiver.getByRole('status')).toContainText('等待确认')
+    const waitingAlignment = await receiver.locator('.waiting-view').evaluate(waiting => {
+      const waitingRect = waiting.getBoundingClientRect()
+      const cardRect = waiting.closest('.vault-card')?.getBoundingClientRect()
+      return cardRect
+        ? {
+            leftGap: waitingRect.left - cardRect.left,
+            rightGap: cardRect.right - waitingRect.right,
+          }
+        : null
+    })
+    expect(waitingAlignment).not.toBeNull()
+    expect(Math.abs(
+      (waitingAlignment?.leftGap ?? 0) - (waitingAlignment?.rightGap ?? 0),
+    )).toBeLessThanOrEqual(1)
 
     const requestDialog = owner.getByRole('dialog', { name: '加入申请' })
     await expect(requestDialog).toBeVisible()

@@ -2,16 +2,18 @@ use std::collections::BTreeMap;
 
 use dioxus::prelude::*;
 use p2p_browser_platform::{
-    RtcPeer, close_modal_dialog, copy_text, leave_room, new_client_id, show_modal_dialog,
+    RtcPeerRegistry, close_modal_dialog, copy_text, leave_room, new_client_id, show_modal_dialog,
 };
 use p2p_protocol::{
     CreateInviteResponse, ParticipantRoleWire, ParticipantSnapshot, RoomBootstrapResponse,
 };
 
+use crate::app_runtime::dispatch_app_event;
 use crate::app_state::{
     AppModel, RealtimePhase, RoomRole, RtcPhase, Screen, TextTransferState, TransferState,
 };
-use crate::browser_errors::friendly_error;
+use crate::app_transition::AppEvent;
+use crate::browser_errors::platform_error_event;
 use crate::icons::{UiIcon, UiIconKind};
 use crate::join_request::JoinRequestDialog;
 use crate::participant_presence::{MemberRoster, PeerFlow};
@@ -65,7 +67,7 @@ impl RoomLeaveScope {
 pub(super) fn RoomView(
     mut model: Signal<AppModel>,
     mut realtime_target: Signal<Option<RealtimeTarget>>,
-    rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+    rtc_peers: Signal<RtcPeerRegistry>,
 ) -> Element {
     let mut share_open = use_signal(|| false);
     let mut leave_open = use_signal(|| false);
@@ -130,7 +132,10 @@ pub(super) fn RoomView(
                             let value = room_code_for_copy.clone();
                             spawn(async move {
                                 if copy_text(&value).await.is_ok() {
-                                    model.write().notice = Some("房间码已复制".to_owned());
+                    dispatch_app_event(
+                        model,
+                        AppEvent::SetNotice(Some("房间码已复制".to_owned())),
+                    );
                                 }
                             });
                         },
@@ -312,7 +317,7 @@ fn close_leave_dialog(mut open: Signal<bool>) {
 #[component]
 fn RoomTransferPanel(
     model: Signal<AppModel>,
-    rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+    rtc_peers: Signal<RtcPeerRegistry>,
     role: RoomRole,
     receivers: Vec<ParticipantSnapshot>,
 ) -> Element {
@@ -476,7 +481,7 @@ fn text_activity(transfer: &TextTransferState) -> Option<RoomActivityItem> {
     Some(RoomActivityItem { tone, message })
 }
 
-fn submit_leave(mut model: Signal<AppModel>, realtime_target: Signal<Option<RealtimeTarget>>) {
+fn submit_leave(model: Signal<AppModel>, realtime_target: Signal<Option<RealtimeTarget>>) {
     let (room_id, room_code, revision) = {
         let state = model.read();
         let Screen::Room { snapshot, .. } = &state.screen else {
@@ -496,16 +501,15 @@ fn submit_leave(mut model: Signal<AppModel>, realtime_target: Signal<Option<Real
             .cloned()
             .map(RealtimeTargetScope::new),
     };
-    model.write().busy = true;
+    dispatch_app_event(model, AppEvent::SetBusy(true));
     spawn(async move {
         let result = leave_room(&room_code, &new_client_id("leave"), Some(revision)).await;
         if !leave_scope.is_current(&model.read(), realtime_target.read().as_ref()) {
             return;
         }
         if let Err(error) = result {
-            let mut state = model.write();
-            state.busy = false;
-            state.error = Some(friendly_error(&error));
+            dispatch_app_event(model, AppEvent::SetBusy(false));
+            dispatch_app_event(model, platform_error_event(&error));
             return;
         }
         return_to_lobby(model, realtime_target, Some("已退出房间".to_owned()));

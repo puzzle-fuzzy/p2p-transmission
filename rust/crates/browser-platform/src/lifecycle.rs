@@ -9,6 +9,7 @@ pub enum BrowserLifecycleEvent {
     Offline,
     Online,
     Resumed { gap_ms: u64 },
+    AppUpdate,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -37,6 +38,7 @@ mod browser {
         _watchdog: Interval,
         visibility: Closure<dyn FnMut(Event)>,
         network: Closure<dyn FnMut(Event)>,
+        app_update: Closure<dyn FnMut(Event)>,
     }
 
     impl Drop for BrowserLifecycleInner {
@@ -52,6 +54,10 @@ mod browser {
             let _ = self.window.remove_event_listener_with_callback(
                 "offline",
                 self.network.as_ref().unchecked_ref(),
+            );
+            let _ = self.window.remove_event_listener_with_callback(
+                "p2p-app-update",
+                self.app_update.as_ref().unchecked_ref(),
             );
         }
     }
@@ -109,6 +115,25 @@ mod browser {
             .add_event_listener_with_callback("offline", network.as_ref().unchecked_ref())
             .map_err(browser_error)?;
 
+        let update_callback = Rc::clone(&callback);
+        let app_update = Closure::wrap(Box::new(move |_event: Event| {
+            update_callback.borrow_mut()(BrowserLifecycleEvent::AppUpdate);
+        }) as Box<dyn FnMut(_)>);
+        window
+            .add_event_listener_with_callback("p2p-app-update", app_update.as_ref().unchecked_ref())
+            .map_err(browser_error)?;
+
+        let update_already_pending = js_sys::Reflect::get(
+            window.as_ref(),
+            &wasm_bindgen::JsValue::from_str("__P2P_UPDATE_REQUIRED__"),
+        )
+        .ok()
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+        if update_already_pending {
+            callback.borrow_mut()(BrowserLifecycleEvent::AppUpdate);
+        }
+
         let watchdog_document = document.clone();
         let watchdog_window = window.clone();
         let watchdog_callback = callback;
@@ -140,6 +165,7 @@ mod browser {
                 _watchdog: watchdog,
                 visibility,
                 network,
+                app_update,
             }),
         })
     }

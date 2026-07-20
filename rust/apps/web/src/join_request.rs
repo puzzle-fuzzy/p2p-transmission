@@ -2,8 +2,10 @@ use dioxus::prelude::*;
 use p2p_browser_platform::{bootstrap_room, decide_join, show_modal_dialog};
 use p2p_protocol::{JoinDecisionRequest, JoinRequestSnapshot};
 
+use crate::app_runtime::dispatch_app_event;
 use crate::app_state::{AppModel, Screen};
-use crate::browser_errors::friendly_error;
+use crate::app_transition::AppEvent;
+use crate::browser_errors::{friendly_error, platform_error_event};
 use crate::participant_presence::Avatar;
 use crate::realtime_connection::{current_realtime_target_scope, realtime_target_scope_is_current};
 use crate::realtime_session::{apply_snapshot, schedule_avatar_cleanup};
@@ -104,7 +106,7 @@ fn submit_decision(
         return;
     }
     decision_error.set(None);
-    model.write().error = None;
+    dispatch_app_event(model, AppEvent::SetError(None));
     let Some(target_scope) = current_realtime_target_scope(realtime_target) else {
         decision_error.set(Some("房间连接已断开，请稍后重试".to_owned()));
         return;
@@ -116,7 +118,10 @@ fn submit_decision(
         };
         (snapshot.room_code.clone(), snapshot.revision)
     };
-    model.write().decision_request_id = Some(request_id.clone());
+    dispatch_app_event(
+        model,
+        AppEvent::SetDecisionRequest(Some(request_id.clone())),
+    );
     spawn(async move {
         let decision_result = decide_join(&room_code, &request_id, decision, Some(revision)).await;
         if !decision_operation_is_current(model, realtime_target, &target_scope, &request_id) {
@@ -139,13 +144,15 @@ fn submit_decision(
                 }
             }
             Err(error) => {
-                if let Ok(mut current_error) = decision_error.try_write() {
+                if error.requires_upgrade() {
+                    dispatch_app_event(model, platform_error_event(&error));
+                } else if let Ok(mut current_error) = decision_error.try_write() {
                     *current_error = Some(friendly_error(&error));
                 }
             }
         }
         if decision_operation_is_current(model, realtime_target, &target_scope, &request_id) {
-            model.write().decision_request_id = None;
+            dispatch_app_event(model, AppEvent::SetDecisionRequest(None));
         }
     });
 }

@@ -1,5 +1,23 @@
 use p2p_browser_platform::{BrowserPlatformError, BrowserStorageErrorKind};
 
+use crate::app_transition::AppEvent;
+
+pub(super) fn platform_error_event(error: &BrowserPlatformError) -> AppEvent {
+    if error.requires_upgrade() {
+        AppEvent::UpgradeRequired
+    } else {
+        AppEvent::SetError(Some(friendly_error(error)))
+    }
+}
+
+pub(super) fn transfer_error_event(error: &BrowserPlatformError) -> AppEvent {
+    if error.requires_upgrade() {
+        AppEvent::UpgradeRequired
+    } else {
+        AppEvent::SetError(Some(friendly_transfer_error(error)))
+    }
+}
+
 pub(super) fn friendly_error(error: &BrowserPlatformError) -> String {
     match error {
         BrowserPlatformError::Api { status: 401, .. } => {
@@ -13,6 +31,8 @@ pub(super) fn friendly_error(error: &BrowserPlatformError) -> String {
         }
         BrowserPlatformError::Api { status: 409, .. } => "房间状态刚刚发生变化，请重试".to_owned(),
         BrowserPlatformError::Api { status: 429, .. } => "操作过于频繁，请稍后再试".to_owned(),
+        BrowserPlatformError::UpgradeRequired { .. }
+        | BrowserPlatformError::MissingCapabilities => "应用已经更新，请刷新页面后继续".to_owned(),
         BrowserPlatformError::Request(_) => "网络连接失败，请检查网络后重试".to_owned(),
         BrowserPlatformError::RtcConfigExpired => "点对点连接配置已过期，正在重新获取".to_owned(),
         _ => "暂时无法完成操作，请稍后重试".to_owned(),

@@ -5,7 +5,7 @@ import { resolve } from 'node:path'
 import { connectSingleReceiverRoom } from './room.helper'
 import { currentDirectory } from './transfer.helper'
 
-test('text is withheld until consent and delivered exactly over the DataChannel', { tag: '@smoke' }, async ({
+test('text is delivered automatically and exactly over the DataChannel', { tag: '@smoke' }, async ({
   browser,
   baseURL,
 }) => {
@@ -26,24 +26,7 @@ test('text is withheld until consent and delivered exactly over the DataChannel'
     await expect(owner.getByText(`${[...payload].length} / 500`)).toBeVisible()
     await owner.getByRole('button', { name: '发送文本' }).click()
 
-    const firstRequest = receiver.getByRole('dialog', { name: '接收文本' })
-    await expect(firstRequest).toBeVisible()
-    await expect(firstRequest).toContainText(`${[...payload].length}`)
-    await expect(firstRequest).not.toContainText(payload)
-    await expect(receiver.getByText(payload, { exact: true })).toHaveCount(0)
-    await firstRequest.getByRole('button', { name: '拒绝接收' }).click()
-
-    await expect(owner.getByLabel('文本发送状态').getByText('已拒绝')).toBeVisible()
-    await expect(receiver.getByRole('heading', { name: '已拒绝文本' })).toBeVisible()
-    await receiver.getByRole('button', { name: '返回等待' }).click()
-
-    await composer.fill(payload)
-    await owner.getByRole('button', { name: '发送文本' }).click()
-    const secondRequest = receiver.getByRole('dialog', { name: '接收文本' })
-    await expect(secondRequest).toBeVisible()
-    await expect(secondRequest).not.toContainText(payload)
-    await secondRequest.getByRole('button', { name: '接收文本' }).click()
-
+    await expect(receiver.getByRole('dialog', { name: '接收文本' })).toHaveCount(0)
     await expect(receiver.getByRole('heading', { name: '文本接收完成' })).toBeVisible()
     await expect(receiver.locator('.received-text-card pre')).toHaveText(payload)
     await expect(owner.getByLabel('文本发送状态').getByText('已送达')).toBeVisible()

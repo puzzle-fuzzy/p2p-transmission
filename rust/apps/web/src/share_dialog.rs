@@ -3,7 +3,9 @@ use std::fmt::Write as _;
 use dioxus::prelude::*;
 use p2p_browser_platform::{build_invite_url, close_modal_dialog, copy_text, show_modal_dialog};
 
+use crate::app_runtime::dispatch_app_event;
 use crate::app_state::AppModel;
+use crate::app_transition::AppEvent;
 
 const QR_QUIET_ZONE_MODULES: usize = 4;
 
@@ -91,7 +93,10 @@ pub(super) fn ShareDialog(
                             };
                             match result {
                                 Ok(()) => {
-                                    model.write().notice = Some("邀请链接已复制".to_owned());
+                    dispatch_app_event(
+                        model,
+                        AppEvent::SetNotice(Some("邀请链接已复制".to_owned())),
+                    );
                                     let _ = close_modal_dialog("share-dialog");
                                     share_open.set(false);
                                 }

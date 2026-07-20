@@ -1,8 +1,10 @@
 use dioxus::prelude::*;
 use p2p_browser_platform::{leave_room, new_client_id};
 
+use crate::app_runtime::dispatch_app_event;
 use crate::app_state::{AppModel, RealtimePhase, Screen};
-use crate::browser_errors::friendly_error;
+use crate::app_transition::AppEvent;
+use crate::browser_errors::platform_error_event;
 use crate::participant_presence::Avatar;
 use crate::realtime_session::return_to_lobby;
 use crate::realtime_target::{RealtimeTarget, RealtimeTargetScope};
@@ -34,7 +36,7 @@ impl WaitingCancelScope {
 
 #[component]
 pub(super) fn WaitingView(
-    mut model: Signal<AppModel>,
+    model: Signal<AppModel>,
     mut realtime_target: Signal<Option<RealtimeTarget>>,
 ) -> Element {
     let snapshot = model.read().clone();
@@ -82,10 +84,7 @@ pub(super) fn WaitingView(
     }
 }
 
-fn submit_cancel_waiting(
-    mut model: Signal<AppModel>,
-    realtime_target: Signal<Option<RealtimeTarget>>,
-) {
+fn submit_cancel_waiting(model: Signal<AppModel>, realtime_target: Signal<Option<RealtimeTarget>>) {
     let (room_code, request_id, revision) = {
         let state = model.read();
         let Screen::Waiting {
@@ -108,7 +107,7 @@ fn submit_cancel_waiting(
             .cloned()
             .map(RealtimeTargetScope::new),
     };
-    model.write().busy = true;
+    dispatch_app_event(model, AppEvent::SetBusy(true));
     spawn(async move {
         let result = leave_room(&room_code, &new_client_id("cancel_join"), Some(revision)).await;
         if !cancel_scope.is_current(&model.read(), realtime_target.read().as_ref()) {
@@ -117,9 +116,8 @@ fn submit_cancel_waiting(
         match result {
             Ok(_) => return_to_lobby(model, realtime_target, None),
             Err(error) => {
-                let mut state = model.write();
-                state.busy = false;
-                state.error = Some(friendly_error(&error));
+                dispatch_app_event(model, AppEvent::SetBusy(false));
+                dispatch_app_event(model, platform_error_event(&error));
             }
         }
     });

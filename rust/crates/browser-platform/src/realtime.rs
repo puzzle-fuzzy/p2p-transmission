@@ -1,8 +1,6 @@
-#[cfg(target_arch = "wasm32")]
-use p2p_protocol::CURRENT_PROTOCOL;
 use p2p_protocol::ClientRealtimeMessage;
 #[cfg(any(target_arch = "wasm32", test))]
-use p2p_protocol::{ServerRealtimeMessage, Validate};
+use p2p_protocol::{CURRENT_PROTOCOL, ServerRealtimeMessage, Validate};
 
 use crate::{BrowserPlatformError, RealtimeEvent};
 
@@ -10,6 +8,13 @@ use crate::{BrowserPlatformError, RealtimeEvent};
 fn decode_server_message(text: &str) -> Result<ServerRealtimeMessage, BrowserPlatformError> {
     let message = serde_json::from_str::<ServerRealtimeMessage>(text)
         .map_err(|error| BrowserPlatformError::Decode(error.to_string()))?;
+    let received = message.version();
+    if received != CURRENT_PROTOCOL {
+        return Err(BrowserPlatformError::upgrade_required(
+            CURRENT_PROTOCOL,
+            received,
+        ));
+    }
     message
         .validate()
         .map_err(|error| BrowserPlatformError::Decode(error.to_string()))?;
@@ -111,6 +116,9 @@ pub fn connect_realtime(
         };
         match decode_server_message(&text) {
             Ok(message) => message_callback.borrow_mut()(RealtimeEvent::Message(message)),
+            Err(BrowserPlatformError::UpgradeRequired { .. }) => {
+                message_callback.borrow_mut()(RealtimeEvent::UpgradeRequired)
+            }
             Err(error) => message_callback.borrow_mut()(RealtimeEvent::Error(error.to_string())),
         }
     }) as Box<dyn FnMut(_)>);
@@ -192,8 +200,12 @@ mod tests {
         let previous = current.replace(r#""minor":1"#, r#""minor":0"#);
         assert!(matches!(
             decode_server_message(&previous),
-            Err(BrowserPlatformError::Decode(message))
-                if message == "protocol version 5.0 is unsupported"
+            Err(BrowserPlatformError::UpgradeRequired {
+                expected_major: 5,
+                expected_minor: 1,
+                received_major: 5,
+                received_minor: 0,
+            })
         ));
     }
 }

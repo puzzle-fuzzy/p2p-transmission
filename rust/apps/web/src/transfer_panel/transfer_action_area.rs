@@ -1,8 +1,6 @@
-use std::collections::BTreeMap;
-
 use dioxus::prelude::*;
 use p2p_browser_platform::{
-    RtcPeer, TransferDirection, click_element_by_id, persistent_source_file_support,
+    RtcPeerRegistry, TransferDirection, click_element_by_id, persistent_source_file_support,
 };
 use p2p_protocol::StreamPauseReason;
 
@@ -13,7 +11,7 @@ use crate::transfer_actions::TransferActions;
 #[component]
 pub(super) fn TransferActionArea(
     model: Signal<AppModel>,
-    rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+    rtc_peers: Signal<RtcPeerRegistry>,
     role: RoomRole,
     can_offer: bool,
     active: bool,

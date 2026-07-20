@@ -13,6 +13,7 @@ use axum_extra::extract::{
     cookie::{Cookie, SameSite},
 };
 use p2p_domain::{JoinDecision, RequestId, Revision, RoomCode, RoomError, RoomId, RoomState};
+pub use p2p_protocol::SESSION_COOKIE_NAME;
 use p2p_protocol::{
     ApiErrorBody, ApiErrorCode, CreateInviteRequest, CreateRoomRequest, CreateSessionRequest,
     DecideJoinRequest, ErrorEnvelope, JoinDecisionRequest, JoinDecisionWire, JoinRequestSnapshot,
@@ -29,8 +30,6 @@ use crate::{
     services::{AppServices, ServiceError, room_mutation_response, session_response},
     storage::StorageError,
 };
-
-pub const SESSION_COOKIE_NAME: &str = "p2p_session_v5";
 
 struct ClientAddress(Option<SocketAddr>);
 
@@ -576,7 +575,19 @@ impl HttpError {
 }
 
 impl From<p2p_protocol::ProtocolError> for HttpError {
-    fn from(_: p2p_protocol::ProtocolError) -> Self {
+    fn from(error: p2p_protocol::ProtocolError) -> Self {
+        if matches!(
+            error,
+            p2p_protocol::ProtocolError::UnsupportedVersion { .. }
+        ) {
+            return Self {
+                status: StatusCode::UPGRADE_REQUIRED,
+                code: ApiErrorCode::UpgradeRequired,
+                message: "client protocol upgrade is required",
+                request_id: None,
+                retryable: false,
+            };
+        }
         Self::invalid_request("request body is invalid", None)
     }
 }
@@ -680,13 +691,21 @@ mod tests {
     };
     use http_body_util::BodyExt;
     use p2p_protocol::{
-        CreateInviteResponse, CreateRoomResponse, JoinRequestResponse, RoomBootstrapResponse,
-        RoomMutationResponse, SessionResponse,
+        CreateInviteResponse, CreateRoomResponse, JoinRequestResponse, ProtocolError,
+        RoomBootstrapResponse, RoomMutationResponse, SessionResponse,
     };
     use serde::de::DeserializeOwned;
     use serde_json::{Value, json};
     use tower::ServiceExt;
     use uuid::Uuid;
+
+    #[test]
+    fn protocol_mismatch_requires_a_client_upgrade() {
+        let error = HttpError::from(ProtocolError::UnsupportedVersion { major: 5, minor: 0 });
+        assert_eq!(error.status, StatusCode::UPGRADE_REQUIRED);
+        assert_eq!(error.code, ApiErrorCode::UpgradeRequired);
+        assert!(!error.retryable);
+    }
 
     use super::*;
 
@@ -943,16 +962,22 @@ mod tests {
     async fn previous_protocol_unknown_fields_and_cookie_are_rejected() {
         let app = TestApp::create(false).await;
 
-        for body in [
-            json!({
-                "version": { "major": 2, "minor": 0 },
-                "display_name": "Previous"
-            }),
-            json!({
-                "version": { "major": 5, "minor": 1 },
-                "display_name": "Unknown field",
-                "unsupported": true
-            }),
+        for (body, expected_status) in [
+            (
+                json!({
+                    "version": { "major": 2, "minor": 0 },
+                    "display_name": "Previous"
+                }),
+                StatusCode::UPGRADE_REQUIRED,
+            ),
+            (
+                json!({
+                    "version": { "major": 5, "minor": 1 },
+                    "display_name": "Unknown field",
+                    "unsupported": true
+                }),
+                StatusCode::BAD_REQUEST,
+            ),
         ] {
             let response = app
                 .router
@@ -966,7 +991,7 @@ mod tests {
                 ))
                 .await
                 .expect("strict session response");
-            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(response.status(), expected_status);
         }
 
         let (cookie, _) = create_session_for(&app, "Current").await;

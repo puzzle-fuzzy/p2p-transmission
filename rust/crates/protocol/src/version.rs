@@ -25,7 +25,19 @@ impl ProtocolVersion {
     }
 }
 
-pub const CURRENT_PROTOCOL: ProtocolVersion = ProtocolVersion::new(5, 1);
+macro_rules! protocol_identity {
+    ($major:literal, $minor:literal) => {
+        pub const CURRENT_PROTOCOL: ProtocolVersion = ProtocolVersion::new($major, $minor);
+        pub const PROTOCOL_VERSION_TEXT: &str =
+            concat!(stringify!($major), ".", stringify!($minor));
+        pub const SESSION_COOKIE_NAME: &str = concat!("p2p_session_v", stringify!($major));
+        pub const ROOM_SESSION_STORAGE_KEY: &str =
+            concat!("p2p_room_session_v", stringify!($major));
+    };
+}
+
+// Keep wire, cookie and browser-storage identities derived from one declaration.
+protocol_identity!(5, 1);
 
 #[cfg(test)]
 mod tests {
@@ -53,5 +65,12 @@ mod tests {
     fn protocol_version_rejects_unknown_fields() {
         let json = r#"{"major":5,"minor":1,"patch":1}"#;
         assert!(serde_json::from_str::<ProtocolVersion>(json).is_err());
+    }
+
+    #[test]
+    fn protocol_identity_drives_persistent_client_keys() {
+        assert_eq!(PROTOCOL_VERSION_TEXT, "5.1");
+        assert_eq!(SESSION_COOKIE_NAME, "p2p_session_v5");
+        assert_eq!(ROOM_SESSION_STORAGE_KEY, "p2p_room_session_v5");
     }
 }

@@ -156,10 +156,14 @@ impl RtcPeer {
             byte_length,
         });
         self.emit(RtcEvent::TextIncomingOffered {
-            transfer_id,
+            transfer_id: transfer_id.clone(),
             character_count,
             byte_length,
         });
+        if let Err(error) = self.decide_text(&transfer_id, true) {
+            self.clear_text_transfer(&transfer_id);
+            self.text_fail(Some(transfer_id), &error.to_string());
+        }
     }
 
     pub(super) fn handle_text_decision(&self, transfer_id: String, accepted: bool) {

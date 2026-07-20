@@ -243,9 +243,9 @@ pub enum ServerRealtimeMessage {
     },
 }
 
-impl Validate for ServerRealtimeMessage {
-    fn validate(&self) -> Result<(), ProtocolError> {
-        let version = match self {
+impl ServerRealtimeMessage {
+    pub const fn version(&self) -> ProtocolVersion {
+        match self {
             Self::Attached { version, .. }
             | Self::JoinWatching { version, .. }
             | Self::RoomSnapshot { version, .. }
@@ -256,8 +256,13 @@ impl Validate for ServerRealtimeMessage {
             | Self::Signal { version, .. }
             | Self::RoomExpired { version, .. }
             | Self::Error { version, .. } => *version,
-        };
-        version.validate()?;
+        }
+    }
+}
+
+impl Validate for ServerRealtimeMessage {
+    fn validate(&self) -> Result<(), ProtocolError> {
+        self.version().validate()?;
 
         match self {
             Self::Signal {

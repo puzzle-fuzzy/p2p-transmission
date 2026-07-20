@@ -51,14 +51,25 @@ pub fn VaultShell(
                 }
                 main { class: "{card_class}", {content} }
                 footer { class: "vault-footer",
-                    VaultFeatureList {}
+                    VaultFeatureList { interactive: !preferences_disabled }
                     div { class: "vault-footer-meta",
                         span { class: "vault-footer-line", aria_hidden: "true" }
                         p {
-                            "Files never touch our servers · Privacy by design"
+                            "Files never touch our servers · Privacy by design · "
+                            if preferences_disabled {
+                                span { class: "github-link", aria_hidden: "true", "{GITHUB_LABEL} ↗" }
+                            } else {
+                                a {
+                                    class: "github-link",
+                                    href: "https://github.com/puzzle-fuzzy/p2p-transmission",
+                                    target: "_blank",
+                                    rel: "noreferrer",
+                                    "{GITHUB_LABEL} ↗"
+                                }
+                            }
+                            span { class: "footer-inline-actions", {footer} }
                         }
                         p { class: "sr-only", {PRIVACY_COPY} }
-                        div { class: "footer-links", {footer} }
                     }
                 }
             }
@@ -67,11 +78,13 @@ pub fn VaultShell(
 }
 
 #[component]
-fn VaultFeatureList() -> Element {
+fn VaultFeatureList(interactive: bool) -> Element {
     rsx! {
         ul { class: "vault-features", aria_label: "产品特性",
             li {
-                title: "端到端加密，文件内容只在传输双方之间可读。",
+                tabindex: interactive.then_some("0"),
+                "data-tooltip": "端到端加密：文件内容只在传输双方之间可读。",
+                aria_label: "E2E Encrypted：端到端加密，文件内容只在传输双方之间可读。",
                 svg { view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2", "aria-hidden": "true",
                     rect { x: "3", y: "11", width: "18", height: "11", rx: "2" }
                     path { d: "M7 11V7a5 5 0 0 1 10 0v4" }
@@ -79,14 +92,18 @@ fn VaultFeatureList() -> Element {
                 span { "E2E Encrypted" }
             }
             li {
-                title: "传输正文不会落盘，也不会保存在应用服务器上。",
+                tabindex: interactive.then_some("0"),
+                "data-tooltip": "零存储：传输正文不会落盘，也不会保存在应用服务器上。",
+                aria_label: "Zero Storage：传输正文不会落盘，也不会保存在应用服务器上。",
                 svg { view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2", "aria-hidden": "true",
                     path { d: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" }
                 }
                 span { "Zero Storage" }
             }
             li {
-                title: "支持不同设备与操作系统之间的浏览器传输。",
+                tabindex: interactive.then_some("0"),
+                "data-tooltip": "跨平台：支持不同设备与操作系统之间的浏览器传输。",
+                aria_label: "Cross-Platform：支持不同设备与操作系统之间的浏览器传输。",
                 svg { view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2", "aria-hidden": "true",
                     circle { cx: "12", cy: "12", r: "10" }
                     line { x1: "2", y1: "12", x2: "22", y2: "12" }
@@ -95,7 +112,9 @@ fn VaultFeatureList() -> Element {
                 span { "Cross-Platform" }
             }
             li {
-                title: "按需传输文件与文本，不占用云端存储空间。",
+                tabindex: interactive.then_some("0"),
+                "data-tooltip": "无云端限制：按需传输文件与文本，不占用云端存储空间。",
+                aria_label: "No Cloud Limits：按需传输文件与文本，不占用云端存储空间。",
                 svg { view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2", "aria-hidden": "true",
                     path { d: "M13 2 3 14h9l-1 8 10-12h-9l1-8z" }
                 }
@@ -363,8 +382,7 @@ fn InitializingRoomCode() -> Element {
 #[component]
 fn InitializingFooter() -> Element {
     rsx! {
-        span { class: "text-link", aria_hidden: "true", {ABOUT_LABEL} }
-        span { class: "text-link", aria_hidden: "true", {GITHUB_LABEL} }
+        span { class: "footer-about-link", aria_hidden: "true", {ABOUT_LABEL} }
     }
 }
 

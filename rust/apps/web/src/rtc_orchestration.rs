@@ -1,9 +1,8 @@
-use std::collections::BTreeMap;
-
 use dioxus::prelude::*;
-use p2p_browser_platform::{OfferStart, RtcPeer, sleep_ms};
+use p2p_browser_platform::{OfferStart, RtcPeer, RtcPeerRegistry, sleep_ms};
 
 use crate::app_state::{AppModel, RoomRole, TransferLinkState};
+use crate::app_transition::{AppEvent, reduce_app_event};
 use crate::browser_errors::friendly_transfer_error;
 use crate::rtc_transition::{
     OwnerTimeoutStep, PassiveDeadlineStep, RtcWorkToken, advance_owner_timeout, begin_owner_offer,
@@ -19,7 +18,7 @@ const RTC_RETRY_DELAYS_MS: [u32; 4] = [500, 1_000, 2_000, 4_000];
 
 pub(super) fn start_rtc_offer(
     model: Signal<AppModel>,
-    rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+    rtc_peers: Signal<RtcPeerRegistry>,
     peer: RtcPeer,
     target_peer: String,
 ) {
@@ -44,7 +43,7 @@ pub(super) fn start_rtc_offer(
 
 fn start_owner_offer_attempt(
     mut model: Signal<AppModel>,
-    rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+    rtc_peers: Signal<RtcPeerRegistry>,
     peer: RtcPeer,
     target_peer: String,
     instance_generation: u64,
@@ -152,7 +151,7 @@ fn start_owner_offer_attempt(
 
 pub(super) fn schedule_passive_recovery_timeout(
     mut model: Signal<AppModel>,
-    rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+    rtc_peers: Signal<RtcPeerRegistry>,
     peer: RtcPeer,
     peer_id: String,
 ) {
@@ -191,7 +190,7 @@ pub(super) fn schedule_passive_recovery_timeout(
 
 pub(super) fn schedule_disconnected_recovery(
     mut model: Signal<AppModel>,
-    rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+    rtc_peers: Signal<RtcPeerRegistry>,
     peer: RtcPeer,
     peer_id: String,
     role: RoomRole,
@@ -224,7 +223,7 @@ pub(super) fn schedule_disconnected_recovery(
 
 pub(super) fn reconnect_paused_transfer(
     mut model: Signal<AppModel>,
-    rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+    rtc_peers: Signal<RtcPeerRegistry>,
     peer: RtcPeer,
     peer_id: String,
 ) {
@@ -241,12 +240,15 @@ fn mark_ready_from_runtime(model: &mut Signal<AppModel>, peer_id: &str) {
     let mut state = model.write();
     let recovered_stream = mark_data_channel_ready(&mut state, peer_id);
     if recovered_stream {
-        state.notice = Some("连接已恢复，传输将从最后检查点继续".to_owned());
+        reduce_app_event(
+            &mut state,
+            AppEvent::SetNotice(Some("连接已恢复，传输将从最后检查点继续".to_owned())),
+        );
     }
 }
 
 fn runtime_peer_is_current(
-    rtc_peers: Signal<BTreeMap<String, RtcPeer>>,
+    rtc_peers: Signal<RtcPeerRegistry>,
     peer_id: &str,
     peer: &RtcPeer,
 ) -> bool {

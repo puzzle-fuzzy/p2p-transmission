@@ -4,8 +4,10 @@ use p2p_browser_platform::{
 };
 use p2p_ui_shell::ROOM_CODE_LENGTH;
 
+use crate::app_runtime::dispatch_app_event;
 use crate::app_state::{AppModel, LobbyActionError, RoomRole, Screen, StoredRoomSession};
-use crate::browser_errors::friendly_error;
+use crate::app_transition::{AppEvent, reduce_app_event};
+use crate::browser_errors::{friendly_error, platform_error_event};
 use crate::realtime_target::{RealtimeTarget, join_watch_target, member_target};
 use crate::room_session::persist_room_session;
 
@@ -18,9 +20,9 @@ pub(super) fn submit_create_room(
     }
     {
         let mut state = model.write();
-        state.busy = true;
+        reduce_app_event(&mut state, AppEvent::SetBusy(true));
         state.lobby_action_error = None;
-        state.error = None;
+        reduce_app_event(&mut state, AppEvent::SetError(None));
     }
     spawn(async move {
         let create_request_id = new_client_id("create");
@@ -47,21 +49,35 @@ pub(super) fn submit_create_room(
                 let room_code = snapshot.room_code.clone();
                 {
                     let mut state = model.write();
-                    state.busy = false;
-                    state.notice = Some("房间已创建，可以复制邀请链接".to_owned());
-                    state.screen = Screen::Room {
-                        role: RoomRole::Owner,
-                        snapshot,
-                        invite: Some(invite),
-                        invite_request_id: Some(invite_request_id),
-                    };
+                    reduce_app_event(&mut state, AppEvent::SetBusy(false));
+                    reduce_app_event(
+                        &mut state,
+                        AppEvent::SetNotice(Some("房间已创建，可以复制邀请链接".to_owned())),
+                    );
+                    reduce_app_event(
+                        &mut state,
+                        AppEvent::Navigate(Screen::Room {
+                            role: RoomRole::Owner,
+                            snapshot,
+                            invite: Some(invite),
+                            invite_request_id: Some(invite_request_id),
+                        }),
+                    );
                 }
                 realtime_target.set(Some(member_target(room_code, revision, peer_id)));
             }
             Err(error) => {
+                let requires_upgrade = error.requires_upgrade();
                 let mut state = model.write();
-                state.busy = false;
-                state.lobby_action_error = Some(LobbyActionError::Create(friendly_error(&error)));
+                reduce_app_event(&mut state, AppEvent::SetBusy(false));
+                if !requires_upgrade {
+                    state.lobby_action_error =
+                        Some(LobbyActionError::Create(friendly_error(&error)));
+                }
+                drop(state);
+                if requires_upgrade {
+                    dispatch_app_event(model, platform_error_event(&error));
+                }
             }
         }
     });
@@ -84,9 +100,9 @@ pub(super) fn submit_join(
     }
     {
         let mut state = model.write();
-        state.busy = true;
+        reduce_app_event(&mut state, AppEvent::SetBusy(true));
         state.lobby_action_error = None;
-        state.error = None;
+        reduce_app_event(&mut state, AppEvent::SetError(None));
     }
     spawn(async move {
         let request_id = new_client_id("join");
@@ -102,14 +118,17 @@ pub(super) fn submit_join(
                 });
                 {
                     let mut state = model.write();
-                    state.busy = false;
-                    state.screen = Screen::Waiting {
-                        room_code: room_code.clone(),
-                        request_id: request_id.clone(),
-                        peer_id,
-                        revision: response.revision,
-                        expires_at_ms: response.expires_at_ms,
-                    };
+                    reduce_app_event(&mut state, AppEvent::SetBusy(false));
+                    reduce_app_event(
+                        &mut state,
+                        AppEvent::Navigate(Screen::Waiting {
+                            room_code: room_code.clone(),
+                            request_id: request_id.clone(),
+                            peer_id,
+                            revision: response.revision,
+                            expires_at_ms: response.expires_at_ms,
+                        }),
+                    );
                 }
                 realtime_target.set(Some(join_watch_target(
                     room_code.clone(),
@@ -118,9 +137,16 @@ pub(super) fn submit_join(
                 )));
             }
             Err(error) => {
+                let requires_upgrade = error.requires_upgrade();
                 let mut state = model.write();
-                state.busy = false;
-                state.lobby_action_error = Some(LobbyActionError::Join(friendly_error(&error)));
+                reduce_app_event(&mut state, AppEvent::SetBusy(false));
+                if !requires_upgrade {
+                    state.lobby_action_error = Some(LobbyActionError::Join(friendly_error(&error)));
+                }
+                drop(state);
+                if requires_upgrade {
+                    dispatch_app_event(model, platform_error_event(&error));
+                }
             }
         }
     });

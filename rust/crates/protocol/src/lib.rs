@@ -30,7 +30,10 @@ pub use realtime::{
     ClientRealtimeMessage, JoinDecisionWire, JoinRequestSnapshot, ParticipantRoleWire,
     ParticipantSnapshot, ServerRealtimeMessage, Signal, parse_client_message,
 };
-pub use version::{CURRENT_PROTOCOL, ProtocolVersion};
+pub use version::{
+    CURRENT_PROTOCOL, PROTOCOL_VERSION_TEXT, ProtocolVersion, ROOM_SESSION_STORAGE_KEY,
+    SESSION_COOKIE_NAME,
+};
 
 pub const API_MAJOR_VERSION: u16 = CURRENT_PROTOCOL.major;
 
@@ -71,7 +74,38 @@ pub struct BuildInfo {
     pub version: String,
     pub release: String,
     pub api_major: u16,
+    pub api_minor: u16,
+    #[serde(default)]
+    pub capabilities: ProtocolCapabilities,
 }
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct ProtocolCapabilities(u8);
+
+impl ProtocolCapabilities {
+    pub const DIRECT_TEXT: Self = Self(1 << 0);
+    pub const MULTI_RECEIVER: Self = Self(1 << 1);
+    pub const STREAM_RESUME_V1: Self = Self(1 << 2);
+
+    pub const fn from_bits(bits: u8) -> Self {
+        Self(bits)
+    }
+
+    pub const fn bits(self) -> u8 {
+        self.0
+    }
+
+    pub const fn contains(self, required: Self) -> bool {
+        self.0 & required.0 == required.0
+    }
+}
+
+pub const CURRENT_CAPABILITIES: ProtocolCapabilities = ProtocolCapabilities::from_bits(
+    ProtocolCapabilities::DIRECT_TEXT.bits()
+        | ProtocolCapabilities::MULTI_RECEIVER.bits()
+        | ProtocolCapabilities::STREAM_RESUME_V1.bits(),
+);
 
 #[cfg(test)]
 mod tests {
@@ -88,5 +122,13 @@ mod tests {
         assert_eq!(value["status"], "ready");
         assert_eq!(value["service"], "p2p-server");
         assert_eq!(value["release"], "2.0.0-abcdef0");
+    }
+
+    #[test]
+    fn capability_bitset_wire_format_is_stable() {
+        let value =
+            serde_json::to_value(CURRENT_CAPABILITIES).expect("capabilities should serialize");
+        assert_eq!(value, serde_json::json!(7));
+        assert!(CURRENT_CAPABILITIES.contains(ProtocolCapabilities::DIRECT_TEXT));
     }
 }
