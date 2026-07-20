@@ -1,11 +1,8 @@
-use js_sys::{Array, Reflect};
+use js_sys::Array;
 use wasm_bindgen::JsValue;
-use web_sys::{RtcConfiguration, RtcIceServer, RtcPeerConnectionState};
+use web_sys::{RtcConfiguration, RtcIceServer, RtcPeerConnection, RtcPeerConnectionState};
 
-use super::{
-    super::{BrowserPlatformError, RtcConfigResponse, RtcConnectionPhase},
-    browser_error,
-};
+use super::super::{BrowserPlatformError, RtcConfigResponse, RtcConnectionPhase};
 
 pub(super) fn rtc_configuration(response: &RtcConfigResponse) -> RtcConfiguration {
     let configuration = RtcConfiguration::new();
@@ -41,9 +38,17 @@ pub(super) fn map_connection_state(state: RtcPeerConnectionState) -> RtcConnecti
     }
 }
 
-pub(super) fn description_sdp(value: &JsValue) -> Result<String, BrowserPlatformError> {
-    Reflect::get(value, &JsValue::from_str("sdp"))
-        .map_err(browser_error)?
-        .as_string()
-        .ok_or_else(|| BrowserPlatformError::Decode("RTC description has no SDP".to_owned()))
+pub(super) fn local_description_sdp(
+    peer_connection: &RtcPeerConnection,
+) -> Result<String, BrowserPlatformError> {
+    let description = peer_connection.local_description().ok_or_else(|| {
+        BrowserPlatformError::Decode("RTC local description is unavailable".to_owned())
+    })?;
+    let sdp = description.sdp();
+    if sdp.is_empty() {
+        return Err(BrowserPlatformError::Decode(
+            "RTC local description has no SDP".to_owned(),
+        ));
+    }
+    Ok(sdp)
 }

@@ -14,7 +14,7 @@ use super::super::{
 };
 use super::{
     RtcPeer, browser_error,
-    connection::{description_sdp, map_connection_state, rtc_configuration},
+    connection::{local_description_sdp, map_connection_state, rtc_configuration},
 };
 
 const NEGOTIATION_SIGNAL_LIMIT: usize = 64;
@@ -152,7 +152,6 @@ impl RtcPeer {
         else {
             return Ok(());
         };
-        let offer_sdp = description_sdp(&offer_value)?;
         let offer = offer_value.unchecked_into::<RtcSessionDescriptionInit>();
         if self
             .current_promise_result(
@@ -163,6 +162,7 @@ impl RtcPeer {
         {
             return Ok(());
         }
+        let offer_sdp = local_description_sdp(&peer_connection)?;
         self.finish_negotiating(connection_epoch);
         self.announce_local_description(
             connection_epoch,
@@ -310,7 +310,6 @@ impl RtcPeer {
                 else {
                     return Ok(());
                 };
-                let answer_sdp = description_sdp(&answer_value)?;
                 let answer = answer_value.unchecked_into::<RtcSessionDescriptionInit>();
                 if self
                     .current_promise_result(
@@ -321,6 +320,7 @@ impl RtcPeer {
                 {
                     return Ok(());
                 }
+                let answer_sdp = local_description_sdp(&peer_connection)?;
                 self.announce_local_description(
                     connection_epoch,
                     &negotiation_id,

@@ -49,7 +49,7 @@ def main() -> None:
     parser.add_argument(
         "--interop",
         action="store_true",
-        help="run the lightweight Firefox and WebKit peer-connection contract",
+        help="run Firefox and WebKit connection, buffered-transfer, and fallback contracts",
     )
     parser.add_argument("--capture-room", action="store_true")
     parser.add_argument("--capture-transfer", action="store_true")

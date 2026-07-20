@@ -116,12 +116,18 @@ pub(super) fn decode_binary_chunk(frame: &[u8]) -> Result<BinaryChunk<'_>, Proto
 
 #[cfg(test)]
 mod tests {
-    use p2p_protocol::{ControlMessage, ProtocolVersion, parse_control_message};
+    use p2p_protocol::{CHUNK_HEADER_LEN, ControlMessage, ProtocolVersion, parse_control_message};
+    use p2p_transfer::DEFAULT_CHUNK_BYTES;
 
     use super::*;
 
     const TRANSFER_ID: [u8; 16] = [0x11; 16];
     const FILE_ID: [u8; 16] = [0x22; 16];
+
+    #[test]
+    fn default_binary_frame_stays_below_the_conservative_64_kib_boundary() {
+        assert!(CHUNK_HEADER_LEN + DEFAULT_CHUNK_BYTES <= 64 * 1024);
+    }
 
     #[test]
     fn binary_chunk_round_trips_without_changing_wire_fields() {

@@ -20,7 +20,9 @@ test('Firefox and WebKit establish a peer connection', { tag: '@interop-smoke' }
   await connectSingleReceiverRoom(owner, receiver, { readyTimeout: 20_000 })
 })
 
-test('Firefox and WebKit complete the buffered transfer path', async ({ browser, baseURL }, testInfo) => {
+test('Firefox and WebKit complete the buffered transfer path', {
+  tag: '@interop-smoke',
+}, async ({ browser, baseURL }, testInfo) => {
   test.skip(
     testInfo.project.name === 'desktop-webkit' && process.platform === 'win32',
     'Playwright WebKit on Windows does not expose RTCPeerConnection',
@@ -65,7 +67,9 @@ test('Firefox and WebKit complete the buffered transfer path', async ({ browser,
   expect(await readFile(downloadPath ?? '')).toEqual(payload)
 })
 
-test('Firefox and WebKit explain the streamed-file fallback', async ({ browser, baseURL }, testInfo) => {
+test('Firefox and WebKit explain the streamed-file fallback', {
+  tag: '@interop-smoke',
+}, async ({ browser, baseURL }, testInfo) => {
   test.skip(
     testInfo.project.name === 'desktop-webkit' && process.platform === 'win32',
     'Playwright WebKit on Windows does not expose RTCPeerConnection',

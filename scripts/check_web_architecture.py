@@ -139,15 +139,16 @@ RTC_BROWSER_CONNECTION_MODULE = RTC_BROWSER_SOURCE / "connection.rs"
 RTC_BROWSER_CONNECTION_REQUIRED_MARKERS = (
     "pub(super) fn rtc_configuration",
     "pub(super) fn map_connection_state",
-    "pub(super) fn description_sdp",
+    "pub(super) fn local_description_sdp",
     "RtcConfiguration",
+    "RtcPeerConnection",
     "RtcPeerConnectionState",
-    "Reflect::get",
+    "peer_connection.local_description()",
 )
 RTC_BROWSER_MOD_FORBIDDEN_CONNECTION_PATTERNS = (
     r"\bfn\s+rtc_configuration\b",
     r"\bfn\s+map_connection_state\b",
-    r"\bfn\s+description_sdp\b",
+    r"\bfn\s+local_description_sdp\b",
 )
 RTC_BROWSER_FACADE_MAX_LINES = 80
 RTC_BROWSER_RESPONSIBILITY_MODULES = ("peer", "signaling", "lifecycle", "recovery")

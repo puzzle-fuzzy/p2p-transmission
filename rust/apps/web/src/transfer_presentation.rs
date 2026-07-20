@@ -530,7 +530,8 @@ pub(super) fn transfer_panel_copy(
             match aggregate_rtc {
                 RtcPhase::Ready if role == RoomRole::Owner => (
                     "选择要发送的文件".to_owned(),
-                    "文件通过加密的 WebRTC DataChannel 直接发送。".to_owned(),
+                    "文件通过加密的 WebRTC DataChannel 发送；网络需要时可能经 TURN 中继。"
+                        .to_owned(),
                 ),
                 RtcPhase::Ready => (
                     "等待对方发送".to_owned(),

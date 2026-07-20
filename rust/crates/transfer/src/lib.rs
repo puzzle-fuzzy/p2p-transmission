@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
-pub const DEFAULT_CHUNK_BYTES: usize = 64 * 1024;
+// Keep the complete DataChannel message comfortably below the conservative
+// 64 KiB interoperability boundary after the binary protocol header is added.
+pub const DEFAULT_CHUNK_BYTES: usize = 32 * 1024;
 pub const DEFAULT_BUFFER_HIGH_BYTES: u64 = 4 * 1024 * 1024;
 pub const DEFAULT_BUFFER_LOW_BYTES: u64 = 1024 * 1024;
 pub const DEFAULT_STREAM_CHUNK_BYTES: usize = 32 * 1024;
