@@ -107,7 +107,7 @@ impl LobbyFeedback {
 
 /// The shared anonymous-lobby DOM used by both SSR and the interactive client.
 ///
-/// `room_code` supplies either the interactive six-cell input or the inert SSR
+/// `room_code` supplies either the interactive single input or the inert SSR
 /// placeholder. `footer` supplies links/buttons while the shell retains the
 /// stable footer layout. Event handlers use Dioxus' renderer-neutral event
 /// types, so this crate does not depend on `web-sys`.
@@ -243,7 +243,7 @@ pub fn LobbyPanel(
                             }
                         }
                         div { class: "stack",
-                            label { class: "sr-only", for: "room-code-0", "六位房间号" }
+                            label { class: "sr-only", for: "room-code-input", "输入 6 位房间码" }
                             div { class: "room-code-control", {room_code} }
                             LobbyJoinFeedbackRow { feedback: feedback.clone() }
                             div { class: "actions",
@@ -256,7 +256,7 @@ pub fn LobbyPanel(
                                 }
                             }
                         }
-                        p { class: "hint mono", "INPUT MUST BE 6 DIGITS" }
+                        p { class: "hint mono", "INPUT MUST BE 6 CHARACTERS" }
                     }
                     div { class: "grid-2", aria_label: "产品特点",
                         article { class: "panel info-card",
@@ -365,14 +365,7 @@ fn LobbyCreateFeedbackRow(feedback: LobbyFeedback) -> Element {
 #[component]
 fn InitializingRoomCode() -> Element {
     rsx! {
-        div { class: "room-code boot-room-code", aria_hidden: "true",
-            for index in 0..ROOM_CODE_LENGTH {
-                span {
-                    key: "{index}",
-                    class: "room-code-input boot-room-code-cell",
-                }
-            }
-        }
+        div { class: "join-field mono boot-room-code", aria_hidden: "true", "000000" }
     }
 }
 
@@ -417,10 +410,7 @@ mod tests {
         assert!(html.contains(INITIALIZING_COPY));
         assert!(html.contains(RESTORING_ROOM_COPY));
         assert!(html.contains(NOSCRIPT_COPY));
-        assert_eq!(
-            html.matches("boot-room-code-cell").count(),
-            ROOM_CODE_LENGTH
-        );
+        assert_eq!(html.matches("boot-room-code").count(), 1);
         assert_eq!(html.matches(" disabled").count(), 2);
         assert!(!html.contains("<input"));
         assert!(!html.contains("<a "));

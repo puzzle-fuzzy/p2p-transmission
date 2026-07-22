@@ -31,7 +31,7 @@ pub(super) fn AboutDialog(model: Signal<AppModel>) -> Element {
                 div { dt { "数据通道" } dd { "WebRTC / BLAKE3" } }
             }
             button {
-                class: "close-button",
+                class: "btn btn--dark",
                 r#type: "button",
                 onclick: move |_| {
                     let _ = close_modal_dialog("about-dialog");

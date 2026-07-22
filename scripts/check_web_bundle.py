@@ -19,10 +19,10 @@ HTML_TEMPLATE_RAW_BUDGET = 2 * 1024
 HTML_TEMPLATE_GZIP_BUDGET = 8 * 1024
 WASM_GZIP_BUDGET = 475 * 1024
 JAVASCRIPT_GZIP_BUDGET = 18 * 1024
-# Vault's four complete theme maps, responsive room workspace, and accessible
-# modal states are deliberately shipped as CSS so they do not add runtime JS.
+# The responsive workspace and accessible modal states are deliberately shipped
+# as CSS so they do not add runtime JavaScript.
 CSS_GZIP_BUDGET = 11 * 1024
-# The full Vault interface remains below the original 500 KiB ceiling. Keep the
+# The full transfer interface remains below the original 500 KiB ceiling. Keep the
 # cap tight so later features must pay for their browser-entrypoint growth.
 ENTRYPOINT_GZIP_BUDGET = 500 * 1024
 SSR_LOBBY_START = "<!-- P2P_SSR_LOBBY_START -->"

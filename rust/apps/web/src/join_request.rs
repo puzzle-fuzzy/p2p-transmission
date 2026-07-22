@@ -42,7 +42,7 @@ pub(super) fn JoinRequestDialog(
                 }
                 div { class: "dialog-actions",
                     button {
-                        class: "secondary-button",
+                        class: "btn btn--ghost",
                         r#type: "button",
                         disabled: pending,
                         onclick: {
@@ -60,7 +60,7 @@ pub(super) fn JoinRequestDialog(
                         if pending { "处理中…" } else { "拒绝" }
                     }
                     button {
-                        class: "primary-button",
+                        class: "btn btn--dark",
                         r#type: "button",
                         disabled: pending,
                         onclick: {

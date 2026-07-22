@@ -4,6 +4,51 @@ import { open, readFile } from 'node:fs/promises'
 
 import { connectSingleReceiverRoom } from './room.helper'
 
+test('file rows remain contained and links stay undecorated across browsers', async ({ page }) => {
+  await page.goto('/')
+  await page.evaluate(() => {
+    const fixture = document.createElement('div')
+    fixture.id = 'cross-browser-layout-fixture'
+    fixture.style.cssText = 'position:fixed;left:-10000px;top:0;width:280px;'
+    fixture.innerHTML = `
+      <div class="file-list" id="cross-browser-file-list">
+        <div class="transfer-file-list">
+          <div class="transfer-file-row">
+            <div class="transfer-file-meta">
+              <strong>${'very-long-file-name-'.repeat(18)}.zip</strong>
+              <div class="transfer-file-secondary"><span>1.2 GB</span><span>传输中 87%</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="request-file-list" id="cross-browser-request-file-list">
+        <div class="request-file-summary"><strong>${'another-extremely-long-file-name-'.repeat(16)}.bin</strong><span>4 GB</span></div>
+      </div>
+      <a class="transfer-download" href="/download">保存文件</a>
+    `
+    document.body.append(fixture)
+  })
+
+  const metrics = await page.locator('#cross-browser-layout-fixture').evaluate(element => {
+    const fileList = element.querySelector<HTMLElement>('#cross-browser-file-list')
+    const requestFileList = element.querySelector<HTMLElement>('#cross-browser-request-file-list')
+    const download = element.querySelector<HTMLElement>('.transfer-download')
+    return {
+      fileList: fileList ? { clientWidth: fileList.clientWidth, scrollWidth: fileList.scrollWidth } : null,
+      requestFileList: requestFileList
+        ? { clientWidth: requestFileList.clientWidth, scrollWidth: requestFileList.scrollWidth }
+        : null,
+      textDecoration: download ? getComputedStyle(download).textDecorationLine : null,
+    }
+  })
+
+  expect(metrics.fileList).not.toBeNull()
+  expect(metrics.requestFileList).not.toBeNull()
+  expect(metrics.fileList?.scrollWidth).toBeLessThanOrEqual(metrics.fileList?.clientWidth ?? 0)
+  expect(metrics.requestFileList?.scrollWidth).toBeLessThanOrEqual(metrics.requestFileList?.clientWidth ?? 0)
+  expect(metrics.textDecoration).toBe('none')
+})
+
 test('Firefox and WebKit establish a peer connection', { tag: '@interop-smoke' }, async ({
   browser,
   baseURL,

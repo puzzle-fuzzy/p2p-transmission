@@ -56,10 +56,10 @@ test('the root renders the Dioxus transfer workspace', { tag: '@smoke' }, async 
   await expect(page.getByRole('heading', { name: '加入房间' })).toBeVisible()
   await expect(page.locator('#boot-fallback')).toHaveCount(0)
 
-  const roomCodeGroup = page.getByRole('group', { name: '输入 6 位房间码' })
-  const roomCodeInputs = roomCodeGroup.getByRole('textbox')
   const roomCode = page.getByRole('textbox', { name: '输入 6 位房间码' })
-  await expect(roomCodeInputs).toHaveCount(6)
+  await expect(roomCode).toHaveCount(1)
+  await expect(page.locator('input[name="room_code"]')).toHaveCount(1)
+  await expect(page.locator('fieldset.room-code, .room-code-input')).toHaveCount(0)
   await expect(roomCode).toBeVisible()
   const joinButton = page.getByRole('button', { name: '请求加入' })
   await expect(joinButton).toBeDisabled()
@@ -102,8 +102,9 @@ test('the root renders the Dioxus transfer workspace', { tag: '@smoke' }, async 
 
   await roomCode.focus()
   await page.keyboard.type('a')
-  await expect(roomCodeInputs.nth(1)).toBeFocused()
+  await expect(roomCode).toHaveValue('A')
   await page.keyboard.press('Backspace')
+  await expect(roomCode).toHaveValue('')
   await expect(roomCode).toBeFocused()
   await roomCode.evaluate(input => {
     const clipboardData = new DataTransfer()
@@ -114,17 +115,15 @@ test('the root renders the Dioxus transfer workspace', { tag: '@smoke' }, async 
       clipboardData,
     }))
   })
-  expect(await roomCodeInputs.evaluateAll(inputs => inputs.map(input => (
-    (input as HTMLInputElement).value
-  )))).toEqual(['A', 'B', '2', '3', 'C', 'D'])
-  await expect(roomCodeInputs.nth(5)).toBeFocused()
-  expect(await roomCodeInputs.nth(5).evaluate(element => (
+  await expect(roomCode).toHaveValue('AB23CD')
+  await expect(roomCode).toBeFocused()
+  expect(await roomCode.evaluate(element => (
     getComputedStyle(element).caretColor
   ))).not.toBe('rgba(0, 0, 0, 0)')
-  expect(await roomCodeInputs.nth(5).evaluate(element => {
+  expect(await roomCode.evaluate(element => {
     const input = element as HTMLInputElement
     return [input.selectionStart, input.selectionEnd]
-  })).toEqual([1, 1])
+  })).toEqual([6, 6])
   await expect(joinButton).toBeEnabled()
   await expect.poll(() => joinButton.evaluate(
     element => getComputedStyle(element).backgroundColor,
@@ -145,6 +144,9 @@ test('the root renders the Dioxus transfer workspace', { tag: '@smoke' }, async 
   const favicon = await page.request.get('/favicon.svg')
   expect(favicon.ok()).toBe(true)
   expect(favicon.headers()['content-type']).toContain('image/svg+xml')
+  const faviconIco = await page.request.get('/favicon.ico')
+  expect(faviconIco.ok()).toBe(true)
+  expect(faviconIco.headers()['content-type']).toContain('image/x-icon')
   const manifest = await page.request.get('/manifest.webmanifest')
   expect(manifest.ok()).toBe(true)
   expect(await manifest.json()).toMatchObject({
@@ -192,6 +194,51 @@ test('the root renders the Dioxus transfer workspace', { tag: '@smoke' }, async 
       await page.screenshot({ path: landscapeOutput, fullPage: true })
     }
   }
+})
+
+test('file queues stay within their columns and download links stay undecorated', async ({ page }) => {
+  await page.goto('/')
+  await page.evaluate(() => {
+    const fixture = document.createElement('div')
+    fixture.id = 'layout-regression-fixture'
+    fixture.style.cssText = 'position:fixed;left:-10000px;top:0;width:280px;'
+    fixture.innerHTML = `
+      <div class="file-list" id="layout-file-list">
+        <div class="transfer-file-list">
+          <div class="transfer-file-row">
+            <div class="transfer-file-meta">
+              <strong>${'very-long-file-name-'.repeat(18)}.zip</strong>
+              <div class="transfer-file-secondary"><span>1.2 GB</span><span>传输中 87%</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="request-file-list" id="layout-request-file-list">
+        <div class="request-file-summary"><strong>${'another-extremely-long-file-name-'.repeat(16)}.bin</strong><span>4 GB</span></div>
+      </div>
+      <a class="transfer-download" href="/download">保存文件</a>
+    `
+    document.body.append(fixture)
+  })
+
+  const metrics = await page.locator('#layout-regression-fixture').evaluate(element => {
+    const fileList = element.querySelector<HTMLElement>('#layout-file-list')
+    const requestFileList = element.querySelector<HTMLElement>('#layout-request-file-list')
+    const download = element.querySelector<HTMLElement>('.transfer-download')
+    return {
+      fileList: fileList ? { clientWidth: fileList.clientWidth, scrollWidth: fileList.scrollWidth } : null,
+      requestFileList: requestFileList
+        ? { clientWidth: requestFileList.clientWidth, scrollWidth: requestFileList.scrollWidth }
+        : null,
+      textDecoration: download ? getComputedStyle(download).textDecorationLine : null,
+    }
+  })
+
+  expect(metrics.fileList).not.toBeNull()
+  expect(metrics.requestFileList).not.toBeNull()
+  expect(metrics.fileList?.scrollWidth).toBeLessThanOrEqual(metrics.fileList?.clientWidth ?? 0)
+  expect(metrics.requestFileList?.scrollWidth).toBeLessThanOrEqual(metrics.requestFileList?.clientWidth ?? 0)
+  expect(metrics.textDecoration).toBe('none')
 })
 
 test('a newly activated application release asks the user to refresh', async ({ page }) => {
@@ -305,7 +352,7 @@ test('the root keeps a useful anonymous lobby when WebAssembly is blocked', { ta
   await expect(shell.locator('.boot-room-restore')).toBeHidden()
   expect(await shell.getAttribute('aria-busy')).toBeNull()
   await expect(shell.getByRole('heading', { name: '加入房间' })).toBeVisible()
-  await expect(shell.locator('.boot-room-code-cell')).toHaveCount(6)
+  await expect(shell.locator('.boot-room-code')).toHaveCount(1)
   await expect(shell.getByRole('status')).toContainText('正在初始化安全会话')
   await expect(shell.getByRole('button', { name: '请求加入' })).toBeDisabled()
   await expect(shell.getByRole('button', { name: '创建房间' })).toBeDisabled()

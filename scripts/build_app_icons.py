@@ -9,7 +9,7 @@ from pathlib import Path
 from PIL import Image, ImageFilter
 
 
-BACKGROUND = (45, 45, 45, 255)
+BACKGROUND = (18, 61, 181, 255)
 MASTER_SIZE = 1024
 ICO_SIZES = (16, 24, 32, 48, 64, 128, 256)
 

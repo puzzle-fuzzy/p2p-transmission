@@ -73,6 +73,8 @@ test('dynamic room and transfer states pass WCAG axe rules', async ({
 
     const requestDialog = owner.getByRole('dialog', { name: '加入申请' })
     await expect(requestDialog).toBeVisible()
+    await expect(requestDialog.locator('.primary-button, .secondary-button')).toHaveCount(0)
+    await expect(requestDialog.locator('.btn')).toHaveCount(2)
     await expectNoAccessibilityViolations(owner)
 
     const decisionRoute = '**/api/rooms/*/join-requests/*/decision'
@@ -105,6 +107,7 @@ test('dynamic room and transfer states pass WCAG axe rules', async ({
     await owner.getByRole('button', { name: '选择接收者，已选择 1 位' }).click()
     const recipientDialog = owner.getByRole('dialog', { name: '选择接收者' })
     await expect(recipientDialog).toBeVisible()
+    await expect(recipientDialog.locator('.primary-button, .secondary-button')).toHaveCount(0)
     const selectedCountStatus = recipientDialog.getByRole('status')
     await expect(selectedCountStatus).toHaveText('已选 1 人')
     await expect(selectedCountStatus).toHaveAttribute('aria-live', 'polite')
@@ -124,6 +127,7 @@ test('dynamic room and transfer states pass WCAG axe rules', async ({
     })
     const transferDialog = receiver.getByRole('dialog', { name: '接收文件' })
     await expect(transferDialog).toBeVisible()
+    await expect(transferDialog.locator('.primary-button, .secondary-button')).toHaveCount(0)
     await expect(transferDialog).toContainText('a11y-empty.txt')
     await expectNoAccessibilityViolations(receiver)
 

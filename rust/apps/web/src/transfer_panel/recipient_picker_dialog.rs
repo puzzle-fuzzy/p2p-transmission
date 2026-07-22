@@ -41,6 +41,7 @@ pub(super) fn RecipientPickerDialog(
                 }
                 div { class: "recipient-picker-tools",
                     button {
+                        class: "btn btn--ghost",
                         r#type: "button",
                         onclick: {
                             let receivers = receivers.clone();
@@ -52,6 +53,7 @@ pub(super) fn RecipientPickerDialog(
                         "全选"
                     }
                     button {
+                        class: "btn btn--ghost",
                         r#type: "button",
                         onclick: move |_| {
                             error.set(String::new());
@@ -99,7 +101,7 @@ pub(super) fn RecipientPickerDialog(
                 }
                 div { class: "dialog-actions",
                     button {
-                        class: "secondary-button",
+                        class: "btn btn--ghost",
                         r#type: "button",
                         onclick: move |_| {
                             let _ = close_modal_dialog("recipient-picker-dialog");
@@ -108,7 +110,7 @@ pub(super) fn RecipientPickerDialog(
                         "取消"
                     }
                     button {
-                        class: "primary-button",
+                        class: "btn btn--dark",
                         r#type: "button",
                         onclick: move |_| {
                             let selected = draft_ids.read().clone();

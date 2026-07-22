@@ -1,153 +1,111 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-07-11T10:30:00.000Z",
+  "generatedAt": "2026-07-20T00:00:00.000Z",
   "title": "Design System: P2P Transmission",
   "extensions": {
     "colorMeta": {
       "primary": {
         "role": "primary",
-        "displayName": "Signal Purple",
-        "canonical": "oklch(0.45 0.22 300)",
-        "tonalRamp": ["#2a085e", "#3a0b84", "#4a0ea8", "#5e11d1", "#7b3de0", "#9d68eb", "#bf93f3", "#e2ccf9"]
+        "displayName": "Action White",
+        "canonical": "#eff3f4",
+        "tonalRamp": ["#000000", "#16181c", "#2f3336", "#536471", "#8b98a5", "#e7e9ea", "#eff3f4", "#ffffff"]
       },
       "bg": {
         "role": "neutral",
-        "displayName": "Charcoal",
-        "canonical": "oklch(0.25 0.01 280)",
-        "tonalRamp": ["#1a1a1a", "#242424", "#2d2d2d", "#363636", "#404040", "#535353", "#666666", "#808080"]
+        "displayName": "True Black",
+        "canonical": "#000000",
+        "tonalRamp": ["#000000", "#16181c", "#181818", "#2f3336"]
       },
       "ink": {
         "role": "neutral",
-        "displayName": "Ink",
-        "canonical": "oklch(0.85 0.01 80 / 0.8)",
-        "tonalRamp": ["rgba(255,255,255,0.15)", "rgba(255,255,255,0.3)", "rgba(255,255,255,0.5)", "rgba(255,255,255,0.6)", "rgba(255,255,255,0.7)", "rgba(255,255,255,0.8)", "rgba(255,255,255,0.9)", "rgba(255,255,255,1.0)"]
+        "displayName": "Soft White",
+        "canonical": "#f2f2f2",
+        "tonalRamp": ["#536471", "#71767b", "#8b98a5", "#e7e9ea", "#f2f2f2", "#ffffff"]
       },
       "border": {
         "role": "neutral",
-        "displayName": "Border",
-        "canonical": "oklch(0.85 0.02 80 / 0.15)",
-        "tonalRamp": ["rgba(255,251,235,0.05)", "rgba(255,251,235,0.08)", "rgba(255,251,235,0.12)", "rgba(255,251,235,0.15)", "rgba(255,251,235,0.2)", "rgba(255,251,235,0.3)", "rgba(255,251,235,0.4)", "rgba(255,251,235,0.5)"]
+        "displayName": "Graphite Border",
+        "canonical": "#2f3336",
+        "tonalRamp": ["#2f3336", "#536471", "#71767b"]
       }
     },
     "typographyMeta": {
-      "body": {
-        "displayName": "Body",
-        "purpose": "正文、按钮、文件名称"
-      },
-      "label": {
-        "displayName": "Label",
-        "purpose": "辅助信息、日志、文件大小"
-      },
-      "mono": {
-        "displayName": "Mono",
-        "purpose": "验证码输入框"
-      }
+      "display": { "displayName": "Display", "purpose": "首页唯一大标题" },
+      "body": { "displayName": "Body", "purpose": "正文、标题与按钮" },
+      "mono": { "displayName": "Mono", "purpose": "房间码、进度和校验数字" }
     },
-    "shadows": [],
-    "motion": [
-      { "name": "ease-standard", "value": "cubic-bezier(0.4, 0, 0.2, 1)", "purpose": "状态过渡默认缓动曲线" },
-      { "name": "duration-fast", "value": "200ms", "purpose": "hover/active 反馈" },
-      { "name": "duration-slow", "value": "300ms", "purpose": "进度条、颜色过渡" }
+    "shadows": [
+      { "name": "dialog", "value": "0 18px 60px rgba(0,0,0,0.6)", "purpose": "仅用于模态框与背景分离" }
     ],
-    "breakpoints": []
+    "motion": [
+      { "name": "duration-fast", "value": "160ms", "purpose": "hover、focus 与按压反馈" },
+      { "name": "duration-panel", "value": "220ms ease-out", "purpose": "页面状态短淡入" }
+    ],
+    "breakpoints": [
+      { "name": "compact", "value": "520px" },
+      { "name": "stack", "value": "760px" },
+      { "name": "wide", "value": "980px" }
+    ]
   },
   "components": [
     {
       "name": "Primary Button",
       "kind": "button",
       "refersTo": "button-primary",
-      "description": "Signal Purple 填充主按钮。用于主要操作（加入房间、传输、确定）。",
-      "html": "<button class=\"ds-btn-primary\">加入房间</button>",
-      "css": ".ds-btn-primary { background: #5e11d1; color: rgba(255,255,255,0.9); padding: 12px 64px; border-radius: 12px; border: none; font-size: 14px; letter-spacing: 0.05em; cursor: pointer; font-family: system-ui, -apple-system, sans-serif; transition: filter 0.2s cubic-bezier(0.4,0,0.2,1); width: 100%; display: inline-flex; align-items: center; justify-content: center; } .ds-btn-primary:hover { filter: brightness(1.1); } .ds-btn-primary:active { filter: brightness(0.9); }"
+      "description": "白底黑字的唯一主操作。",
+      "html": "<button class=\"ds-btn-primary\">请求加入</button>",
+      "css": ".ds-btn-primary { min-height: 50px; padding: 0 20px; border: 0; border-radius: 999px; background: #eff3f4; color: #0f1419; font: 700 15px/1 Arial,sans-serif; } .ds-btn-primary:hover { background: #d7dbdc; }"
     },
     {
-      "name": "Ghost Button",
+      "name": "Secondary Button",
       "kind": "button",
-      "refersTo": "button-ghost",
-      "description": "描边次按钮。用于次要操作（创建房间）。",
-      "html": "<button class=\"ds-btn-ghost\">创建房间</button>",
-      "css": ".ds-btn-ghost { background: transparent; color: rgba(255,255,255,0.5); padding: 12px 64px; border-radius: 12px; border: 1px solid rgba(255,251,235,0.15); font-size: 14px; letter-spacing: 0.05em; cursor: pointer; font-family: system-ui, -apple-system, sans-serif; transition: background 0.2s, color 0.2s cubic-bezier(0.4,0,0.2,1); width: 100%; display: inline-flex; align-items: center; justify-content: center; } .ds-btn-ghost:hover { background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.7); } .ds-btn-ghost:active { background: rgba(255,255,255,0.1); }"
-    },
-    {
-      "name": "Tab Switch",
-      "kind": "custom",
-      "refersTo": "tabs",
-      "description": "药丸形 Tab 切换器。活跃项通过背景色区分。",
-      "html": "<div class=\"ds-tabs\"><button class=\"ds-tab ds-tab-active\">传输文本</button><button class=\"ds-tab\">传输文件</button></div>",
-      "css": ".ds-tabs { display: flex; border-radius: 12px; background: rgba(255,255,255,0.05); padding: 4px; } .ds-tab { flex: 1; padding: 10px 16px; border-radius: 8px; border: none; font-size: 14px; cursor: pointer; font-family: system-ui, -apple-system, sans-serif; background: transparent; color: rgba(255,255,255,0.4); transition: background 0.2s, color 0.2s cubic-bezier(0.4,0,0.2,1); } .ds-tab:hover { color: rgba(255,255,255,0.6); } .ds-tab-active { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.8); } .ds-tab-active:hover { color: rgba(255,255,255,0.8); }"
-    },
-    {
-      "name": "Input Field",
-      "kind": "input",
-      "refersTo": "input-field",
-      "description": "默认输入框。透明背景 + 描边，聚焦时描边切换为 Signal Purple。",
-      "html": "<input class=\"ds-input\" placeholder=\"输入要传输的文本…\" />",
-      "css": ".ds-input { background: transparent; border: 1px solid rgba(255,251,235,0.15); border-radius: 12px; padding: 16px; font-size: 14px; color: rgba(255,255,255,0.8); font-family: system-ui, -apple-system, sans-serif; outline: none; width: 100%; transition: border-color 0.2s cubic-bezier(0.4,0,0.2,1); box-sizing: border-box; } .ds-input::placeholder { color: rgba(255,255,255,0.2); } .ds-input:focus { border-color: #5e11d1; }"
-    },
-    {
-      "name": "Textarea",
-      "kind": "input",
-      "refersTo": "input-field",
-      "description": "多行文本输入框，右下角字数统计。",
-      "html": "<textarea class=\"ds-textarea\" placeholder=\"输入要传输的文本…\"></textarea><div class=\"ds-char-count\">0/500</div>",
-      "css": ".ds-textarea { background: transparent; border: 1px solid rgba(255,251,235,0.15); border-radius: 12px; padding: 16px; padding-bottom: 32px; font-size: 14px; color: rgba(255,255,255,0.8); font-family: system-ui, -apple-system, sans-serif; outline: none; width: 100%; height: 224px; resize: none; transition: border-color 0.2s cubic-bezier(0.4,0,0.2,1); box-sizing: border-box; } .ds-textarea::placeholder { color: rgba(255,255,255,0.2); } .ds-textarea:focus { border-color: #5e11d1; } .ds-char-count { text-align: right; font-size: 12px; color: rgba(255,255,255,0.2); font-variant-numeric: tabular-nums; margin-top: -24px; padding-right: 16px; position: relative; }"
+      "refersTo": "button-secondary",
+      "description": "透明描边的次级操作。",
+      "html": "<button class=\"ds-btn-secondary\">创建房间</button>",
+      "css": ".ds-btn-secondary { min-height: 44px; padding: 0 20px; border: 1px solid #536471; border-radius: 999px; background: transparent; color: #f2f2f2; font: 700 15px/1 Arial,sans-serif; }"
     },
     {
       "name": "Verification Code",
       "kind": "input",
       "refersTo": "input-field",
-      "description": "六位验证码输入框组，支持粘贴和自动跳格。",
-      "html": "<div class=\"ds-verify-row\"><input class=\"ds-verify-input\" maxlength=\"1\" value=\"3\" /><input class=\"ds-verify-input\" maxlength=\"1\" value=\"5\" /><input class=\"ds-verify-input\" maxlength=\"1\" value=\"8\" /><input class=\"ds-verify-input\" maxlength=\"1\" /><input class=\"ds-verify-input\" maxlength=\"1\" /><input class=\"ds-verify-input\" maxlength=\"1\" /></div>",
-      "css": ".ds-verify-row { display: flex; gap: 12px; justify-content: center; } .ds-verify-input { width: 48px; height: 56px; background: transparent; border: 1px solid rgba(255,251,235,0.15); border-radius: 12px; text-align: center; font-size: 20px; color: rgba(255,255,255,0.8); font-family: ui-monospace, SFMono-Regular, monospace; outline: none; transition: border-color 0.2s cubic-bezier(0.4,0,0.2,1); box-sizing: border-box; } .ds-verify-input:focus { border-color: #5e11d1; }"
+      "description": "六位房间码输入组，支持粘贴、自动跳格与明确错误提示。",
+      "html": "<fieldset class=\"ds-code\"><input maxlength=\"1\" aria-label=\"第 1 位\" /><input maxlength=\"1\" aria-label=\"第 2 位\" /></fieldset>",
+      "css": ".ds-code { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:8px; border:0; } .ds-code input { height:56px; border:1px solid #536471; border-radius:10px; background:#000; color:#f2f2f2; text-align:center; font:700 20px/1 ui-monospace,monospace; }"
     },
     {
-      "name": "File Item",
+      "name": "Tab Switch",
       "kind": "custom",
-      "refersTo": "file-item",
-      "description": "文件列表中的单行条目。可选进度条背景填充。",
-      "html": "<div class=\"ds-file-wrap\"><div class=\"ds-file-progress\" style=\"width:65%\"></div><div class=\"ds-file-item\"><svg class=\"ds-file-icon\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"rgba(255,255,255,0.3)\"><path d=\"M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z\"/></svg><span class=\"ds-file-name\">设计稿.fig</span><span class=\"ds-file-size\">2.3 MB</span></div></div>",
-      "css": ".ds-file-wrap { position: relative; overflow: hidden; background: rgba(255,255,255,0.05); border-radius: 8px; } .ds-file-progress { position: absolute; top: 0; left: 0; bottom: 0; background: rgba(94,17,209,0.22); border-radius: 8px; transition: width 0.3s cubic-bezier(0.4,0,0.2,1); } .ds-file-item { position: relative; display: flex; align-items: center; gap: 12px; padding: 8px 12px; z-index: 10; } .ds-file-icon { flex-shrink: 0; } .ds-file-name { flex: 1; font-size: 12px; color: rgba(255,255,255,0.6); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-file-size { font-size: 12px; color: rgba(255,255,255,0.2); flex-shrink: 0; }"
-    },
-    {
-      "name": "Log Entry",
-      "kind": "custom",
-      "refersTo": "log-entry",
-      "description": "传输日志条目。进行中状态末尾带旋转指示器。",
-      "html": "<div class=\"ds-log\"><span class=\"ds-log-time\">14:23:30</span><span class=\"ds-log-msg\">正在等待好友接收 需求文档.docs…</span><svg class=\"ds-log-spinner\" width=\"12\" height=\"12\" viewBox=\"0 0 16 16\" fill=\"none\"><circle cx=\"8\" cy=\"8\" r=\"6\" stroke=\"rgba(255,255,255,0.5)\" stroke-width=\"2\" stroke-dasharray=\"30\" stroke-dashoffset=\"10\" stroke-linecap=\"round\"/></svg></div>",
-      "css": ".ds-log { display: flex; align-items: baseline; gap: 8px; font-size: 12px; } .ds-log-time { color: rgba(255,255,255,0.15); font-variant-numeric: tabular-nums; flex-shrink: 0; } .ds-log-msg { color: rgba(255,255,255,0.5); } .ds-log-spinner { flex-shrink: 0; animation: ds-spin 1s linear infinite; } @keyframes ds-spin { to { transform: rotate(360deg); } }"
+      "refersTo": "tabs",
+      "description": "紧凑胶囊切换，当前项使用反色。",
+      "html": "<div class=\"ds-tabs\"><button class=\"ds-tab active\">文件</button><button class=\"ds-tab\">文本</button></div>",
+      "css": ".ds-tabs { display:inline-flex; padding:3px; border:1px solid #2f3336; border-radius:999px; } .ds-tab { min-height:38px; padding:0 18px; border:0; border-radius:999px; background:transparent; color:#8b98a5; } .ds-tab.active { background:#eff3f4; color:#0f1419; }"
     }
   ],
   "narrative": {
-    "northStar": "The Dark Workshop",
-    "overview": "一个专注于传东西的工具——没有账户、没有云存储、没有多余步骤。设计系统从\"工作台\"的隐喻出发：深色背景让前方的内容成为视觉焦点，紫色信号点明正在发生的连接和传输。每个界面只有一个核心操作，控件退后，信息前进。页面的气质是\"工具式的克制\"：平坦、不堆叠、不炫技。圆角微乎其微（12px 封顶），阴影不出现，层次通过透明度的微妙变化来区分。用户看到的不是设计，而是传输任务本身。",
+    "northStar": "Direct Black-and-White Utility",
+    "overview": "借鉴 X 首页的左右分栏、大标题、单一主操作与极简页脚，将点对点传输压缩为直接、务实的任务流。页面只维护黑白高对比视觉，不提供主题切换，也不承担营销展示。",
     "keyCharacteristics": [
-      "深色背景 + 单色阶调，不做多色分层",
-      "无阴影，无毛玻璃，无渐变",
-      "内容居中的单栏布局，视口即是容器",
-      "间距规整，以 4px 为步进基数的对称尺度",
-      "所有交互反馈仅通过颜色和透明度的变化表达"
+      "纯黑背景与柔和白文字",
+      "桌面左右分栏，移动端单列",
+      "白色主按钮与透明描边次按钮",
+      "无渐变、无毛玻璃、无蓝紫装饰",
+      "真实状态与清晰错误反馈"
     ],
     "rules": [
-      { "name": "The One Color Rule", "body": "Signal Purple 是唯一的彩色，只出现在交互元素（按钮、聚焦、进度、完成标记）上。它的稀有度就是它的意义。不要将它用在纯装饰元素上。", "section": "colors" },
-      { "name": "The Opacity Scale Rule", "body": "层次不靠阴影，靠白色叠加的透明度阶梯：5% → 10% → 15% → 56% → 80%。输入控件边界使用 36% 作为非文本对比度例外；Signal Purple 的进度/选中表面使用 22%，以保证深色背景上的可辨识度。", "section": "colors" },
-      { "name": "The Flat Hierarchy Rule", "body": "不使用超出 16px 的正文或小于 12px 的标签。字号梯度只有 12 → 14 → 20（等宽）三级。不引入 display / headline 等大字号层级——这个系统不需要。", "section": "typography" },
-      { "name": "The Flat-By-Default Rule", "body": "所有表面在静止状态下都是平的。没有任何元素自带阴影。阴影的出现永远是错误。", "section": "elevation" }
+      { "name": "One Primary Task", "body": "每个页面只突出一个主要操作。", "section": "layout" },
+      { "name": "Monochrome First", "body": "黑白灰承担结构，状态色只表达状态。", "section": "colors" },
+      { "name": "No Marketing Chrome", "body": "主界面不放功能徽章、隐私口号或主题设置。", "section": "content" },
+      { "name": "Visible Feedback", "body": "加载、错误、成功和禁用状态必须有文字反馈。", "section": "interaction" }
     ],
     "dos": [
-      "Do 使用 Signal Purple 作为唯一的交互色——按钮填充、焦点边框、进度条、完成对勾。",
-      "Do 使用透明度阶梯（5% / 10% / 15% / 56% / 80%）区分层次；仅为非文本对比度使用 36% 控件边界、为进度/选中表面使用 22% Signal Purple，不要用阴影或渐变。",
-      "Do 保持 12px 圆角上限：大容器、按钮、输入框用 12px，内部元素（Tab、文件行）用 8px。",
-      "Do 让每个页面只有一个核心操作。Tab 选中态靠背景色区分，不需要底部指示条。",
-      "Do 使用 CSS 变量维护深色体系的语义一致性。浅色映射仅在未来需求明确后补充，不属于当前实现要求。"
+      "Do 保持加入、创建、选择内容和发送的最短路径。",
+      "Do 使用清晰边界、可见焦点和至少 44px 的交互目标。",
+      "Do 让技术与隐私说明集中在关于弹窗。"
     ],
     "donts": [
-      "Don't 使用赛博朋克风格：霓虹色、故障效果、暗黑过载背景。",
-      "Don't 花里胡哨：装饰性元素、不必要的动画、过度设计。",
-      "Don't 像 Telegram 那样：功能密集的侧栏、多层导航、视觉过载。",
-      "Don't 制造复杂：不到三步能完成的操作，不要做成配置向导。",
-      "Don't 使用阴影——任何 box-shadow 或 drop-shadow 都是错误。",
-      "Don't 使用边框以外的装饰手法：border-left 色条、background-clip: text 渐变文字、backdrop-filter 毛玻璃。",
-      "Don't 引入第二个有彩色。Signal Purple 是唯一的主色，不使用次级/三级色。"
+      "Don't 使用深蓝、紫色、蓝紫渐变或伪 AI 视觉语言。",
+      "Don't 使用毛玻璃、彩色光晕、装饰性插画或夸张阴影。",
+      "Don't 加入主题中心、功能徽章、营销标语或多层配置流程。"
     ]
   }
 }

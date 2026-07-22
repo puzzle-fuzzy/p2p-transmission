@@ -284,7 +284,11 @@ mod tests {
                 .html()
                 .contains("href=\"/favicon.svg\" type=\"image/svg+xml\" sizes=\"any\"")
         );
-        assert!(!renderer.html().contains("href=\"/favicon.ico\""));
+        assert!(
+            renderer
+                .html()
+                .contains("href=\"/favicon.ico\" type=\"image/x-icon\" sizes=\"any\"")
+        );
         let critical_restore_style = renderer
             .html()
             .find(".boot-room-restore { display: none; }")

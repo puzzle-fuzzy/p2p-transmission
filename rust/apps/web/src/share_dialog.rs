@@ -80,7 +80,7 @@ pub(super) fn ShareDialog(
                     strong { "{room_code}" }
                 }
                 button {
-                    class: "primary-button",
+                    class: "btn btn--dark",
                     r#type: "button",
                     onclick: move |_| {
                         share_error.set(None);
@@ -114,7 +114,7 @@ pub(super) fn ShareDialog(
                     p { class: "dialog-error", role: "alert", "{error}" }
                 }
                 button {
-                    class: "dialog-close",
+                    class: "btn btn--ghost dialog-close",
                     r#type: "button",
                     onclick: move |_| {
                         let _ = close_modal_dialog("share-dialog");

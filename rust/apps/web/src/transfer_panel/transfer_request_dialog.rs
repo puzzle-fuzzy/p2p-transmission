@@ -83,7 +83,7 @@ pub(super) fn TransferRequestDialog(
                     if streamed {
                         if recovery_available {
                             button {
-                                class: "primary-button",
+                                class: "btn btn--dark",
                                 r#type: "button",
                                 onclick: move |_| {
                                     let peer_id = recovery_peer_id.clone();
@@ -97,7 +97,7 @@ pub(super) fn TransferRequestDialog(
                                 "继续接收"
                             }
                             button {
-                                class: "secondary-button",
+                                class: "btn btn--ghost",
                                 r#type: "button",
                                 disabled: !stream_supported,
                                 onclick: move |_| {
@@ -118,7 +118,7 @@ pub(super) fn TransferRequestDialog(
                             }
                         } else {
                             button {
-                                class: "primary-button",
+                                class: "btn btn--dark",
                                 r#type: "button",
                                 disabled: !stream_supported,
                                 onclick: move |_| {
@@ -140,7 +140,7 @@ pub(super) fn TransferRequestDialog(
                         }
                     } else {
                         button {
-                            class: "primary-button",
+                            class: "btn btn--dark",
                             r#type: "button",
                             onclick: move |_| {
                                 actions.decide_incoming_transfer(
@@ -153,7 +153,7 @@ pub(super) fn TransferRequestDialog(
                         }
                     }
                     button {
-                        class: "secondary-button",
+                        class: "btn btn--ghost",
                         r#type: "button",
                         onclick: move |_| {
                             actions.decide_incoming_transfer(

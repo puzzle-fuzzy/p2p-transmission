@@ -164,7 +164,7 @@ test('two browsers can create, approve, connect, and restore a room', async ({
   }
 })
 
-test('a receiver can enter a room code one cell at a time, submit with Enter, and cancel', { tag: '@smoke' }, async ({ browser, baseURL }) => {
+test('a receiver can enter a room code in one field, submit with Enter, and cancel', { tag: '@smoke' }, async ({ browser, baseURL }) => {
   const ownerContext = await browser.newContext({ baseURL })
   const receiverContext = await browser.newContext({ baseURL })
   const owner = await ownerContext.newPage()
@@ -177,11 +177,9 @@ test('a receiver can enter a room code one cell at a time, submit with Enter, an
     expect(roomCode).toMatch(/^[A-Z2-9]{6}$/)
 
     await receiver.goto('/')
-    const inputs = await enterRoomCode(receiver, roomCode ?? '')
-    expect(await inputs.evaluateAll(roomCodeInputs => roomCodeInputs.map(input => (
-      (input as HTMLInputElement).value
-    )))).toEqual(Array.from(roomCode ?? ''))
-    await expect(inputs.last()).toBeFocused()
+    const input = await enterRoomCode(receiver, roomCode ?? '')
+    await expect(input).toHaveValue(roomCode ?? '')
+    await expect(input).toBeFocused()
     await receiver.keyboard.press('Enter')
     await expect(owner.getByRole('dialog', { name: '加入申请' })).toBeVisible()
 

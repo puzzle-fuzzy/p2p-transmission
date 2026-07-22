@@ -288,14 +288,14 @@ fn LeaveRoomDialog(busy: bool, mut open: Signal<bool>, on_confirm: EventHandler<
             }
             div { class: "dialog-actions",
                 button {
-                    class: "secondary-button",
+                    class: "btn btn--ghost",
                     r#type: "button",
                     disabled: busy,
                     onclick: move |_| close_leave_dialog(open),
                     "继续留在房间"
                 }
                 button {
-                    class: "primary-button leave-confirm-button",
+                    class: "btn btn--dark leave-confirm-button",
                     r#type: "button",
                     disabled: busy,
                     onclick: move |_| {

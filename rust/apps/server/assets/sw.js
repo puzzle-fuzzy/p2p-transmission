@@ -11,6 +11,7 @@ const CURRENT_SHELL_ASSETS = [...SHELL_ASSET_PATHS]
 const CORE_ASSETS = [
   '/',
   '/favicon.svg',
+  '/favicon.ico',
   '/manifest.webmanifest',
   ...CURRENT_SHELL_ASSETS,
 ];
@@ -27,6 +28,7 @@ const sameOriginAppAsset = value => {
     if (url.pathname === '/'
         || /^\/(?:assets|shell)\//u.test(url.pathname)
         || url.pathname === '/favicon.svg'
+        || url.pathname === '/favicon.ico'
         || url.pathname === '/manifest.webmanifest') {
       return url.href;
     }
@@ -193,6 +195,7 @@ self.addEventListener('fetch', event => {
     return;
   }
   if (url.pathname === '/favicon.svg'
+      || url.pathname === '/favicon.ico'
       || url.pathname === '/manifest.webmanifest') {
     event.respondWith(networkFirstAsset(request));
   }
