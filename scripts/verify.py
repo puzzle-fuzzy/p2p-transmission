@@ -69,6 +69,7 @@ def main() -> None:
     run(["python", "-X", "utf8", "scripts/dev.py", "--profile", "release", "--build-only"])
     run(["python", "-X", "utf8", "scripts/check_web_bundle.py"])
     run(["python", "-X", "utf8", "scripts/check-doc-links.py"])
+    run(["python", "-X", "utf8", "scripts/check_documentation_consistency.py"])
     run(["git", "diff", "--check"])
 
 

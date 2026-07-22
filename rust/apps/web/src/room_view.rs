@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 
 use dioxus::prelude::*;
 use p2p_browser_platform::{
-    RtcPeerRegistry, close_modal_dialog, copy_text, leave_room, new_client_id, show_modal_dialog,
+    RtcPeerRegistry, begin_copy_text, close_modal_dialog, leave_room, new_client_id,
+    show_modal_dialog,
 };
 use p2p_protocol::{
     CreateInviteResponse, ParticipantRoleWire, ParticipantSnapshot, RoomBootstrapResponse,
@@ -151,9 +152,12 @@ pub(super) fn RoomView(
                                 title: "复制房间码",
                                 onclick: move |_| {
                                     let value = room_code_for_copy.clone();
+                                    let copy = begin_copy_text(&value);
                                     spawn(async move {
-                                        if copy_text(&value).await.is_ok() {
+                                        if copy.await.is_ok() {
                                             dispatch_app_event(model, AppEvent::SetNotice(Some("房间码已复制".to_owned())));
+                                        } else {
+                                            dispatch_app_event(model, AppEvent::SetError(Some("无法复制房间码，请手动选择后复制".to_owned())));
                                         }
                                     });
                                 },
@@ -222,10 +226,10 @@ pub(super) fn RoomView(
                     if let Some(error) = error {
                         p { class: "inline-error", role: "alert", "{error}" }
                     }
-                    footer { class: "footerline room-footer",
-                        span { class: "mono", "WEBRTC / ENCRYPTED / SESSION ACTIVE" }
-                        span { class: "mono", id: "fileCountFooter", "0 FILES" }
-                    }
+                }
+                footer { class: "footerline room-footer",
+                    span { class: "mono", "WEBRTC / ENCRYPTED / SESSION ACTIVE" }
+                    span { class: "mono", id: "fileCountFooter", "0 FILES" }
                 }
             }
             p { class: "room-connection-copy sr-only", role: "status", aria_live: "polite", aria_atomic: "true", "{status_copy}" }

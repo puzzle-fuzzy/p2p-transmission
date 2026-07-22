@@ -1,6 +1,6 @@
 # Rust 发布手册
 
-当前是独立的 Rust 正式版本，协议固定为 `5.0`，不读取或迁移任何旧应用数据库格式、客户端会话，也不兼容旧 API 或实时协议。前端静态资源和 Axum 控制面由同一个容器、正式域名 `https://p2p.yxswy.com` 提供。
+当前是独立的 Rust 正式版本，协议固定为 `5.1`，不读取或迁移任何旧应用数据库格式、客户端会话，也不兼容旧 API 或实时协议。前端静态资源和 Axum 控制面由同一个容器、正式域名 `https://p2p.yxswy.com` 提供。
 
 ## 发布前门禁
 
@@ -54,7 +54,7 @@ GitHub `production` environment 必须仅在 environment 范围保存四个 secr
 
 stage 通过绑定 operation ID 和版本的后台 supervisor 调用固定、受 sudoers 限制的 `stage` wrapper，SSH 断线后仍可重连等待，全局锁冲突不会进入并发回滚。pending 会分别记录“容器可能已切换”和“数据库已恢复”阶段：容器切换前失败不停止旧容器、不回放数据库；完整回滚先在同盘预制并校验 SQLite，再隔离主库与 WAL/SHM 后替换，重试不会重复覆盖恢复后的新写入。未知或锁冲突状态按失败关闭，工件只在 finalize 或明确回滚成功后清理。
 
-`Production health` workflow 每 6 小时及手工触发时执行两条互补路径：公网 Playwright 以隔离 Chromium context 验证 WSS 与默认 ICE 小文件传输，并使用服务端短期 TURN 凭据强制 relay 再传输；主机 job 使用相同 `TENCENT_*` secrets，通过唯一 sudo wrapper 执行无参数 `maintenance`。maintenance 与发布共用 concurrency group且不会取消正在执行的维护，会拒绝 pending release，核对 ready/release identity 和仅限本机的内部指标，并按备份/恢复实际峰值在每个文件系统保留 2 GiB 余量。SQLite backup 先写同目录隐藏临时文件，完成 `quick_check`、文件和目录同步后才原子发布；随后恢复到一次性数据库执行事务回滚演练。它不替换生产主库，公网 `/internal/metrics` 由 Nginx 固定返回 404。任何一条失败都应作为生产告警处理，不能用本机 health 成功掩盖公网 TURN 失败；仓库管理员仍需开启 Actions 失败通知或接入现有告警渠道。
+`Production health` workflow 每 2 小时及手工触发时执行两条互补路径：公网 Playwright 以隔离 Chromium context 验证 WSS 与默认 ICE 小文件传输，并使用服务端短期 TURN 凭据强制 relay 再传输；主机 job 使用相同 `TENCENT_*` secrets，通过唯一 sudo wrapper 执行无参数 `maintenance`。maintenance 与发布共用 concurrency group且不会取消正在执行的维护，会拒绝 pending release，核对 ready/release identity 和仅限本机的内部指标，并按备份/恢复实际峰值在每个文件系统保留 2 GiB 余量。SQLite backup 先写同目录隐藏临时文件，完成 `quick_check`、文件和目录同步后才原子发布；随后恢复到一次性数据库执行事务回滚演练。它不替换生产主库，公网 `/internal/metrics` 由 Nginx 固定返回 404。任何一条失败都应作为生产告警处理，不能用本机 health 成功掩盖公网 TURN 失败；仓库管理员仍需开启 Actions 失败通知或接入现有告警渠道。
 
 ## 构建、启动与验收
 

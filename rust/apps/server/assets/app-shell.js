@@ -4,19 +4,6 @@
     restoreFallback.removeAttribute('hidden');
   }
 
-  const ensureGeneratedCode = () => {
-    const generatedCode = document.querySelector('.generated-code');
-    if (generatedCode && !/^\d{6}$/.test(generatedCode.textContent.trim())) {
-      generatedCode.textContent = String(Math.floor(100000 + Math.random() * 900000));
-    }
-  };
-  ensureGeneratedCode();
-  new MutationObserver(ensureGeneratedCode).observe(document.body, {
-    childList: true,
-    characterData: true,
-    subtree: true,
-  });
-
   const showUpgradePrompt = () => {
     let dialog = document.getElementById('app-upgrade-dialog');
     if (!dialog) {
@@ -27,9 +14,10 @@
       dialog.setAttribute('aria-modal', 'true');
       dialog.setAttribute('aria-labelledby', 'upgrade-dialog-title');
       dialog.setAttribute('aria-describedby', 'upgrade-dialog-description');
+      dialog.addEventListener('cancel', event => event.preventDefault());
       dialog.innerHTML = '<p class="eyebrow">UPDATE REQUIRED</p><h2 id="upgrade-dialog-title">需要刷新页面</h2><p id="upgrade-dialog-description" class="upgrade-dialog-copy">应用已经更新。刷新后才能继续连接房间；正在进行的传输会中断，但支持恢复的文件可以从检查点继续。</p><button class="primary-button" type="button">刷新并升级</button>';
       dialog.querySelector('button').addEventListener('click', () => location.reload());
-      document.body.append(dialog);
+      (document.body || document.documentElement).append(dialog);
     }
     if (!dialog.open) {
       typeof dialog.showModal === 'function' ? dialog.showModal() : dialog.setAttribute('open', '');
@@ -37,6 +25,7 @@
     dialog.querySelector('button').focus();
   };
 
+  window.addEventListener('p2p-app-update', showUpgradePrompt);
   new MutationObserver(() => {
     if (document.documentElement.hasAttribute('data-p2p-upgrade')) showUpgradePrompt();
   }).observe(document.documentElement, {

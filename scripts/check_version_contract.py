@@ -31,6 +31,7 @@ def main() -> None:
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     rust_readme = (ROOT / "rust/README.md").read_text(encoding="utf-8")
+    release_manual = (ROOT / "docs/release/RELEASE.md").read_text(encoding="utf-8")
     http_api = (ROOT / "rust/apps/server/src/http_api.rs").read_text(encoding="utf-8")
     session_storage = (
         ROOT / "rust/crates/browser-platform/src/session_storage.rs"
@@ -58,6 +59,11 @@ def main() -> None:
     require(
         f"当前协议固定为 {protocol}" in rust_readme,
         f"rust/README.md must name protocol {protocol}",
+        failures,
+    )
+    require(
+        f"协议固定为 `{protocol}`" in release_manual,
+        f"docs/release/RELEASE.md must name protocol {protocol}",
         failures,
     )
     require(

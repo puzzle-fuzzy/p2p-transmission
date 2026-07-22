@@ -44,20 +44,23 @@ pub fn AppShell(
                             if !is_room {
                                 footer { class: "footerline mono",
                                     span { "P2P FILE TRANSFER / CREATE + JOIN / WEBRTC SESSION" }
-                                    span { class: "footer-inline-actions",
-                                        if interactive {
-                                            a {
-                                                class: "github-link",
-                                                href: "https://github.com/puzzle-fuzzy/p2p-transmission",
-                                                target: "_blank",
-                                                rel: "noreferrer",
-                                                "{GITHUB_LABEL} ↗"
+                                    span { class: "footer-meta",
+                                        span { class: "footer-inline-actions",
+                                            if interactive {
+                                                a {
+                                                    class: "github-link",
+                                                    href: "https://github.com/puzzle-fuzzy/p2p-transmission",
+                                                    target: "_blank",
+                                                    rel: "noreferrer",
+                                                    "{GITHUB_LABEL} ↗"
+                                                }
+                                            } else {
+                                                span { class: "github-link", aria_hidden: "true", "{GITHUB_LABEL} ↗" }
                                             }
-                                        } else {
-                                            span { class: "github-link", aria_hidden: "true", "{GITHUB_LABEL} ↗" }
+                                            span { class: "footer-divider", aria_hidden: "true", "/" }
+                                            {footer}
                                         }
-                                        span { class: "footer-divider", aria_hidden: "true", "/" }
-                                        {footer}
+                                        span { class: "footer-page-index", aria_label: "页面索引 02 × 01", "02 × 01" }
                                     }
                                 }
                             }
@@ -185,8 +188,7 @@ pub fn LobbyPanel(
                     p { class: "panel-number", aria_hidden: "true", "01" }
                     p { class: "panel-label mono", "HOST SESSION" }
                     h2 { id: "create-title", class: "panel-title", "创建房间" }
-                    p { class: "panel-desc", "生成一个一次性六位房间号。将它发送给另一台设备，对方输入后即可加入。" }
-                    div { class: "room-code generated-code", id: "generated-code", "------" }
+                    p { class: "panel-desc", "点击创建后生成一次性六位房间号，再将它发送给另一台设备即可加入。" }
                     div { class: "actions",
                         button {
                             class: "btn btn--solid mono",
@@ -199,15 +201,6 @@ pub fn LobbyPanel(
                             },
                             aria_describedby: secondary_description,
                             {secondary_label}
-                        }
-                        if !secondary_disabled {
-                            button { class: "btn mono", r#type: "button", "复制房间号" }
-                            button {
-                                class: "btn mono",
-                                r#type: "button",
-                                onclick: move |event| on_create.call(event),
-                                "创建并进入"
-                            }
                         }
                     }
                     LobbyCreateFeedbackRow { feedback: feedback.clone() }

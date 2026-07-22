@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use dioxus::prelude::*;
-use p2p_browser_platform::{RtcPeerRegistry, TransferDirection, copy_text};
+use p2p_browser_platform::{RtcPeerRegistry, TransferDirection, begin_copy_text};
 use p2p_protocol::{MAX_TEXT_TRANSFER_BYTES, MAX_TEXT_TRANSFER_CHARS, ParticipantSnapshot};
 
 use crate::app_runtime::dispatch_app_event;
@@ -160,12 +160,12 @@ fn ReceiverTextView(
                     button {
                         class: "btn btn--dark",
                         r#type: "button",
-                        onclick: {
-                            let value = text.clone();
-                            move |_| {
-                                let value = value.clone();
-                                spawn(async move {
-                                    if copy_text(&value).await.is_ok() {
+                            onclick: {
+                                let value = text.clone();
+                                move |_| {
+                                    let copy = begin_copy_text(&value);
+                                    spawn(async move {
+                                    if copy.await.is_ok() {
                             dispatch_app_event(
                                 model,
                                 AppEvent::SetNotice(Some("文本已复制".to_owned())),

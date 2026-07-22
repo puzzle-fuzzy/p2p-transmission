@@ -1,7 +1,9 @@
 use std::fmt::Write as _;
 
 use dioxus::prelude::*;
-use p2p_browser_platform::{build_invite_url, close_modal_dialog, copy_text, show_modal_dialog};
+use p2p_browser_platform::{
+    begin_copy_text, build_invite_url, close_modal_dialog, show_modal_dialog,
+};
 
 use crate::app_runtime::dispatch_app_event;
 use crate::app_state::AppModel;
@@ -86,9 +88,11 @@ pub(super) fn ShareDialog(
                         share_error.set(None);
                         let room_code = room_code.clone();
                         let capability = capability.clone();
+                        let copy = build_invite_url(&room_code, &capability)
+                            .map(|url| begin_copy_text(&url));
                         spawn(async move {
-                            let result = match build_invite_url(&room_code, &capability) {
-                                Ok(url) => copy_text(&url).await,
+                            let result = match copy {
+                                Ok(copy) => copy.await,
                                 Err(error) => Err(error),
                             };
                             match result {

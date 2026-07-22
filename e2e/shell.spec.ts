@@ -67,6 +67,10 @@ test('the root renders the Dioxus transfer workspace', { tag: '@smoke' }, async 
     'rgb(46, 46, 44)',
   )
   await expect(page.getByRole('button', { name: '创建房间' })).toBeEnabled()
+  await expect(page.locator('.create-panel .generated-code')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '复制房间号', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '创建并进入', exact: true })).toHaveCount(0)
+  await expect(page.locator('.create-panel').getByRole('button')).toHaveCount(1)
   const githubLink = page.getByRole('link', { name: 'GitHub ↗' })
   await expect(githubLink).toBeVisible()
   await expect(page.getByText('Files never touch our servers')).toHaveCount(0)
@@ -245,7 +249,10 @@ test('a newly activated application release asks the user to refresh', async ({ 
   await page.goto('/')
   await expect(page.getByRole('heading', { name: '加入房间' })).toBeVisible()
 
-  await page.evaluate(() => window.dispatchEvent(new Event('p2p-app-update')))
+  await page.evaluate(() => {
+    document.documentElement.setAttribute('data-p2p-upgrade', 'true')
+    window.dispatchEvent(new Event('p2p-app-update'))
+  })
 
   const dialog = page.getByRole('alertdialog', { name: '需要刷新页面' })
   await expect(dialog).toBeVisible()

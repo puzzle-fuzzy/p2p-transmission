@@ -72,6 +72,13 @@ test('two browsers can create, approve, connect, and restore a room', async ({
     const roomCode = (await roomCodeButton.textContent())?.trim() ?? ''
     expect(roomCode).toMatch(/^[A-Z2-9]{6}$/)
     await expect(owner.getByText('房间已创建，可以复制邀请链接', { exact: true })).toBeVisible()
+    await roomCodeButton.click()
+    await expect(owner.getByText('房间码已复制', { exact: true })).toBeVisible()
+    await expect.poll(() => owner.evaluate(() => (
+      window as unknown as {
+        __browserCapabilityState: { copiedInvite: string | null }
+      }
+    ).__browserCapabilityState.copiedInvite)).toBe(roomCode)
 
     const leaveButton = owner.getByRole('button', { name: '退出房间' })
     await expect(leaveButton.locator('.button-icon')).toBeVisible()
@@ -128,6 +135,31 @@ test('two browsers can create, approve, connect, and restore a room', async ({
 
     await expect(receiver.getByRole('heading', { name: '等待对方发送' })).toBeVisible({ timeout: peerReadyTimeout })
     await expect(owner.getByRole('heading', { name: '选择要发送的文件' })).toBeVisible({ timeout: peerReadyTimeout })
+
+    const transferLayout = owner.locator('.room-layout')
+    const roomFooter = transferLayout.locator('.room-footer')
+    const measureRoomSurface = () => owner.evaluate(() => {
+      const layout = document.querySelector('.room-layout')?.getBoundingClientRect()
+      const footer = document.querySelector('.room-footer')?.getBoundingClientRect()
+      return {
+        documentHeight: document.documentElement.scrollHeight,
+        footerLeft: footer?.left ?? -1,
+        footerRight: footer?.right ?? -1,
+        layoutLeft: layout?.left ?? -1,
+        layoutRight: layout?.right ?? -1,
+      }
+    })
+    const fileSurface = await measureRoomSurface()
+    await expect(owner.getByRole('tab', { name: '文本' })).toBeVisible()
+    await owner.getByRole('tab', { name: '文本' }).click()
+    await expect(owner.getByRole('heading', { name: '发送文本' })).toBeVisible()
+    const textSurface = await measureRoomSurface()
+    expect(Math.abs(fileSurface.documentHeight - textSurface.documentHeight)).toBeLessThanOrEqual(2)
+    expect(Math.abs(textSurface.footerLeft - textSurface.layoutLeft)).toBeLessThanOrEqual(1)
+    expect(Math.abs(textSurface.footerRight - textSurface.layoutRight)).toBeLessThanOrEqual(1)
+    await owner.getByRole('tab', { name: '文件' }).click()
+    await expect(owner.getByRole('heading', { name: '选择要发送的文件' })).toBeVisible()
+    await expect(roomFooter).toHaveCount(1)
 
     await receiver.evaluate(() => window.dispatchEvent(new Event('offline')))
     await expect(receiver.getByText('网络已断开，恢复后会自动重新连接')).toBeVisible()

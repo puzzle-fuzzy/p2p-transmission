@@ -22,8 +22,8 @@ pub use api::{
     fetch_rtc_config, join_request_status, leave_room, request_join,
 };
 pub use capabilities::{
-    copy_text, epoch_millis, monotonic_millis, prime_notification_permission, send_notification,
-    sleep_ms,
+    begin_copy_text, copy_text, epoch_millis, monotonic_millis, prime_notification_permission,
+    send_notification, sleep_ms,
 };
 pub use error::{BrowserPlatformError, BrowserStorageErrorKind, BrowserStorageOperation};
 pub use lifecycle::{

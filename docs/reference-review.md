@@ -1,14 +1,13 @@
 # WebRTC 参考材料对照与采纳记录
 
-本文记录 `docs/参考` 中规划文档与 `webrtc/samples` 对当前项目的适用性判断。目的不是让参考
-材料成为新的架构真相，而是保留可复核的采纳依据，避免后续再次把教学样例、愿景文档和生产
-约束混在一起。
+本文记录此前规划文档与 `webrtc/samples` 对当前项目的适用性判断。原始规划材料已从仓库移除，
+因此本文只保留可复核的采纳依据，避免后续再次把教学样例、愿景文档和生产约束混在一起。
 
 ## 参考范围
 
-- 规划文档：`docs/参考` 根目录下 28 份 V1.0–V4.1 文档。
-- 官方样例：`docs/参考/p2p-samples`，来源为 `https://github.com/webrtc/samples.git`，审查时
-  固定在提交 `6e2c5a117aa860d66d874f7c0df0ef9a3e2cd74e`（2026-07-14）。
+- 规划文档：此前审查过的 V1.0–V4.1 规划材料；原始文件不再作为仓库内容分发。
+- 官方样例：[`webrtc/samples`](https://github.com/webrtc/samples)，审查时固定在提交
+  `6e2c5a117aa860d66d874f7c0df0ef9a3e2cd74e`（2026-07-14）。
 - 当前实现：Rust/Axum 控制面、Dioxus WebAssembly 客户端、WebRTC DataChannel 数据面、
   coturn、SQLite 控制面持久化、Playwright 浏览器与公网发布门禁。
 

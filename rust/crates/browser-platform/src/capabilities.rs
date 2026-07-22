@@ -1,19 +1,102 @@
 use crate::BrowserPlatformError;
 
+use std::{future::Future, pin::Pin};
+
+pub type CopyTextFuture = Pin<Box<dyn Future<Output = Result<(), BrowserPlatformError>>>>;
+
 #[cfg(target_arch = "wasm32")]
-pub async fn copy_text(value: &str) -> Result<(), BrowserPlatformError> {
+pub fn begin_copy_text(value: &str) -> CopyTextFuture {
+    use wasm_bindgen::{JsCast, JsValue};
     use wasm_bindgen_futures::JsFuture;
 
-    let window = web_sys::window().ok_or(BrowserPlatformError::MissingWindow)?;
-    JsFuture::from(window.navigator().clipboard().write_text(value))
-        .await
-        .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?;
-    Ok(())
+    let Some(window) = web_sys::window() else {
+        return Box::pin(std::future::ready(Err(BrowserPlatformError::MissingWindow)));
+    };
+    let navigator = window.navigator();
+    let clipboard = js_sys::Reflect::get(navigator.as_ref(), &JsValue::from_str("clipboard"))
+        .ok()
+        .filter(|value| !value.is_null() && !value.is_undefined());
+    let Some(clipboard) = clipboard else {
+        return Box::pin(std::future::ready(legacy_copy_text(&window, value)));
+    };
+    let write_text = js_sys::Reflect::get(&clipboard, &JsValue::from_str("writeText"))
+        .ok()
+        .and_then(|value| value.dyn_into::<js_sys::Function>().ok());
+    let Some(write_text) = write_text else {
+        return Box::pin(std::future::ready(legacy_copy_text(&window, value)));
+    };
+    let promise = match write_text.call1(&clipboard, &JsValue::from_str(value)) {
+        Ok(result) => js_sys::Promise::resolve(&result),
+        Err(_) => {
+            return Box::pin(std::future::ready(legacy_copy_text(&window, value)));
+        }
+    };
+    let fallback_value = value.to_owned();
+    Box::pin(async move {
+        match JsFuture::from(promise).await {
+            Ok(_) => Ok(()),
+            Err(error) => legacy_copy_text(&window, &fallback_value).map_err(|fallback| {
+                BrowserPlatformError::Browser(format!("{error:?}; {fallback:?}"))
+            }),
+        }
+    })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub async fn copy_text(_value: &str) -> Result<(), BrowserPlatformError> {
-    Err(BrowserPlatformError::UnsupportedTarget)
+pub fn begin_copy_text(_value: &str) -> CopyTextFuture {
+    Box::pin(std::future::ready(Err(
+        BrowserPlatformError::UnsupportedTarget,
+    )))
+}
+
+pub async fn copy_text(value: &str) -> Result<(), BrowserPlatformError> {
+    begin_copy_text(value).await
+}
+
+#[cfg(target_arch = "wasm32")]
+fn legacy_copy_text(window: &web_sys::Window, value: &str) -> Result<(), BrowserPlatformError> {
+    use wasm_bindgen::JsCast;
+    use web_sys::HtmlDocument;
+
+    let document = window
+        .document()
+        .ok_or_else(|| BrowserPlatformError::Browser("浏览器文档不可用".to_owned()))?;
+    let body = document
+        .body()
+        .ok_or_else(|| BrowserPlatformError::Browser("浏览器文档不可用".to_owned()))?;
+    let textarea = document
+        .create_element("textarea")
+        .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?
+        .dyn_into::<web_sys::HtmlTextAreaElement>()
+        .map_err(|_| BrowserPlatformError::Browser("无法创建复制文本框".to_owned()))?;
+    textarea.set_value(value);
+    textarea
+        .set_attribute("readonly", "true")
+        .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?;
+    textarea
+        .style()
+        .set_property("position", "fixed")
+        .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?;
+    textarea
+        .style()
+        .set_property("inset", "-1000px auto auto -1000px")
+        .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?;
+    body.append_child(&textarea)
+        .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?;
+    textarea.select();
+    let copied = document
+        .dyn_into::<HtmlDocument>()
+        .map_err(|_| BrowserPlatformError::Browser("当前浏览器不支持复制".to_owned()))?
+        .exec_command("copy")
+        .map_err(|error| BrowserPlatformError::Browser(format!("{error:?}")))?;
+    let _ = body.remove_child(&textarea);
+    if copied {
+        Ok(())
+    } else {
+        Err(BrowserPlatformError::Browser(
+            "复制操作被浏览器拒绝".to_owned(),
+        ))
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
