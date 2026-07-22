@@ -285,10 +285,10 @@ mod tests {
                 .contains("href=\"/favicon.svg\" type=\"image/svg+xml\" sizes=\"any\"")
         );
         assert!(!renderer.html().contains("href=\"/favicon.ico\""));
-        let critical_restore_style = renderer
-            .html()
-            .find(".boot-room-restore { display: none; }")
-            .expect("the room restore state needs inline critical CSS before first paint");
+        assert!(
+            !renderer.html().contains("<style"),
+            "the unstyled baseline must not contain inline CSS"
+        );
         let restore_reference =
             format!("<script src=\"/shell/room-restore.js?v={release}\"></script>");
         let restore_script = renderer
@@ -299,7 +299,6 @@ mod tests {
             .html()
             .find(BOOT_FALLBACK_ID)
             .expect("the boot fallback must exist");
-        assert!(critical_restore_style < restore_script);
         assert!(restore_script < fallback);
         assert!(
             renderer.html().len() <= SSR_SOURCE_RESPONSE_RAW_BUDGET,

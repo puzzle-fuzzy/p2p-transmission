@@ -4,6 +4,7 @@ use dioxus::prelude::*;
 use p2p_browser_platform::RtcPeerRegistry;
 use p2p_protocol::ParticipantSnapshot;
 
+mod file_mode;
 mod file_progress_list;
 mod receiver_transfer_list;
 mod recipient_picker_dialog;
@@ -12,11 +13,9 @@ mod transfer_action_area;
 mod transfer_request_dialog;
 mod view_model;
 
-use self::file_progress_list::FileProgressList;
-use self::receiver_transfer_list::ReceiverTransferList;
+use self::file_mode::FileTransferView;
 use self::recipient_picker_dialog::RecipientPickerDialog;
 use self::text_panel::{TextPanel, text_transfer_has_content, text_transfer_is_active};
-use self::transfer_action_area::TransferActionArea;
 use self::transfer_request_dialog::TransferRequestDialog;
 use self::view_model::{
     TransferPanelViewInput, TransferPanelViewModel, derive_transfer_panel_view,
@@ -25,8 +24,6 @@ use self::view_model::{
 use crate::app_state::{
     AppModel, RoomRole, RtcConfigPhase, RtcPhase, TextTransferState, TransferState,
 };
-use crate::transfer_presentation::format_bytes;
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct PeerRtcPresentation {
     phase: RtcPhase,
@@ -97,13 +94,10 @@ pub(super) fn TransferPanel(
         batch_peer_ids: &batch_peer_ids_value,
     });
     let receiver_count = receivers.len();
-    let completed_bytes = file_progress.completed_bytes;
-    let total_bytes = file_progress.total_bytes;
     let global_active = active || text_active;
     let showing_text = transfer_kind() == TransferKind::Text
         || (role == RoomRole::Receiver && text_transfer_has_content(&text_transfer));
     let has_files = !file_progress.files.is_empty() || file_progress.file.is_some();
-
     rsx! {
         section { class: "transfer-panel", aria_label: "文件与文本传输",
             div { class: "transfer-kind-tabs", role: "tablist", aria_label: "传输类型",
@@ -147,67 +141,24 @@ pub(super) fn TransferPanel(
                     text_transfers_by_peer: text_transfers_by_peer.clone(),
                 }
             } else {
-                article { class: "panel file-input-panel",
-                    p { class: "panel-label mono", "FILE INPUT" }
-                    div { class: "dropzone transfer-dropzone",
-                        div {
-                            class: "transfer-panel-copy",
-                            role: "status",
-                            aria_live: "polite",
-                            aria_atomic: "true",
-                            h2 { class: "dropzone-title", aria_label: "{title}", "拖入文件", br {}, "或选择文件" }
-                            span { class: "sr-only", "{title}" }
-                            p { class: "dropzone-copy",
-                                "把一个或多个文件拖到这里，也可以点击按钮选择文件。本原型会模拟发送进度并显示在文件队列中。"
-                            }
-                        }
-                        TransferActionArea {
-                            model,
-                            rtc_peers,
-                            role,
-                            can_offer,
-                            active,
-                            selected_peer_ids: selected_peer_ids.clone(),
-                            current_batch_peer_ids: current_batch_peer_ids.clone(),
-                            paused_peer_ids: paused_peer_ids.clone(),
-                            owner_states: owner_states.clone(),
-                            storage_pause_request: storage_pause_request.clone(),
-                            transfer: transfer.clone(),
-                            batch_peer_ids,
-                        }
-                    }
-                }
-                article { class: "panel queue-panel",
-                    p { class: "panel-label mono", "TRANSFER QUEUE" }
-                    h2 { class: "panel-title queue-title", "文件队列" }
-                    div { class: "file-list", id: "file-list", tabindex: "0", aria_live: "polite",
-                        if has_files {
-                            FileProgressList {
-                                role,
-                                transfer: transfer.clone(),
-                                owner_states: owner_states.clone(),
-                                file_progress,
-                            }
-                            if role == RoomRole::Owner && !current_batch_peer_ids.is_empty() {
-                                ReceiverTransferList {
-                                    peer_ids: current_batch_peer_ids.clone(),
-                                    receivers: receivers.clone(),
-                                    transfers_by_peer: transfers_by_peer.clone(),
-                                }
-                            }
-                            if active {
-                                p { class: "transfer-progress-copy",
-                                    "{format_bytes(completed_bytes)} / {format_bytes(total_bytes)}"
-                                }
-                            }
-                        } else {
-                            p { class: "muted-block",
-                                "还没有加入任何文件。"
-                                br {}
-                                "点击“选择文件”，或者把文件拖拽到上方区域。"
-                            }
-                        }
-                    }
+                FileTransferView {
+                    model,
+                    rtc_peers,
+                    role,
+                    receivers: receivers.clone(),
+                    can_offer,
+                    active,
+                    selected_peer_ids: selected_peer_ids.clone(),
+                    current_batch_peer_ids: current_batch_peer_ids.clone(),
+                    paused_peer_ids: paused_peer_ids.clone(),
+                    owner_states: owner_states.clone(),
+                    storage_pause_request: storage_pause_request.clone(),
+                    transfer: transfer.clone(),
+                    batch_peer_ids,
+                    transfers_by_peer: transfers_by_peer.clone(),
+                    file_progress,
+                    has_files,
+                    title,
                 }
                 if let Some(request) = incoming_request {
                     TransferRequestDialog {

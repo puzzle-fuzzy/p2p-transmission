@@ -57,7 +57,7 @@ pub(super) fn WaitingView(
     };
 
     rsx! {
-        section { class: "waiting-view vault-panel panel-motion-forward", aria_labelledby: "waiting-title",
+        section { class: "waiting-view workspace-panel panel-motion-forward", aria_labelledby: "waiting-title",
             if let Some(session) = session {
                 Avatar { seed: session.session_id, label: session.display_name.clone(), entering: false, highlighted: false }
                 p { class: "participant-name", "{session.display_name}" }

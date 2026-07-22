@@ -3,14 +3,13 @@ use p2p_browser_platform::{
     RealtimeConnection, RealtimeEvent, RtcPeerRegistry, activate_app_mount, mark_app_interactive,
 };
 use p2p_protocol::RoomBootstrapResponse;
-use p2p_ui_shell::VaultShell;
+use p2p_ui_shell::AppShell;
 
 mod about;
 mod app_bootstrap;
 mod app_runtime;
 mod app_state;
 mod app_transition;
-mod appearance;
 mod browser_errors;
 mod browser_lifecycle;
 mod icons;
@@ -40,7 +39,6 @@ mod waiting_room;
 use about::{AboutDialog, FooterLinks};
 use app_bootstrap::initialize;
 use app_state::{AppModel, Screen};
-use appearance::{Appearance, AppearanceDialog};
 use browser_lifecycle::{sync_lifecycle_recovery_target, use_browser_lifecycle};
 use lobby::LobbyView;
 use realtime_connection::{RealtimeLease, use_realtime_connection};
@@ -90,8 +88,6 @@ fn main() {
 #[allow(non_snake_case)]
 fn App() -> Element {
     let model = use_signal(AppModel::default);
-    let appearance = use_signal(Appearance::load);
-    let mut appearance_open = use_signal(|| false);
     let realtime_target = use_signal(|| None::<RealtimeTarget>);
     let connection = use_signal(|| None::<RealtimeConnection>);
     let realtime_connection = RealtimeConnectionRuntime {
@@ -158,16 +154,15 @@ fn App() -> Element {
 
     let (route, about_open, _) = *app_shell.read();
     let card_class = match route {
-        AppRoute::Booting => "vault-card",
-        AppRoute::Lobby => "vault-card vault-card-lobby",
-        AppRoute::Waiting => "vault-card vault-card-waiting",
-        AppRoute::Room => "vault-card vault-card-room",
+        AppRoute::Booting => "workspace-card",
+        AppRoute::Lobby => "workspace-card workspace-card-lobby",
+        AppRoute::Waiting => "workspace-card workspace-card-waiting",
+        AppRoute::Room => "workspace-card workspace-card-room",
     };
     rsx! {
         if route != AppRoute::Booting {
-            VaultShell {
+            AppShell {
                 card_class: card_class.to_owned(),
-                on_preferences: move |_| appearance_open.set(true),
                 footer: rsx! { FooterLinks { model } },
                 content: match route {
                     AppRoute::Booting => rsx! {},
@@ -176,9 +171,6 @@ fn App() -> Element {
                     AppRoute::Room => rsx! { RoomView { model, realtime_target, rtc_peers } },
                 }
             }
-        }
-        if appearance_open() {
-            AppearanceDialog { appearance, open: appearance_open }
         }
         if about_open {
             AboutDialog { model }
