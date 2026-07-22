@@ -74,7 +74,7 @@ pub(super) fn WaitingView(
                 p { class: "inline-error", role: "alert", "{error}" }
             }
             button {
-                class: "secondary-button waiting-change-button",
+                class: "btn btn--ghost waiting-change-button",
                 r#type: "button",
                 disabled: snapshot.busy,
                 onclick: move |_| submit_cancel_waiting(model, realtime_target),

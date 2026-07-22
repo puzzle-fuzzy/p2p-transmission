@@ -102,18 +102,22 @@ pub(super) fn TransferPanel(
         section { class: "transfer-panel", aria_label: "文件与文本传输",
             div { class: "transfer-kind-tabs", role: "tablist", aria_label: "传输类型",
                 button {
+                    id: "transfer-file-tab",
                     class: if !showing_text { "transfer-kind-tab is-active" } else { "transfer-kind-tab" },
                     r#type: "button",
                     role: "tab",
                     aria_selected: !showing_text,
+                    aria_controls: "transfer-file-panel",
                     onclick: move |_| transfer_kind.set(TransferKind::File),
                     "文件"
                 }
                 button {
+                    id: "transfer-text-tab",
                     class: if showing_text { "transfer-kind-tab is-active" } else { "transfer-kind-tab" },
                     r#type: "button",
                     role: "tab",
                     aria_selected: showing_text,
+                    aria_controls: "transfer-text-panel",
                     onclick: move |_| transfer_kind.set(TransferKind::Text),
                     "文本"
                 }

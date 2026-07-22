@@ -91,7 +91,7 @@ pub(super) fn TransferActionArea(
             }
             if let Some(request) = storage_pause_request {
                 button {
-                    class: "primary-button",
+                    class: "btn btn--dark",
                     r#type: "button",
                     onclick: {
                         let request = request.clone();
@@ -117,7 +117,7 @@ pub(super) fn TransferActionArea(
                     .any(|state| matches!(state, TransferState::OutgoingRecovery { .. }))
             {
                 button {
-                    class: "primary-button",
+                    class: "btn btn--dark",
                     r#type: "button",
                     onclick: {
                         let current_batch_peer_ids = current_batch_peer_ids.clone();
@@ -129,7 +129,7 @@ pub(super) fn TransferActionArea(
                 }
             } else if role == RoomRole::Owner && !paused_peer_ids.is_empty() {
                 button {
-                    class: "primary-button",
+                    class: "btn btn--dark",
                     r#type: "button",
                     onclick: {
                         let paused_peer_ids = paused_peer_ids.clone();
@@ -140,7 +140,7 @@ pub(super) fn TransferActionArea(
             }
             if active {
                 button {
-                    class: "secondary-button transfer-cancel-button",
+                    class: "btn btn--ghost transfer-cancel-button",
                     r#type: "button",
                     onclick: {
                         let current_batch_peer_ids = current_batch_peer_ids.clone();
@@ -162,7 +162,7 @@ pub(super) fn TransferActionArea(
             } = &transfer
             {
                 a {
-                    class: "primary-button transfer-download",
+                    class: "btn btn--dark transfer-download",
                     href: "{download_url}",
                     download: "{file.name}",
                     "保存文件"

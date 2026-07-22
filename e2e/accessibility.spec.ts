@@ -139,9 +139,9 @@ test('dynamic room and transfer states pass WCAG axe rules', async ({
       name: 'a11y-empty.txt 传输进度',
     })
     await expect(completedProgress).toHaveAttribute('aria-valuetext', '全部传输完成')
-    await expect(
-      completedProgress.locator('xpath=..').getByText('全部传输完成', { exact: true }),
-    ).toBeVisible()
+    await expect(completedProgress.locator('xpath=..').locator('.transfer-file-status')).toHaveText(
+      '全部传输完成',
+    )
     await expectNoAccessibilityViolations(owner)
     await expectNoAccessibilityViolations(receiver)
 

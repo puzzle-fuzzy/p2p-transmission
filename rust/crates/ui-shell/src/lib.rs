@@ -43,7 +43,7 @@ pub fn AppShell(
                             div { class: "{card_class}", {content} }
                             if !is_room {
                                 footer { class: "footerline mono",
-                                    span { "P2P FILE TRANSFER / CREATE + JOIN / FRONT-END PROTOTYPE" }
+                                    span { "P2P FILE TRANSFER / CREATE + JOIN / WEBRTC SESSION" }
                                     span { class: "footer-inline-actions",
                                         if interactive {
                                             a {
@@ -177,7 +177,7 @@ pub fn LobbyPanel(
                 }
                 aside { class: "hero-note",
                     p { class: "mini mono", "P2P / WEBRTC / ONE-TIME SESSION" }
-                    p { class: "mini", "当前为高保真交互原型。创建、加入、文件选择和传输进度均为前端模拟，后续可无缝接入真实信令服务。" }
+                    p { class: "mini", "房间用于协调连接，文件和文本通过加密 WebRTC 通道在设备之间传输。" }
                 }
             }
             section { class: "board", aria_label: "房间操作",
@@ -225,7 +225,7 @@ pub fn LobbyPanel(
                         p { class: "panel-number", aria_hidden: "true", "02" }
                         p { class: "panel-label mono", "JOIN SESSION" }
                         h2 { id: "join-title", class: "panel-title", {LOBBY_TITLE} }
-                        p { class: "panel-desc", "输入另一台设备提供的六位房间号。演示版会模拟对方连接成功与文件传输状态。" }
+                        p { class: "panel-desc", "输入另一台设备提供的六位房间号，建立临时连接后即可开始传输。" }
                         div { class: "lobby-guidance",
                             p {
                                 class: if invite_ready {

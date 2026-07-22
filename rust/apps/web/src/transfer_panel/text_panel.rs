@@ -40,7 +40,11 @@ pub(super) fn TextPanel(
         .map(|(peer_id, _)| peer_id.clone());
 
     rsx! {
-        div { class: "text-transfer-panel",
+        div {
+            id: "transfer-text-panel",
+            class: "text-transfer-panel",
+            role: "tabpanel",
+            aria_labelledby: "transfer-text-tab",
             if role == RoomRole::Owner {
                 div {
                     class: "transfer-panel-copy",
@@ -83,7 +87,7 @@ pub(super) fn TextPanel(
                             "{character_count} / {MAX_TEXT_TRANSFER_CHARS}"
                         }
                         button {
-                            class: "primary-button",
+                            class: "btn btn--dark",
                             r#type: "button",
                             disabled: !can_offer || !input_valid || active,
                             onclick: {
@@ -114,7 +118,7 @@ pub(super) fn TextPanel(
                 }
                 if active {
                     button {
-                        class: "secondary-button transfer-cancel-button",
+                        class: "btn btn--ghost transfer-cancel-button",
                         r#type: "button",
                         onclick: move |_| actions.cancel_text_transfers(active_peer_ids.clone()),
                         "取消传输"
@@ -154,7 +158,7 @@ fn ReceiverTextView(
                 pre { tabindex: 0, "{text}" }
                 div { class: "transfer-actions",
                     button {
-                        class: "primary-button",
+                        class: "btn btn--dark",
                         r#type: "button",
                         onclick: {
                             let value = text.clone();
@@ -173,7 +177,7 @@ fn ReceiverTextView(
                         "复制文本"
                     }
                     button {
-                        class: "secondary-button",
+                        class: "btn btn--ghost",
                         r#type: "button",
                         onclick: move |_| actions.clear_text_result(peer_id.as_deref()),
                         "完成"
@@ -187,7 +191,7 @@ fn ReceiverTextView(
                 | TextTransferState::Failed { .. }
         ) {
             button {
-                class: "secondary-button",
+                class: "btn btn--ghost",
                 r#type: "button",
                 onclick: move |_| actions.clear_text_result(peer_id.as_deref()),
                 "返回等待"

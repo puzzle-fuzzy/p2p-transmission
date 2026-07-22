@@ -109,12 +109,12 @@ pub(super) fn RoomView(
                 div {
                     h1 { id: "roomTitle", class: "hero-title", "传输", br {}, "会话面板" }
                     p { class: "hero-copy",
-                        "你已经进入临时房间。左侧显示房间身份和设备状态，右侧用于添加文件并查看模拟传输队列。"
+                        "你已经进入临时房间。左侧显示房间身份和设备状态，右侧用于添加文件、发送文本并查看传输队列。"
                     }
                 }
                 aside { class: "hero-note",
                     p { class: "mini mono", "ROOM CODE / LOCAL DEVICE / PEER DEVICE" }
-                    p { class: "mini", "进入房间后会自动模拟对端加入，文件传输过程仅在当前浏览器页面中运行。" }
+                    p { class: "mini", "文件和文本通过加密 WebRTC 通道在设备之间传输。" }
                 }
             }
             section { class: "room-layout", aria_label: "传输会话",
