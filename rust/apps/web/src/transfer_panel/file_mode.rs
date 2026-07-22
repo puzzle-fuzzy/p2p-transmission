@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use dioxus::prelude::*;
-use p2p_browser_platform::RtcPeerRegistry;
+use p2p_browser_platform::{RtcPeerRegistry, TransferDirection};
 use p2p_protocol::ParticipantSnapshot;
 
 use super::file_progress_list::FileProgressList;
@@ -74,6 +74,20 @@ pub(super) fn FileTransferView(
                         transfer: transfer.clone(),
                         owner_states: owner_states.clone(),
                         file_progress,
+                    }
+                    if role == RoomRole::Receiver
+                        && matches!(
+                            transfer,
+                            TransferState::Completed {
+                                direction: TransferDirection::Receive,
+                                download_url: None,
+                                ..
+                            }
+                        )
+                    {
+                        p { class: "stream-storage-success", role: "status",
+                            "文件已保存到所选位置"
+                        }
                     }
                     if role == RoomRole::Owner && !current_batch_peer_ids.is_empty() {
                         ReceiverTransferList {

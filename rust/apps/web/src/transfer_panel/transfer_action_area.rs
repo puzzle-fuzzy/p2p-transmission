@@ -55,6 +55,7 @@ pub(super) fn TransferActionArea(
                         class: "file-picker-input",
                         r#type: "file",
                         multiple: true,
+                        tabindex: "-1",
                         aria_label: "选择要发送的文件",
                         onchange: {
                             let selected_peer_ids = selected_peer_ids.clone();

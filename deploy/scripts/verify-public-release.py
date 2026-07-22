@@ -21,9 +21,9 @@ HASHED_WASM_RE = re.compile(r'^/assets/[A-Za-z0-9_.-]+-dxh[0-9a-f]+\.wasm$')
 REQUIRED_STYLESHEET = '/shell/app-shell.css'
 REQUIRED_SCRIPTS = {'/shell/room-restore.js', '/shell/app-shell.js'}
 REQUIRED_ROOT_SHELL_MARKERS = {
-    'Vault document title': '<title>Vault · Secure Transfer</title>',
-    'Vault shell root': 'class="vault-room"',
-    'Vault brand control': 'class="vault-brand-trigger"',
+    'transfer document title': '<title>点对点传输</title>',
+    'transfer shell root': 'class="transfer-layout"',
+    'transfer top bar': 'class="topbar mono"',
     'boot fallback': 'id="boot-fallback"',
 }
 REMOVED_PUBLIC_PATHS = (

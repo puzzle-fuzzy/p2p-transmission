@@ -791,6 +791,7 @@ fieldset.room-code:has(.filled)::before { opacity: 0; }
 .queue-title { font-size: clamp(28px, 2.7vw, 38px); }
 .file-list { display: flex; max-height: min(420px, 45vh); flex-direction: column; gap: 10px; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .muted-block { margin-bottom: 0; color: var(--muted); font-size: 14px; line-height: 1.7; }
+.stream-storage-success { margin: 12px 0 0; color: var(--blue); font-size: 14px; line-height: 1.6; }
 .transfer-file-list { display: flex; flex-direction: column; gap: 10px; }
 .transfer-file-row { min-width: 0; padding: 14px 16px; border: 1px solid var(--line); background: rgb(255 255 255 / 45%); }
 .transfer-file-meta, .transfer-file-secondary { display: flex; justify-content: space-between; gap: 12px; }

@@ -20,29 +20,29 @@ SPEC.loader.exec_module(verify_public_release)
 
 
 class VerifyPublicReleaseTests(unittest.TestCase):
-    def test_root_shell_contract_matches_the_vault_sources(self) -> None:
+    def test_root_shell_contract_matches_the_transfer_sources(self) -> None:
         dioxus_config = tomllib.loads(
             (REPOSITORY_ROOT / 'rust/apps/web/Dioxus.toml').read_text(encoding='utf-8')
         )
         title = dioxus_config['web']['app']['title']
         self.assertEqual(
-            verify_public_release.REQUIRED_ROOT_SHELL_MARKERS['Vault document title'],
+            verify_public_release.REQUIRED_ROOT_SHELL_MARKERS['transfer document title'],
             f'<title>{title}</title>',
         )
 
         ui_shell = (REPOSITORY_ROOT / 'rust/crates/ui-shell/src/lib.rs').read_text(
             encoding='utf-8'
         )
-        self.assertIn('class: "vault-room"', ui_shell)
-        self.assertIn('class: "vault-brand-trigger"', ui_shell)
+        self.assertIn('class: "transfer-layout"', ui_shell)
+        self.assertIn('class: "topbar mono"', ui_shell)
         self.assertIn('div { id: "boot-fallback"', ui_shell)
 
-    def test_root_shell_requires_the_complete_vault_contract(self) -> None:
+    def test_root_shell_requires_the_complete_transfer_contract(self) -> None:
         index = (
-            '<title>Vault · Secure Transfer</title>'
+            '<title>点对点传输</title>'
             '<div id="boot-fallback">'
-            '<div class="vault-room">'
-            '<button class="vault-brand-trigger">Vault</button>'
+            '<div class="transfer-layout">'
+            '<header class="topbar mono">P2P DELIVERY</header>'
             '</div></div>'
         )
 
