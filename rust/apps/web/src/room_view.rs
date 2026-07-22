@@ -16,7 +16,6 @@ use crate::app_transition::AppEvent;
 use crate::browser_errors::platform_error_event;
 use crate::icons::{UiIcon, UiIconKind};
 use crate::join_request::JoinRequestDialog;
-use crate::participant_presence::{MemberRoster, PeerFlow};
 use crate::realtime_session::return_to_lobby;
 use crate::realtime_target::{RealtimeTarget, RealtimeTargetScope};
 use crate::share_dialog::ShareDialog;
@@ -32,8 +31,6 @@ struct RoomShellState {
     busy: bool,
     notice: Option<String>,
     error: Option<String>,
-    entering_receivers: Vec<String>,
-    current_session_id: Option<String>,
     activity: Vec<RoomActivityItem>,
 }
 
@@ -87,15 +84,8 @@ pub(super) fn RoomView(
         busy,
         notice,
         error,
-        entering_receivers,
-        current_session_id,
-        activity,
+        ..
     } = state;
-    let sender = snapshot
-        .participants
-        .iter()
-        .find(|participant| participant.role == ParticipantRoleWire::Owner)
-        .cloned();
     let receivers = snapshot
         .participants
         .iter()
@@ -112,72 +102,114 @@ pub(super) fn RoomView(
         RealtimePhase::Connecting => "正在连接房间",
         RealtimePhase::Disconnected => "房间连接已断开",
     };
-    let participant_count = snapshot
-        .participants
-        .iter()
-        .filter(|participant| participant.online)
-        .count();
-
     rsx! {
-        section { class: "room-view vault-panel panel-motion-forward", aria_label: "房间状态",
-            header { class: "room-topbar",
-                div { class: "room-topbar-primary",
-                    span { class: "room-display-name", "Transfer Room" }
-                    button {
-                        class: "room-code-copy",
-                        r#type: "button",
-                        aria_label: "复制房间码 {snapshot.room_code}",
-                        title: "复制房间码",
-                        onclick: move |_| {
-                            let value = room_code_for_copy.clone();
-                            spawn(async move {
-                                if copy_text(&value).await.is_ok() {
-                    dispatch_app_event(
-                        model,
-                        AppEvent::SetNotice(Some("房间码已复制".to_owned())),
-                    );
-                                }
-                            });
-                        },
-                        "{snapshot.room_code}"
+        section { class: "room-view", aria_label: "房间状态",
+            p { class: "eyebrow mono", "ROOM STATUS / FILE DELIVERY" }
+            section { class: "hero room-hero", aria_labelledby: "roomTitle",
+                div {
+                    h1 { id: "roomTitle", class: "hero-title", "传输", br {}, "会话面板" }
+                    p { class: "hero-copy",
+                        "你已经进入临时房间。左侧显示房间身份和设备状态，右侧用于添加文件并查看模拟传输队列。"
                     }
-                    if role == RoomRole::Owner && invite.is_some() {
-                        button {
-                            class: "icon-button",
-                            r#type: "button",
-                            aria_label: "分享房间",
-                            title: "分享房间",
-                            onclick: move |_| share_open.set(true),
-                            UiIcon { kind: UiIconKind::Share2 }
+                }
+                aside { class: "hero-note",
+                    p { class: "mini mono", "ROOM CODE / LOCAL DEVICE / PEER DEVICE" }
+                    p { class: "mini", "进入房间后会自动模拟对端加入，文件传输过程仅在当前浏览器页面中运行。" }
+                }
+            }
+            section { class: "room-layout", aria_label: "传输会话",
+                div { class: "room-left",
+                    article { class: "panel panel--blue room-identity",
+                        p { class: "panel-number", aria_hidden: "true", if role == RoomRole::Owner { "01" } else { "02" } }
+                        p { class: "panel-label mono", if role == RoomRole::Owner { "HOST MODE" } else { "GUEST MODE" } }
+                        h2 { class: "panel-title room-code-title", "房间 {snapshot.room_code}" }
+                        p { class: "panel-desc", "当前会话为一次性临时传输。离开页面后，演示状态会被清空。" }
+                        div { class: "meta-row room-meta",
+                            span { class: "chip chip--light",
+                                span { class: "dot live" }
+                                span { class: "mono", "LOCAL READY" }
+                            }
+                            span { class: "chip chip--light",
+                                span { class: if peer_connected { "dot live" } else { "dot wait" } }
+                                span {
+                                    class: "mono",
+                                    role: "status",
+                                    aria_label: if peer_connected {
+                                        format!("{} 位接收者已连接", receivers.len())
+                                    } else {
+                                        "等待其他成员连接".to_owned()
+                                    },
+                                    if peer_connected { "PEER CONNECTED" } else { "PEER WAITING" }
+                                }
+                            }
+                        }
+                        div { class: "actions room-actions",
+                            button {
+                                class: "btn btn--solid mono room-code-copy",
+                                r#type: "button",
+                                aria_label: "复制房间码 {snapshot.room_code}",
+                                title: "复制房间码",
+                                onclick: move |_| {
+                                    let value = room_code_for_copy.clone();
+                                    spawn(async move {
+                                        if copy_text(&value).await.is_ok() {
+                                            dispatch_app_event(model, AppEvent::SetNotice(Some("房间码已复制".to_owned())));
+                                        }
+                                    });
+                                },
+                                "{snapshot.room_code}"
+                            }
+                            if role == RoomRole::Owner && invite.is_some() {
+                                button {
+                                    class: "btn mono icon-button",
+                                    r#type: "button",
+                                    aria_label: "分享房间",
+                                    title: "分享房间",
+                                    onclick: move |_| share_open.set(true),
+                                    UiIcon { kind: UiIconKind::Share2 }
+                                    span { "分享" }
+                                }
+                            }
+                            button {
+                                class: "btn mono leave-button",
+                                r#type: "button",
+                                aria_label: "退出房间",
+                                title: "退出房间",
+                                disabled: busy,
+                                onclick: move |_| leave_open.set(true),
+                                UiIcon { kind: UiIconKind::LogOut }
+                                span { if busy { "正在退出" } else { "离开房间" } }
+                            }
+                        }
+                    }
+                    div { class: "status-grid",
+                        article { class: "status-item",
+                            p { class: "key mono", "LOCAL DEVICE" }
+                            p { class: "value", if role == RoomRole::Owner { "HOST" } else { "GUEST" } }
+                            p { class: "sub", if role == RoomRole::Owner { "创建者 / 发起连接" } else { "加入者 / 请求连接" } }
+                        }
+                        article { class: "status-item",
+                            p { class: "key mono", "PEER STATUS" }
+                            p { class: "value", if peer_connected { "ONLINE" } else { "WAITING" } }
+                            p { class: "sub", if peer_connected { "已连接，可开始传输" } else { "等待另一台设备接入" } }
+                        }
+                    }
+                    div { class: "mini-list",
+                        article { class: "mini-cell",
+                            span { class: "n", aria_hidden: "true", "A" }
+                            div { p { class: "t", "端到端会话" } p { class: "s mono", "DIRECT CHANNEL" } }
+                        }
+                        article { class: "mini-cell",
+                            span { class: "n", aria_hidden: "true", "B" }
+                            div { p { class: "t", "临时房间机制" } p { class: "s mono", "6 DIGIT CODE" } }
+                        }
+                        article { class: "mini-cell",
+                            span { class: "n", aria_hidden: "true", "C" }
+                            div { p { class: "t", "拖拽与发送" } p { class: "s mono", "DROP / SELECT / SEND" } }
                         }
                     }
                 }
-                div { class: "room-topbar-status",
-                    PeerFlow {
-                        sender,
-                        receivers: receivers.clone(),
-                        entering_receivers: entering_receivers.clone(),
-                        peer_connected,
-                    }
-                    span { class: "member-count", "{participant_count} 位成员" }
-                    button {
-                        class: "leave-button",
-                        r#type: "button",
-                        aria_label: "退出房间",
-                        title: "退出房间",
-                        disabled: busy,
-                        onclick: move |_| leave_open.set(true),
-                        UiIcon { kind: UiIconKind::LogOut }
-                        span { if busy { "正在退出" } else { "离开" } }
-                    }
-                }
-            }
-            div { class: "room-grid",
-                section { class: "room-transfer-column", aria_label: "传输工作区",
-                    div { class: "room-section-label",
-                        span { aria_hidden: "true" }
-                        strong { "文件传输" }
-                    }
+                div { class: "room-right",
                     RoomTransferPanel {
                         model,
                         rtc_peers,
@@ -190,45 +222,13 @@ pub(super) fn RoomView(
                     if let Some(error) = error {
                         p { class: "inline-error", role: "alert", "{error}" }
                     }
-                }
-                aside { class: "room-sidebar", aria_label: "房间成员与活动",
-                    section { class: "member-section", aria_label: "在线成员 {participant_count}",
-                        h2 { class: "room-section-label",
-                            span { aria_hidden: "true" }
-                            strong { "在线成员 · {participant_count}" }
-                        }
-                        MemberRoster {
-                            participants: snapshot.participants.clone(),
-                            current_session_id,
-                            entering_receivers,
-                            peer_connected,
-                        }
-                    }
-                    details { class: "activity-log",
-                        summary {
-                            "活动记录"
-                            svg { view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2", "aria-hidden": "true",
-                                path { d: "m6 9 6 6 6-6" }
-                            }
-                        }
-                        ol {
-                            for item in activity {
-                                li {
-                                    span { class: "activity-mark {item.tone}", aria_hidden: "true" }
-                                    p { "{item.message}" }
-                                }
-                            }
-                        }
-                    }
-                    p {
-                        class: "room-connection-copy",
-                        role: "status",
-                        aria_live: "polite",
-                        aria_atomic: "true",
-                        "{status_copy}"
+                    footer { class: "footerline room-footer",
+                        span { class: "mono", "WEBRTC / ENCRYPTED / SESSION ACTIVE" }
+                        span { class: "mono", id: "fileCountFooter", "0 FILES" }
                     }
                 }
             }
+            p { class: "room-connection-copy sr-only", role: "status", aria_live: "polite", aria_atomic: "true", "{status_copy}" }
             if share_open()
                 && let Some(invite) = invite
             {
@@ -391,11 +391,6 @@ fn room_shell_state(state: &AppModel) -> Option<RoomShellState> {
         busy: state.busy,
         notice: state.notice.clone(),
         error: state.error.clone(),
-        entering_receivers: state.entering_receivers.clone(),
-        current_session_id: state
-            .session
-            .as_ref()
-            .map(|session| session.session_id.clone()),
         activity: room_activity(state),
     })
 }

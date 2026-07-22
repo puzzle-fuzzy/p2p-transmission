@@ -17,7 +17,6 @@ pub(super) fn FileProgressList(
         progress,
         file_progresses,
         file_progress_value_texts,
-        fallback_file_progress,
         fallback_progress_value_text,
         ..
     } = file_progress;
@@ -29,7 +28,6 @@ pub(super) fn FileProgressList(
                     div { class: "transfer-file-row", role: "listitem",
                         span {
                             class: "transfer-file-progress",
-                            style: "--file-progress-scale:{file_progresses[index]:.4}",
                             role: "progressbar",
                             aria_label: "{item.name} 传输进度",
                             aria_valuemin: "0",
@@ -68,7 +66,6 @@ pub(super) fn FileProgressList(
             div { class: "transfer-file-row",
                 span {
                     class: "transfer-file-progress",
-                    style: "--file-progress-scale:{fallback_file_progress:.4}",
                     role: "progressbar",
                     aria_label: "{file.name} 传输进度",
                     aria_valuemin: "0",

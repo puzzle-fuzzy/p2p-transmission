@@ -61,19 +61,17 @@ test('the root renders the Dioxus transfer workspace', { tag: '@smoke' }, async 
   const roomCode = page.getByRole('textbox', { name: '输入 6 位房间码' })
   await expect(roomCodeInputs).toHaveCount(6)
   await expect(roomCode).toBeVisible()
-  await expect(page.getByRole('button', { name: '请求加入' })).toBeDisabled()
+  const joinButton = page.getByRole('button', { name: '请求加入' })
+  await expect(joinButton).toBeDisabled()
+  expect(await joinButton.evaluate(element => getComputedStyle(element).backgroundColor)).toBe(
+    'rgb(46, 46, 44)',
+  )
   await expect(page.getByRole('button', { name: '创建房间' })).toBeEnabled()
   const githubLink = page.getByRole('link', { name: 'GitHub ↗' })
   await expect(githubLink).toBeVisible()
-  await expect(githubLink.locator('xpath=..')).toContainText(
-    'Files never touch our servers · Privacy by design · GitHub ↗',
-  )
-
-  const encryptedFeature = page.getByRole('listitem').filter({ hasText: 'E2E Encrypted' })
-  await encryptedFeature.hover()
-  await expect.poll(() => encryptedFeature.evaluate(element => (
-    getComputedStyle(element, '::after').opacity
-  ))).toBe('1')
+  await expect(page.getByText('Files never touch our servers')).toHaveCount(0)
+  await expect(page.getByText('E2E Encrypted')).toHaveCount(0)
+  await expect(page.getByText('Vault', { exact: true })).toHaveCount(0)
 
   const createButton = page.getByRole('button', { name: '创建房间' })
   const createButtonBackground = await createButton.evaluate(element => (
@@ -86,43 +84,20 @@ test('the root renders the Dioxus transfer workspace', { tag: '@smoke' }, async 
 
   if (testInfo.project.name === 'desktop-chromium') {
     const layout = await page.locator('.app-shell').evaluate(shell => {
-      const style = getComputedStyle(shell)
-      const room = shell.querySelector('.vault-room')?.getBoundingClientRect()
+      const room = shell.querySelector('.transfer-layout') as HTMLElement | null
+      const identity = shell.querySelector('.transfer-identity')?.getBoundingClientRect()
+      const consolePanel = shell.querySelector('.transfer-console')?.getBoundingClientRect()
+      const roomRect = room?.getBoundingClientRect()
       return {
-        alignItems: style.alignItems,
-        display: style.display,
-        justifyContent: style.justifyContent,
-        topGap: room?.top ?? -1,
-        bottomGap: room ? innerHeight - room.bottom : -1,
+        display: room ? getComputedStyle(room).display : '',
+        identityRight: identity?.right ?? -1,
+        consoleLeft: consolePanel?.left ?? -1,
+        top: roomRect?.top ?? -1,
+        bottom: roomRect ? innerHeight - roomRect.bottom : -1,
       }
     })
-    expect(layout).toMatchObject({
-      alignItems: 'center',
-      display: 'flex',
-      justifyContent: 'center',
-    })
-    expect(Math.abs(layout.topGap - layout.bottomGap)).toBeLessThanOrEqual(1)
-    await page.waitForTimeout(250)
-    const overflowProbe = await page.evaluate(() => (
-      window as Window & {
-        __p2pOverflowProbe: {
-          overflowFrames: number
-          overflows: Array<{
-            bootFallback: boolean
-            clientHeight: number
-            mainHidden: boolean
-            sample: number
-            shells: Array<{ className: string, display: string, height: number, top: number }>
-            scrollHeight: number
-            time: number
-          }>
-          samples: number
-        }
-      }
-    ).__p2pOverflowProbe)
-    expect(overflowProbe.samples).toBeGreaterThan(0)
-    expect(overflowProbe.overflowFrames).toBe(overflowProbe.overflows.length)
-    expect(overflowProbe.overflows).toEqual([])
+    expect(layout.display).toBe('grid')
+    expect(layout.identityRight).toBeLessThanOrEqual(layout.consoleLeft + 1)
   }
 
   await roomCode.focus()
@@ -150,7 +125,10 @@ test('the root renders the Dioxus transfer workspace', { tag: '@smoke' }, async 
     const input = element as HTMLInputElement
     return [input.selectionStart, input.selectionEnd]
   })).toEqual([1, 1])
-  await expect(page.getByRole('button', { name: '请求加入' })).toBeEnabled()
+  await expect(joinButton).toBeEnabled()
+  await expect.poll(() => joinButton.evaluate(
+    element => getComputedStyle(element).backgroundColor,
+  )).toBe('rgb(17, 17, 17)')
 
   const resources = await page.evaluate(() =>
     performance.getEntriesByType('resource').map(entry => entry.name),
@@ -196,6 +174,23 @@ test('the root renders the Dioxus transfer workspace', { tag: '@smoke' }, async 
     )
     await mkdir(resolve(output, '..'), { recursive: true })
     await page.screenshot({ path: output, fullPage: true })
+  }
+
+  if (testInfo.project.name === 'mobile-chromium') {
+    await page.setViewportSize({ width: 812, height: 375 })
+    await expect(page.getByRole('heading', { name: '加入房间' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '创建房间' })).toBeVisible()
+    expect(await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    )).toBe(false)
+
+    if (process.env.CAPTURE_SHELL === '1') {
+      const landscapeOutput = resolve(
+        currentDirectory,
+        '../docs/release/screenshots/m2-shell-mobile-landscape-chromium.png',
+      )
+      await page.screenshot({ path: landscapeOutput, fullPage: true })
+    }
   }
 })
 

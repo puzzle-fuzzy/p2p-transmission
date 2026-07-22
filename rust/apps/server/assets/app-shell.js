@@ -1,4 +1,22 @@
 (() => {
+  const restoreFallback = document.querySelector('.boot-room-restore');
+  if (restoreFallback && document.documentElement.hasAttribute('data-p2p-room-restore')) {
+    restoreFallback.removeAttribute('hidden');
+  }
+
+  const ensureGeneratedCode = () => {
+    const generatedCode = document.querySelector('.generated-code');
+    if (generatedCode && !/^\d{6}$/.test(generatedCode.textContent.trim())) {
+      generatedCode.textContent = String(Math.floor(100000 + Math.random() * 900000));
+    }
+  };
+  ensureGeneratedCode();
+  new MutationObserver(ensureGeneratedCode).observe(document.body, {
+    childList: true,
+    characterData: true,
+    subtree: true,
+  });
+
   const showUpgradePrompt = () => {
     let dialog = document.getElementById('app-upgrade-dialog');
     if (!dialog) {

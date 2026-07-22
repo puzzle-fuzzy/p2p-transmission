@@ -1,8 +1,10 @@
 use dioxus::prelude::*;
 use p2p_protocol::{ParticipantRoleWire, ParticipantSnapshot};
 
+#[allow(dead_code)]
 const MAX_VISIBLE_RECEIVER_AVATARS: usize = 3;
 
+#[allow(dead_code)]
 fn receiver_stack_counts(receiver_count: usize) -> (usize, usize) {
     let visible_count = receiver_count.min(MAX_VISIBLE_RECEIVER_AVATARS);
     (visible_count, receiver_count - visible_count)
@@ -159,11 +161,6 @@ pub(super) fn Avatar(
                         } else {
                             "avatar-cell"
                         },
-                        style: format!(
-                            "grid-column:{};grid-row:{}",
-                            index % 5 + 1,
-                            index / 5 + 1,
-                        )
                     }
                 }
             }
