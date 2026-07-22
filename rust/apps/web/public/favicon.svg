@@ -1,4 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
-  <rect width="48" height="48" fill="#123db5"/>
-  <path d="M8 16h31m0 0-8-8m8 8-8 8M40 32H9m0 0 8 8m-8-8 8-8" fill="none" stroke="#f7f7f2" stroke-linecap="square" stroke-linejoin="miter" stroke-width="4"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">P2P Transmission</title>
+  <desc id="desc">深蓝圆形徽标，中心是米白色几何小写 p。</desc>
+  <circle cx="32" cy="32" r="30" fill="#123dbb" />
+  <path d="M23 49V17m0 10c0-7 4-11 10-11 7 0 11 4 11 11s-4 11-11 11c-5 0-8-3-10-7" fill="none" stroke="#f4f3ef" stroke-linecap="square" stroke-linejoin="round" stroke-width="5" />
 </svg>

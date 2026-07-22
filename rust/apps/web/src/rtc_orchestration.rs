@@ -11,7 +11,10 @@ use crate::rtc_transition::{
     set_peer_transfer_link_state,
 };
 
-const RTC_NEGOTIATION_TIMEOUT_MS: u32 = 3_000;
+// TURN allocation can outlive the first trickled candidate on a slower peer.
+// Keep the bounded retry policy, but do not replace an ICE gathering attempt
+// before it has had a reasonable relay setup window.
+const RTC_NEGOTIATION_TIMEOUT_MS: u32 = 8_000;
 const RTC_DISCONNECTED_GRACE_MS: u32 = 5_000;
 const RTC_PASSIVE_RECOVERY_TIMEOUT_MS: u32 = 30_000;
 const RTC_RETRY_DELAYS_MS: [u32; 4] = [500, 1_000, 2_000, 4_000];

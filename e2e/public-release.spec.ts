@@ -16,6 +16,10 @@ interface RelayStateSummary {
   candidateTypes: string[]
   connectionCount: number
   connectionStates: string[]
+  connections: unknown[]
+  configurations: unknown[]
+  iceConnectionStates: string[]
+  iceGatheringStates: string[]
   policies: string[]
 }
 
@@ -23,7 +27,23 @@ async function requireRelayConnections(context: BrowserContext) {
   await context.addInitScript(() => {
     const NativePeerConnection = window.RTCPeerConnection
     const connections: RTCPeerConnection[] = []
+    const connectionDiagnostics: Array<{
+      candidateEvents: string[]
+      connectionStates: string[]
+      gatheringStates: string[]
+      iceConnectionStates: string[]
+      signalingStates: string[]
+    }> = []
     const policies: string[] = []
+    const configurations: unknown[] = []
+
+    const summarizeConfiguration = (configuration: RTCConfiguration) => ({
+      iceServers: (configuration.iceServers ?? []).map(server => ({
+        credentialPresent: Boolean(server.credential),
+        urls: Array.isArray(server.urls) ? [...server.urls] : [server.urls],
+        usernamePresent: Boolean(server.username),
+      })),
+    })
 
     class RelayOnlyPeerConnection extends NativePeerConnection {
       constructor(configuration: RTCConfiguration = {}) {
@@ -33,13 +53,41 @@ async function requireRelayConnections(context: BrowserContext) {
         }
         super(relayConfiguration)
         connections.push(this)
+        const diagnostic = {
+          candidateEvents: [] as string[],
+          connectionStates: [this.connectionState],
+          gatheringStates: [this.iceGatheringState],
+          iceConnectionStates: [this.iceConnectionState],
+          signalingStates: [this.signalingState],
+        }
+        connectionDiagnostics.push(diagnostic)
+        this.addEventListener('icecandidate', event => {
+          const candidateType = event.candidate?.type
+          diagnostic.candidateEvents.push(candidateType ?? 'end-of-candidates')
+        })
+        this.addEventListener('icegatheringstatechange', () => {
+          diagnostic.gatheringStates.push(this.iceGatheringState)
+        })
+        this.addEventListener('iceconnectionstatechange', () => {
+          diagnostic.iceConnectionStates.push(this.iceConnectionState)
+        })
+        this.addEventListener('connectionstatechange', () => {
+          diagnostic.connectionStates.push(this.connectionState)
+        })
+        this.addEventListener('signalingstatechange', () => {
+          diagnostic.signalingStates.push(this.signalingState)
+        })
         policies.push(this.getConfiguration().iceTransportPolicy ?? '')
+        configurations.push({
+          normalized: summarizeConfiguration(this.getConfiguration()),
+          requested: summarizeConfiguration(relayConfiguration),
+        })
       }
     }
 
     Object.defineProperty(window, '__p2pPublicRelayState', {
       configurable: false,
-      value: { connections, policies },
+      value: { configurations, connectionDiagnostics, connections, policies },
     })
     Object.defineProperty(window, 'RTCPeerConnection', {
       configurable: true,
@@ -53,6 +101,7 @@ async function relayState(page: Page): Promise<RelayStateSummary> {
   return page.evaluate(async () => {
     const state = (window as unknown as {
       __p2pPublicRelayState: {
+        connectionDiagnostics: unknown[]
         connections: RTCPeerConnection[]
         policies: string[]
       }
@@ -73,6 +122,14 @@ async function relayState(page: Page): Promise<RelayStateSummary> {
       connectionCount: state.connections.length,
       connectionStates: [...new Set(
         state.connections.map(connection => connection.connectionState),
+      )],
+      connections: state.connectionDiagnostics,
+      configurations: state.configurations,
+      iceConnectionStates: [...new Set(
+        state.connections.map(connection => connection.iceConnectionState),
+      )],
+      iceGatheringStates: [...new Set(
+        state.connections.map(connection => connection.iceGatheringState),
       )],
       policies: [...new Set(state.policies)],
     }
@@ -178,11 +235,13 @@ async function verifyPublicTransfer({
       })
     } catch (error) {
       if (relayOnly) {
+        const diagnostic = {
+          owner: await relayState(owner),
+          receiver: await relayState(receiver),
+        }
+        console.error(`[public-relay-diagnostic] ${JSON.stringify(diagnostic)}`)
         await testInfo.attach('relay-state.json', {
-          body: Buffer.from(JSON.stringify({
-            owner: await relayState(owner),
-            receiver: await relayState(receiver),
-          }, null, 2)),
+          body: Buffer.from(JSON.stringify(diagnostic, null, 2)),
           contentType: 'application/json',
         })
       }
