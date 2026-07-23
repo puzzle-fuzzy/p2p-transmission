@@ -12,6 +12,7 @@ RELEASE_MANUAL = ROOT / "docs/release/RELEASE.md"
 HEALTH_WORKFLOW = ROOT / ".github/workflows/production-health.yml"
 EXPECTED_HEALTH_CRON = "17 */2 * * *"
 STALE_REFERENCES = ("docs/参考", "docs\\参考", "target-3411")
+STALE_HEALTH_CADENCE_REFERENCES = ("每 6 小时", "每 6小时", "每六小时")
 
 
 def documentation_files() -> list[Path]:
@@ -33,6 +34,13 @@ def check_health_schedule(failures: list[str]) -> None:
         )
     if "每 2 小时" not in release_manual:
         failures.append("RELEASE.md must describe the production health check cadence")
+    for path in documentation_files():
+        text = path.read_text(encoding="utf-8")
+        for reference in STALE_HEALTH_CADENCE_REFERENCES:
+            if reference in text:
+                failures.append(
+                    f"{path.relative_to(ROOT)} contains stale health cadence {reference}"
+                )
 
 
 def check_stale_references(failures: list[str]) -> None:

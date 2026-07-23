@@ -1,5 +1,7 @@
 # 腾讯云单机生产部署
 
+> 规范部署运行手册已集中到 [`docs/deployment.md`](../docs/deployment.md)。本文保留历史部署入口和兼容细节；新增部署规则请先更新规范手册。
+
 正式地址：<https://p2p.yxswy.com>
 
 生产运行时是单个 Rust 容器，静态页面和 Axum API 由同一服务提供。宿主机 Nginx 负责 HTTPS/WSS，coturn 独立运行；SQLite 数据保存在 `deploy/production/data`。

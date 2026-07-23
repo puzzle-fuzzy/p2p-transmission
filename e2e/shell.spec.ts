@@ -257,7 +257,13 @@ test('a newly activated application release asks the user to refresh', async ({ 
   const dialog = page.getByRole('alertdialog', { name: '需要刷新页面' })
   await expect(dialog).toBeVisible()
   await expect(dialog).toContainText('正在进行的传输会中断')
-  await expect(dialog.getByRole('button', { name: '刷新并升级' })).toBeVisible()
+  const navigation = page.waitForEvent('framenavigated', {
+    predicate: frame => frame === page.mainFrame(),
+  })
+  await dialog.getByRole('button', { name: '刷新并升级' }).click()
+  await navigation
+  await expect(page.getByRole('heading', { name: '加入房间' })).toBeVisible()
+  await expect(page.getByRole('alertdialog', { name: '需要刷新页面' })).toHaveCount(0)
 })
 
 test('a protocol mismatch stops boot and presents the upgrade action', async ({ page }) => {
