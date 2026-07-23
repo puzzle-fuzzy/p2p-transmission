@@ -2,7 +2,7 @@
 
 这里保存当前实现的固定视口截图，用于检查桌面端和移动端的页面结构、状态表达与视觉回归。
 
-生产发布、5 GiB 边界、备份与回滚说明见 [`RELEASE.md`](RELEASE.md)。
+生产部署的唯一运行手册见 [`deployment.md`](../deployment.md)；发布截图和历史边界记录见 [`RELEASE.md`](RELEASE.md)。
 
 M2 当前截图：
 
