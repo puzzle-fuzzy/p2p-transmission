@@ -11,7 +11,7 @@ const peerReadyTimeout = 20_000
 test('two browsers can create, approve, connect, and restore a room', async ({
   browser,
   baseURL,
-}) => {
+}, testInfo) => {
     const ownerContext = await browser.newContext({ baseURL })
     const receiverContext = await browser.newContext({ baseURL })
     await ownerContext.addInitScript(() => {
@@ -58,6 +58,9 @@ test('two browsers can create, approve, connect, and restore a room', async ({
     })
     const owner = await ownerContext.newPage()
     const receiver = await receiverContext.newPage()
+    if (testInfo.project.name === 'desktop-chromium') {
+      await owner.setViewportSize({ width: 1440, height: 700 })
+    }
 
   try {
     await owner.goto('/')
@@ -145,16 +148,28 @@ test('two browsers can create, approve, connect, and restore a room', async ({
         documentHeight: document.documentElement.scrollHeight,
         footerLeft: footer?.left ?? -1,
         footerRight: footer?.right ?? -1,
+        footerTop: footer?.top ?? -1,
         layoutLeft: layout?.left ?? -1,
         layoutRight: layout?.right ?? -1,
+        layoutTop: layout?.top ?? -1,
+        scrollY: window.scrollY,
       }
     })
+    await owner.evaluate(() => {
+      const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight)
+      window.scrollTo(0, Math.min(260, maxScroll))
+    })
+    const textTab = owner.getByRole('tab', { name: '文本' })
+    await expect(textTab).toBeVisible()
+    await textTab.evaluate(element => element.scrollIntoView({ block: 'center', inline: 'nearest' }))
     const fileSurface = await measureRoomSurface()
-    await expect(owner.getByRole('tab', { name: '文本' })).toBeVisible()
-    await owner.getByRole('tab', { name: '文本' }).click()
+    await textTab.click()
     await expect(owner.getByRole('heading', { name: '发送文本' })).toBeVisible()
     const textSurface = await measureRoomSurface()
     expect(Math.abs(fileSurface.documentHeight - textSurface.documentHeight)).toBeLessThanOrEqual(2)
+    expect(Math.abs(fileSurface.scrollY - textSurface.scrollY)).toBeLessThanOrEqual(2)
+    expect(Math.abs(fileSurface.footerTop - textSurface.footerTop)).toBeLessThanOrEqual(2)
+    expect(Math.abs(fileSurface.layoutTop - textSurface.layoutTop)).toBeLessThanOrEqual(2)
     expect(Math.abs(textSurface.footerLeft - textSurface.layoutLeft)).toBeLessThanOrEqual(1)
     expect(Math.abs(textSurface.footerRight - textSurface.layoutRight)).toBeLessThanOrEqual(1)
     await owner.getByRole('tab', { name: '文件' }).click()
@@ -194,6 +209,40 @@ test('two browsers can create, approve, connect, and restore a room', async ({
     await receiverContext.close()
     await ownerContext.close()
   }
+})
+
+test('room code copy uses the real clipboard permission path', async ({
+  context,
+  page,
+  baseURL,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'real clipboard permissions are validated in Chromium')
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: baseURL })
+  await page.goto('/')
+  await page.getByRole('button', { name: '创建房间' }).click()
+
+  const roomCodeButton = page.getByRole('button', { name: /复制房间码/ })
+  const roomCode = (await roomCodeButton.textContent())?.trim() ?? ''
+  await roomCodeButton.click()
+  await expect(page.getByText('房间码已复制', { exact: true })).toBeVisible()
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(roomCode)
+})
+
+test('room code copy reports a recovery action when browser copy is unavailable', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async () => { throw new Error('clipboard denied') } },
+    })
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: () => false,
+    })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: '创建房间' }).click()
+  await page.getByRole('button', { name: /复制房间码/ }).click()
+  await expect(page.getByText('无法复制房间码，请手动选择后复制', { exact: true })).toBeVisible()
 })
 
 test('a receiver can enter a room code in one field, submit with Enter, and cancel', { tag: '@smoke' }, async ({ browser, baseURL }) => {
