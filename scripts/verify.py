@@ -27,6 +27,7 @@ def package_args(packages: tuple[str, ...]) -> list[str]:
 
 
 def main() -> None:
+    run(["cargo", "audit", "--deny", "warnings"])
     run(["cargo", "fmt", "--all", "--", "--check"])
     run(["python", "-X", "utf8", "scripts/check_web_architecture.py"])
     run(["python", "-X", "utf8", "scripts/check_server_architecture.py"])
