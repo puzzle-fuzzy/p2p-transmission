@@ -91,11 +91,8 @@ jobs:
       - name: Install Dioxus CLI
         run: cargo install dioxus-cli --version 0.7.6 --locked
 
-      - name: Run browser smoke E2E
-        run: python -X utf8 scripts/test_e2e.py
-
-      - name: Run lightweight browser interoperability contract
-        run: python -X utf8 scripts/test_e2e.py --interop
+      - name: Run full browser regression E2E
+        run: python -X utf8 scripts/test_e2e.py --full
 
       - name: Run browser performance contract
         run: python -X utf8 scripts/test_e2e.py --performance
